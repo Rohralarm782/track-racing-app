@@ -16,12 +16,10 @@ export interface TeamStanding {
   thirds: number;
   fourths: number;
   lapBalance: number;
+  finalePosition?: number | null;
 }
 
-interface Team {
-  id: string; number: number; name: string;
-  rider1?: string | null; rider2?: string | null;
-}
+interface Team { id: string; number: number; name: string; rider1?: string|null; rider2?: string|null; }
 interface SprintResult { teamId: string; position: number; }
 interface Sprint { isFinale: boolean; results: SprintResult[]; }
 interface LapEvent { teamId: string; delta: number; }
@@ -43,8 +41,18 @@ export function computePunktefahren(
       rider1: team.rider1, rider2: team.rider2,
       total: 0, sprintPoints: 0,
       lapPoints: omniumPoints, omniumPoints,
-      wins: 0, seconds: 0, thirds: 0, fourths: 0, lapBalance: 0,
+      wins: 0, seconds: 0, thirds: 0, fourths: 0,
+      lapBalance: 0, finalePosition: null,
     });
+  }
+
+  // Finale-Platzierung ermitteln (Tiebreaker bei Punktgleichheit)
+  const finaleSprint = sprints.find(s => s.isFinale);
+  if (finaleSprint) {
+    for (const r of finaleSprint.results) {
+      const s = map.get(r.teamId);
+      if (s) s.finalePosition = r.position;
+    }
   }
 
   for (const sprint of sprints) {
@@ -67,9 +75,10 @@ export function computePunktefahren(
 
   return [...map.values()]
     .map(s => ({ ...s, total: s.sprintPoints + s.lapPoints }))
-    .sort((a, b) =>
-      b.total !== a.total ? b.total - a.total :
-      b.lapBalance !== a.lapBalance ? b.lapBalance - a.lapBalance :
-      b.wins - a.wins
-    );
+    .sort((a, b) => {
+      // 1. Gesamtpunkte
+      if (b.total !== a.total) return b.total - a.total;
+      // 2. Bei Punktgleichheit: Finale-Platzierung (niedriger = besser, kein Platz = letzter)
+      return (a.finalePosition ?? 99) - (b.finalePosition ?? 99);
+    });
 }
