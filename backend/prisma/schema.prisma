@@ -1,0 +1,174 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum CategoryFormat {
+  INDIVIDUAL  // Einzelrennen: nur Fahrername
+  TEAM_PAIRS  // Madison: Teamname + zwei Fahrer
+}
+
+enum RaceType {
+  PUNKTEFAHREN
+  TEMPORUNDEN
+  VERFOLGUNGSRENNEN
+}
+
+enum RaceStatus {
+  SETUP
+  ACTIVE
+  FINISHED
+}
+
+enum TimeStatus {
+  OK
+  DNS
+  DNF
+}
+
+// ─── Core ────────────────────────────────────────────────────────────────────
+
+model Event {
+  id         String     @id @default(cuid())
+  name       String
+  date       DateTime
+  location   String?
+  categories Category[]
+  createdAt  DateTime   @default(now())
+}
+
+model Category {
+  id      String         @id @default(cuid())
+  eventId String
+  event   Event          @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  name    String
+  format  CategoryFormat @default(INDIVIDUAL)
+  teams   Team[]
+  races   Race[]
+}
+
+model Team {
+  id         String   @id @default(cuid())
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  number     Int
+  name       String   // Fahrername (INDIVIDUAL) oder Teamname/Kürzel (TEAM_PAIRS)
+  rider1     String?  // TEAM_PAIRS: erster Fahrer
+  rider2     String?  // TEAM_PAIRS: zweiter Fahrer
+
+  omniumScores  OmniumScore[]
+  sprintResults SprintResult[]
+  lapEvents     LapEvent[]
+  timeResults   TimeResult[]
+  pursuitTeam1  PursuitRound[] @relation("team1")
+  pursuitTeam2  PursuitRound[] @relation("team2")
+  pursuitWinner PursuitRound[] @relation("winner")
+
+  @@unique([categoryId, number])
+}
+
+// ─── Race ────────────────────────────────────────────────────────────────────
+
+model Race {
+  id           String     @id @default(cuid())
+  categoryId   String
+  category     Category   @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  type         RaceType
+  name         String
+  status       RaceStatus @default(SETUP)
+  order        Int        @default(0)
+  finaleActive Boolean    @default(true) // Finale zählt doppelt
+  createdAt    DateTime   @default(now())
+
+  omniumScores  OmniumScore[]
+  sprints       Sprint[]
+  lapEvents     LapEvent[]
+  timeResults   TimeResult[]
+  pursuitRounds PursuitRound[]
+}
+
+// Vorpunktestand für ein bestimmtes Rennen (manuell eingetragen)
+model OmniumScore {
+  id     String @id @default(cuid())
+  raceId String
+  race   Race   @relation(fields: [raceId], references: [id], onDelete: Cascade)
+  teamId String
+  team   Team   @relation(fields: [teamId], references: [id])
+  points Int    @default(0)
+
+  @@unique([raceId, teamId])
+}
+
+// ─── Punktefahren / Madison ──────────────────────────────────────────────────
+
+model Sprint {
+  id       String         @id @default(cuid())
+  raceId   String
+  race     Race           @relation(fields: [raceId], references: [id], onDelete: Cascade)
+  number   Int            // 1, 2, 3 … oder 0 für Finale
+  isFinale Boolean        @default(false)
+  results  SprintResult[]
+
+  @@unique([raceId, number])
+}
+
+model SprintResult {
+  id       String @id @default(cuid())
+  sprintId String
+  sprint   Sprint @relation(fields: [sprintId], references: [id], onDelete: Cascade)
+  teamId   String
+  team     Team   @relation(fields: [teamId], references: [id])
+  position Int    // 1–4
+
+  @@unique([sprintId, position])
+  @@unique([sprintId, teamId])
+}
+
+model LapEvent {
+  id        String   @id @default(cuid())
+  raceId    String
+  race      Race     @relation(fields: [raceId], references: [id], onDelete: Cascade)
+  teamId    String
+  team      Team     @relation(fields: [teamId], references: [id])
+  delta     Int      // +1 = Runde gewonnen, -1 = Runde verloren
+  note      String?
+  createdAt DateTime @default(now())
+}
+
+// ─── Temporunden ─────────────────────────────────────────────────────────────
+
+model TimeResult {
+  id     String     @id @default(cuid())
+  raceId String
+  race   Race       @relation(fields: [raceId], references: [id], onDelete: Cascade)
+  teamId String
+  team   Team       @relation(fields: [teamId], references: [id])
+  timeMs Int?       // Millisekunden; null bei DNS/DNF
+  status TimeStatus @default(OK)
+
+  @@unique([raceId, teamId])
+}
+
+// ─── Verfolgungsrennen ────────────────────────────────────────────────────────
+
+model PursuitRound {
+  id       String  @id @default(cuid())
+  raceId   String
+  race     Race    @relation(fields: [raceId], references: [id], onDelete: Cascade)
+  round    String  // QUAL | QF | SF | GOLD | BRONZE
+  heat     Int     // laufende Nummer innerhalb der Runde
+  team1Id  String?
+  team1    Team?   @relation("team1",  fields: [team1Id],  references: [id])
+  team2Id  String?
+  team2    Team?   @relation("team2",  fields: [team2Id],  references: [id])
+  time1Ms  Int?
+  time2Ms  Int?
+  winnerId String?
+  winner   Team?   @relation("winner", fields: [winnerId], references: [id])
+}
