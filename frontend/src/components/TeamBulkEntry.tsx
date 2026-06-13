@@ -86,7 +86,7 @@ export default function TeamBulkEntry({ categoryId, format, existingTeams, onSuc
     setError('');
     try {
       const token = localStorage.getItem('admin_token');
-      const res = await fetch('/api/teams/batch', {
+      const res = await fetch(`${import.meta.env.VITE_API_URL ?? ''}/api/teams/batch`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
