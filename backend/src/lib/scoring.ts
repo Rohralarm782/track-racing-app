@@ -5,8 +5,12 @@ export interface TeamStanding {
   teamId: string;
   teamNumber: number;
   teamName: string;
+  club?: string | null;
   rider1?: string | null;
   rider2?: string | null;
+  isFavorite?: boolean;
+  isDsq?: boolean;
+  isWarned?: boolean;
   total: number;
   sprintPoints: number;
   lapPoints: number;
@@ -19,26 +23,38 @@ export interface TeamStanding {
   finalePosition?: number | null;
 }
 
-interface Team { id: string; number: number; name: string; rider1?: string|null; rider2?: string|null; }
+interface Team {
+  id: string; number: number; name: string;
+  club?: string | null; isFavorite?: boolean;
+  rider1?: string | null; rider2?: string | null;
+}
 interface SprintResult { teamId: string; position: number; }
 interface Sprint { isFinale: boolean; results: SprintResult[]; }
 interface LapEvent { teamId: string; delta: number; }
 interface OmniumScore { teamId: string; points: number; }
+interface Flag { teamId: string; type: string; }
 
 export function computePunktefahren(
   teams: Team[],
   sprints: Sprint[],
   lapEvents: LapEvent[],
   omniumScores: OmniumScore[],
+  flags: Flag[] = [],
 ): TeamStanding[] {
   const omniumMap = new Map(omniumScores.map(o => [o.teamId, o.points]));
+  const dsqIds   = new Set(flags.filter(f => f.type === 'DSQ').map(f => f.teamId));
+  const warnIds  = new Set(flags.filter(f => f.type === 'WARNING').map(f => f.teamId));
   const map = new Map<string, TeamStanding>();
 
   for (const team of teams) {
     const omniumPoints = omniumMap.get(team.id) ?? 0;
     map.set(team.id, {
       teamId: team.id, teamNumber: team.number, teamName: team.name,
+      club: team.club ?? null,
       rider1: team.rider1, rider2: team.rider2,
+      isFavorite: team.isFavorite ?? false,
+      isDsq: dsqIds.has(team.id),
+      isWarned: warnIds.has(team.id),
       total: 0, sprintPoints: 0,
       lapPoints: omniumPoints, omniumPoints,
       wins: 0, seconds: 0, thirds: 0, fourths: 0,
@@ -46,7 +62,6 @@ export function computePunktefahren(
     });
   }
 
-  // Finale-Platzierung ermitteln (Tiebreaker bei Punktgleichheit)
   const finaleSprint = sprints.find(s => s.isFinale);
   if (finaleSprint) {
     for (const r of finaleSprint.results) {
@@ -74,11 +89,16 @@ export function computePunktefahren(
   }
 
   return [...map.values()]
-    .map(s => ({ ...s, total: s.sprintPoints + s.lapPoints }))
+    .map(s => ({ ...s, total: s.isDsq ? 0 : s.sprintPoints + s.lapPoints }))
     .sort((a, b) => {
-      // 1. Gesamtpunkte
+      if (a.isDsq !== b.isDsq) return a.isDsq ? 1 : -1;
+      if (a.isDsq && b.isDsq) return 0;
       if (b.total !== a.total) return b.total - a.total;
-      // 2. Bei Punktgleichheit: Finale-Platzierung (niedriger = besser, kein Platz = letzter)
-      return (a.finalePosition ?? 99) - (b.finalePosition ?? 99);
+      if (finaleSprint) {
+        const aF = a.finalePosition ?? 99;
+        const bF = b.finalePosition ?? 99;
+        if (aF !== bF) return aF - bF;
+      }
+      return 0;
     });
 }
