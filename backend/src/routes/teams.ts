@@ -63,7 +63,7 @@ router.post('/batch', requireAdmin, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// PATCH /api/teams/:id/favorite — Favorit umschalten
+// PATCH /api/teams/:id/favorite
 router.patch('/:id/favorite', requireAdmin, async (req, res, next) => {
   try {
     const team = await prisma.team.findUnique({ where: { id: req.params.id }, select: { isFavorite: true } });
@@ -76,6 +76,7 @@ router.patch('/:id/favorite', requireAdmin, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// PATCH /api/teams/:id
 router.patch('/:id', requireAdmin, async (req, res, next) => {
   try {
     const parsed = TeamSchema.partial().safeParse(req.body);
@@ -88,11 +89,33 @@ router.patch('/:id', requireAdmin, async (req, res, next) => {
   }
 });
 
+// DELETE /api/teams/:id
+// Löscht zuerst alle abhängigen Datensätze, dann den Fahrer selbst.
+// Nötig weil die FK-Relationen im Schema kein onDelete:Cascade haben.
 router.delete('/:id', requireAdmin, async (req, res, next) => {
   try {
-    await prisma.team.delete({ where: { id: req.params.id } });
+    const teamId = req.params.id;
+    await prisma.$transaction(async (tx) => {
+      // Ergebnisse & Ereignisse löschen
+      await tx.sprintResult.deleteMany({ where: { teamId } });
+      await tx.lapEvent.deleteMany({ where: { teamId } });
+      await tx.omniumScore.deleteMany({ where: { teamId } });
+      await tx.timeResult.deleteMany({ where: { teamId } });
+      await tx.raceFlag.deleteMany({ where: { teamId } });
+
+      // PursuitRound: Felder nullen statt die Runde zu löschen
+      await tx.pursuitRound.updateMany({ where: { team1Id: teamId },  data: { team1Id: null, time1Ms: null } });
+      await tx.pursuitRound.updateMany({ where: { team2Id: teamId },  data: { team2Id: null, time2Ms: null } });
+      await tx.pursuitRound.updateMany({ where: { winnerId: teamId }, data: { winnerId: null } });
+
+      // Fahrer löschen
+      await tx.team.delete({ where: { id: teamId } });
+    });
     res.status(204).send();
-  } catch (e) { next(e); }
+  } catch (e: any) {
+    if (e.code === 'P2025') res.status(404).json({ error: 'Nicht gefunden' });
+    else next(e);
+  }
 });
 
 export default router;
