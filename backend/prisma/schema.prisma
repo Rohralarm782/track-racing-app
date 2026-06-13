@@ -1,4 +1,3 @@
-cat > /home/claude/track-racing-app/backend/prisma/schema.prisma << 'EOF'
 generator client {
   provider = "prisma-client-js"
 }
@@ -182,5 +181,3 @@ model PursuitRound {
   winnerId String?
   winner   Team?   @relation("winner", fields: [winnerId], references: [id])
 }
-EOF
-echo "schema.prisma done"
