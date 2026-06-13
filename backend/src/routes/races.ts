@@ -112,8 +112,8 @@ const CreateSprintSchema = z.object({
   isFinale: z.boolean().default(false),
   results: z.array(z.object({
     teamId: z.string(),
-    position: z.number().int().min(1).max(4),
-  })).min(1).max(4),
+    position: z.number().int().min(1),
+  })).min(1),
 });
 
 router.post('/:id/sprints', requireAdmin, async (req, res, next) => {
