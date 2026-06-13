@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, type Category, type Team } from '../api/client';
 import { useAdmin } from '../components/Layout';
-import TeamBulkEntry from '../components/TeamBulkEntry';
+import TeamBulkEntry, { type DetectedScore } from '../components/TeamBulkEntry';
 
 const RACE_TYPE_OPTIONS = [
   { value: 'PUNKTEFAHREN',      label: 'Punktefahren / Madison' },
@@ -10,22 +10,38 @@ const RACE_TYPE_OPTIONS = [
   { value: 'VERFOLGUNGSRENNEN', label: 'Verfolgungsrennen' },
 ] as const;
 
-const STATUS_BADGE: Record<string,string> = { SETUP:'badge-gray', ACTIVE:'badge-yellow', FINISHED:'badge-green' };
-const STATUS_LABEL: Record<string,string> = { SETUP:'Vorbereitung', ACTIVE:'Läuft', FINISHED:'Fertig' };
+const STATUS_BADGE: Record<string, string> = { SETUP: 'badge-gray', ACTIVE: 'badge-yellow', FINISHED: 'badge-green' };
+const STATUS_LABEL: Record<string, string> = { SETUP: 'Vorbereitung', ACTIVE: 'Läuft', FINISHED: 'Fertig' };
+
+const STRATEGY_OPTIONS = [
+  { value: 'import',  label: 'Importierte Punkte verwenden',  hint: 'Vorhandene Werte werden überschrieben' },
+  { value: 'keep',    label: 'Vorhandene Punkte behalten',    hint: 'Nur fehlende Fahrer werden ergänzt' },
+  { value: 'higher',  label: 'Jeweils die höhere Punktzahl',  hint: 'Sichere Standardoption' },
+] as const;
+
+type Strategy = 'import' | 'keep' | 'higher';
 
 export default function CategoryDetail() {
-  const { id }                       = useParams<{ id: string }>();
-  const navigate                     = useNavigate();
-  const [category, setCategory]      = useState<Category|null>(null);
-  const [loading, setLoading]        = useState(true);
-  const [showImport, setShowImport]  = useState(false);
+  const { id }                        = useParams<{ id: string }>();
+  const navigate                      = useNavigate();
+  const [category, setCategory]       = useState<Category | null>(null);
+  const [loading, setLoading]         = useState(true);
+  const [showImport, setShowImport]   = useState(false);
   const [showNewRace, setShowNewRace] = useState(false);
-  const [raceName, setRaceName]      = useState('');
-  const [raceType, setRaceType]      = useState<string>('PUNKTEFAHREN');
-  const [raceFormat, setRaceFormat]  = useState<string>('INDIVIDUAL');
-  const [savingRace, setSavingRace]  = useState(false);
-  const [raceError, setRaceError]    = useState('');
-  const { isAdmin }                  = useAdmin();
+  const [raceName, setRaceName]       = useState('');
+  const [raceType, setRaceType]       = useState<string>('PUNKTEFAHREN');
+  const [raceFormat, setRaceFormat]   = useState<string>('INDIVIDUAL');
+  const [savingRace, setSavingRace]   = useState(false);
+  const [raceError, setRaceError]     = useState('');
+  const { isAdmin }                   = useAdmin();
+
+  // ── Score-Import nach Startlisten-Upload ───────────────────────────────────
+  const [pendingScores, setPendingScores]   = useState<DetectedScore[]>([]);
+  const [showScoreImport, setShowScoreImport] = useState(false);
+  const [scoreRaceId, setScoreRaceId]       = useState('');
+  const [scoreStrategy, setScoreStrategy]   = useState<Strategy>('import');
+  const [savingScores, setSavingScores]     = useState(false);
+  const [scoreError, setScoreError]         = useState('');
 
   function load() {
     if (!id) return;
@@ -34,9 +50,55 @@ export default function CategoryDetail() {
   }
   useEffect(load, [id]);
 
-  function handleImportSuccess(teams: Team[]) {
+  // Wird aufgerufen wenn TeamBulkEntry Teams gespeichert hat.
+  // scores: nur gesetzt wenn Nutzer "Omnium-Zwischenergebnis" gewählt hat.
+  function handleImportSuccess(teams: Team[], scores?: DetectedScore[]) {
     setShowImport(false);
     setCategory(prev => prev ? { ...prev, teams } : prev);
+
+    const races = category?.races ?? [];
+    if (scores && scores.length > 0 && races.length > 0) {
+      // Scores erkannt UND mindestens ein Rennen vorhanden → Dialog anzeigen
+      setPendingScores(scores);
+      setScoreRaceId(races[0].id);
+      setScoreStrategy('import');
+      setScoreError('');
+      setShowScoreImport(true);
+    } else if (scores && scores.length > 0) {
+      // Scores erkannt, aber noch kein Rennen – Info-Hinweis
+      // (Scores gehen verloren; Nutzer muss Punkte später manuell eingeben)
+      // Hier könntest du einen Toast o.ä. anzeigen:
+      console.info('Omnium-Punkte erkannt, aber noch kein Rennen vorhanden. Punkte werden nicht gespeichert.');
+    }
+  }
+
+  // Erkannte Scores ins gewählte Rennen importieren
+  async function saveDetectedScores() {
+    if (!scoreRaceId || pendingScores.length === 0) return;
+    setSavingScores(true); setScoreError('');
+    try {
+      // BIB-Nummer → Team-ID mappen (Teams sind nach dem Import aktuell)
+      const teams = category?.teams ?? [];
+      const teamMap = new Map(teams.map(t => [t.number, t.id]));
+      const scores = pendingScores
+        .filter(s => teamMap.has(s.number))
+        .map(s => ({ teamId: teamMap.get(s.number)!, points: s.points }));
+
+      if (scores.length === 0) throw new Error('Keine Fahrer konnten zugeordnet werden.');
+
+      await api.post(`/api/races/${scoreRaceId}/omnium`, { scores, strategy: scoreStrategy });
+      setShowScoreImport(false);
+      setPendingScores([]);
+    } catch (e: any) {
+      setScoreError(e.message ?? 'Fehler beim Speichern');
+    } finally {
+      setSavingScores(false);
+    }
+  }
+
+  function dismissScoreImport() {
+    setShowScoreImport(false);
+    setPendingScores([]);
   }
 
   async function toggleFavorite(teamId: string) {
@@ -59,12 +121,91 @@ export default function CategoryDetail() {
   if (loading) return <div className="page container"><div className="loading"><span className="spinner" /> Lädt…</div></div>;
   if (!category) return <div className="page container"><div className="alert alert-error">Kategorie nicht gefunden.</div></div>;
 
-  const teams = category.teams ?? [];
-  const races = category.races ?? [];
+  const teams       = category.teams ?? [];
+  const races       = category.races ?? [];
   const isTeamPairs = category.format === 'TEAM_PAIRS';
 
   return (
     <div className="page container">
+
+      {/* ── Score-Import-Dialog ──────────────────────────────────────────── */}
+      {showScoreImport && (
+        <div className="modal-overlay" onClick={dismissScoreImport}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <p className="modal-title">Omnium-Punkte importieren</p>
+            <p className="text-sm text-muted" style={{ marginBottom: 18 }}>
+              {pendingScores.length} Fahrer mit Punkten erkannt. In welches Rennen sollen sie eingetragen werden?
+            </p>
+
+            {/* Rennen auswählen */}
+            {races.length > 1 && (
+              <div className="form-group">
+                <label className="form-label">Rennen</label>
+                <select
+                  className="form-select"
+                  value={scoreRaceId}
+                  onChange={e => setScoreRaceId(e.target.value)}
+                >
+                  {races.map(r => (
+                    <option key={r.id} value={r.id}>{r.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {races.length === 1 && (
+              <div className="alert alert-info" style={{ marginBottom: 14 }}>
+                Rennen: <strong>{races[0].name}</strong>
+              </div>
+            )}
+
+            {/* Konfliktstrategie */}
+            <div className="form-group" style={{ marginBottom: 20 }}>
+              <label className="form-label">Bei vorhandenen Punkten</label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+                {STRATEGY_OPTIONS.map(opt => (
+                  <label
+                    key={opt.value}
+                    onClick={() => setScoreStrategy(opt.value)}
+                    style={{
+                      display: 'flex', gap: 12, alignItems: 'flex-start', cursor: 'pointer',
+                      border: scoreStrategy === opt.value ? '2px solid var(--c-primary)' : '1px solid var(--c-border)',
+                      borderRadius: 7, padding: scoreStrategy === opt.value ? '10px 13px' : '11px 14px',
+                      background: scoreStrategy === opt.value ? '#eff6ff' : 'var(--c-white)',
+                      transition: 'all .15s',
+                    }}
+                  >
+                    <input
+                      type="radio" name="scoreStrategy" value={opt.value}
+                      checked={scoreStrategy === opt.value}
+                      onChange={() => setScoreStrategy(opt.value)}
+                      style={{ marginTop: 3, flexShrink: 0 }}
+                    />
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 1 }}>{opt.label}</div>
+                      <div style={{ fontSize: 12, color: 'var(--c-text-muted)' }}>{opt.hint}</div>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {scoreError && <div className="alert alert-error">{scoreError}</div>}
+
+            <div className="flex-between">
+              <button className="btn btn-ghost" onClick={dismissScoreImport}>
+                Überspringen
+              </button>
+              <button className="btn btn-primary" onClick={saveDetectedScores} disabled={savingScores}>
+                {savingScores
+                  ? 'Speichert…'
+                  : `${pendingScores.length} Punkte importieren`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Breadcrumb & Header ──────────────────────────────────────────── */}
       <div className="breadcrumb">
         <Link to="/">Veranstaltungen</Link><span>›</span>
         {category.event && <><Link to={`/events/${category.event.id}`}>{category.event.name}</Link><span>›</span></>}
@@ -88,8 +229,13 @@ export default function CategoryDetail() {
       {showImport && (
         <div className="card mb-4">
           <div className="flex-between mb-3"><h2 style={{ margin: 0 }}>Startliste einpflegen</h2></div>
-          <TeamBulkEntry categoryId={category.id} format={category.format} existingTeams={teams}
-            onSuccess={handleImportSuccess} onCancel={() => setShowImport(false)} />
+          <TeamBulkEntry
+            categoryId={category.id}
+            format={category.format}
+            existingTeams={teams}
+            onSuccess={handleImportSuccess}
+            onCancel={() => setShowImport(false)}
+          />
         </div>
       )}
 
