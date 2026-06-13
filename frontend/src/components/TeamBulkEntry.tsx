@@ -1,9 +1,30 @@
 import { useState, useMemo } from 'react';
 import type { CategoryFormat, Team } from '../api/client';
 
+// Erkannte Punkte aus einem Omnium-PDF
+export interface DetectedScore {
+  number: number;   // Startnummer
+  points: number;   // Gesamtpunkte
+}
+
 interface ParsedRow {
   number: number; name: string; club?: string;
   rider1?: string; rider2?: string; raw: string; ok: boolean;
+}
+
+// Antwort des Backend-Endpunkts /api/categories/:id/import-pdf
+interface PdfImportResult {
+  detectedType: 'startlist' | 'omnium';
+  eventCount: number | null;
+  teams: { number: number; name: string; club?: string | null }[];
+  scores: { number: number; points: number }[];
+}
+
+// Gespeicherte PDF-Daten vor der Typ-Bestätigung
+interface PendingPdfData {
+  rows: ParsedRow[];
+  scores: DetectedScore[];
+  eventCount: number | null;
 }
 
 function parseLine(line: string, format: CategoryFormat): ParsedRow {
@@ -30,21 +51,30 @@ function parseList(text: string, format: CategoryFormat): ParsedRow[] {
 }
 
 interface Props {
-  categoryId: string; format: CategoryFormat; existingTeams: Team[];
-  onSuccess: (teams: Team[]) => void; onCancel: () => void;
+  categoryId: string;
+  format: CategoryFormat;
+  existingTeams: Team[];
+  onSuccess: (teams: Team[], scores?: DetectedScore[]) => void;
+  onCancel: () => void;
 }
 
 export default function TeamBulkEntry({ categoryId, format, existingTeams, onSuccess, onCancel }: Props) {
   const [text, setText]       = useState('');
-  const [pdfRows, setPdfRows] = useState<ParsedRow[]|null>(null);
+  const [pdfRows, setPdfRows] = useState<ParsedRow[] | null>(null);
   const [replace, setReplace] = useState(existingTeams.length === 0);
   const [saving, setSaving]   = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
   const [error, setError]     = useState('');
 
-  const textRows = useMemo(() => parseList(text, format), [text, format]);
+  // Typ-Dialog: gesetzt nach PDF-Upload wenn Omnium erkannt wurde
+  const [pendingPdfData, setPendingPdfData]           = useState<PendingPdfData | null>(null);
+  const [selectedImportType, setSelectedImportType]   = useState<'startlist' | 'omnium'>('omnium');
+  // Punkte die nach Team-Save an den Parent weitergegeben werden
+  const [pendingScores, setPendingScores]             = useState<DetectedScore[]>([]);
+
+  const textRows   = useMemo(() => parseList(text, format), [text, format]);
   const activeRows = pdfRows ?? textRows;
-  const validRows = activeRows.filter(r => r.ok);
+  const validRows  = activeRows.filter(r => r.ok);
 
   const placeholder = format === 'INDIVIDUAL'
     ? '1 Max Müller\n2 Anna Schmidt\n3 Peter Weber'
@@ -54,6 +84,7 @@ export default function TeamBulkEntry({ categoryId, format, existingTeams, onSuc
     ? 'Format: Startnummer Fahrername'
     : 'Format: Startnummer Teamname, Fahrer 1 / Fahrer 2';
 
+  // PDF hochladen → Backend erkennt Typ, gibt Teams (+ ggf. Scores) zurück
   async function handlePdfImport(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -61,11 +92,11 @@ export default function TeamBulkEntry({ categoryId, format, existingTeams, onSuc
     try {
       const base64 = await new Promise<string>((resolve, reject) => {
         const r = new FileReader();
-        r.onload = () => resolve((r.result as string).split(',')[1]);
+        r.onload  = () => resolve((r.result as string).split(',')[1]);
         r.onerror = () => reject(new Error('Lesen fehlgeschlagen'));
         r.readAsDataURL(file);
       });
-      const token = localStorage.getItem('admin_token');
+      const token  = localStorage.getItem('admin_token');
       const apiUrl = import.meta.env.VITE_API_URL ?? '';
       const res = await fetch(`${apiUrl}/api/categories/${categoryId}/import-pdf`, {
         method: 'POST',
@@ -73,20 +104,49 @@ export default function TeamBulkEntry({ categoryId, format, existingTeams, onSuc
         body: JSON.stringify({ pdfBase64: base64 }),
       });
       if (!res.ok) throw new Error(await res.text());
-      const { teams } = await res.json();
-      setPdfRows(teams.map((t: any) => ({
-        number: t.number, name: t.name, club: t.club,
-        rider1: t.rider1, rider2: t.rider2, raw: `${t.number} ${t.name}`, ok: true,
-      })));
-    } catch (e: any) { setError(e.message ?? 'PDF-Import fehlgeschlagen'); }
-    finally { setPdfLoading(false); e.target.value = ''; }
+
+      const data: PdfImportResult = await res.json();
+      const rows: ParsedRow[] = data.teams.map(t => ({
+        number: t.number, name: t.name, club: t.club ?? undefined,
+        raw: `${t.number} ${t.name}`, ok: true,
+      }));
+
+      if (data.detectedType === 'omnium' && data.scores.length > 0) {
+        // Omnium erkannt → Typ-Dialog zeigen, noch nicht in Preview übernehmen
+        setPendingPdfData({ rows, scores: data.scores, eventCount: data.eventCount });
+        setSelectedImportType('omnium');
+      } else {
+        // Reine Startliste → direkt in Preview
+        setPdfRows(rows);
+        setPendingScores([]);
+      }
+    } catch (e: any) {
+      setError(e.message ?? 'PDF-Import fehlgeschlagen');
+    } finally {
+      setPdfLoading(false);
+      e.target.value = '';
+    }
+  }
+
+  // Typ-Dialog: Bestätigung
+  function confirmType() {
+    if (!pendingPdfData) return;
+    setPdfRows(pendingPdfData.rows);
+    setPendingScores(selectedImportType === 'omnium' ? pendingPdfData.scores : []);
+    setPendingPdfData(null);
+  }
+
+  // Typ-Dialog: Abbruch (PDF verwerfen)
+  function cancelTypeDialog() {
+    setPendingPdfData(null);
+    setPendingScores([]);
   }
 
   async function handleSave() {
     if (validRows.length === 0) return;
     setSaving(true); setError('');
     try {
-      const token = localStorage.getItem('admin_token');
+      const token  = localStorage.getItem('admin_token');
       const apiUrl = import.meta.env.VITE_API_URL ?? '';
       const res = await fetch(`${apiUrl}/api/teams/batch`, {
         method: 'POST',
@@ -100,32 +160,128 @@ export default function TeamBulkEntry({ categoryId, format, existingTeams, onSuc
         }),
       });
       if (!res.ok) throw new Error(await res.text());
-      onSuccess(await res.json());
-    } catch (e: any) { setError(e.message ?? 'Fehler beim Speichern'); }
-    finally { setSaving(false); }
+      const savedTeams: Team[] = await res.json();
+      // Scores werden nur weitergegeben wenn der Nutzer "Omnium" gewählt hat
+      onSuccess(savedTeams, pendingScores.length > 0 ? pendingScores : undefined);
+    } catch (e: any) {
+      setError(e.message ?? 'Fehler beim Speichern');
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
-    <div>
+    <>
+      {/* ── Typ-Dialog (erscheint wenn Omnium-PDF erkannt wurde) ─────────── */}
+      {pendingPdfData && (
+        <div className="modal-overlay" onClick={cancelTypeDialog}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+
+            <p className="modal-title" style={{ marginBottom: 6 }}>PDF importieren</p>
+
+            {/* Erkennungs-Banner */}
+            <div className="alert alert-info" style={{ marginBottom: 16, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+              <div style={{ flexShrink: 0, marginTop: 1 }}>ℹ</div>
+              <div>
+                <div style={{ fontWeight: 500, marginBottom: 2 }}>Omnium-Zwischenergebnis erkannt</div>
+                {pendingPdfData.eventCount && (
+                  <div style={{ fontSize: 12 }}>Zwischenstand nach {pendingPdfData.eventCount} Wettbewerben</div>
+                )}
+              </div>
+            </div>
+
+            <p style={{ fontSize: 14, fontWeight: 500, marginBottom: 12, margin: '0 0 12px' }}>
+              Was soll importiert werden?
+            </p>
+
+            {/* Option A: Nur Startliste */}
+            <label
+              onClick={() => setSelectedImportType('startlist')}
+              style={{
+                display: 'flex', gap: 12, alignItems: 'flex-start', cursor: 'pointer',
+                border: selectedImportType === 'startlist' ? '2px solid var(--c-primary)' : '1px solid var(--c-border)',
+                borderRadius: 8, padding: selectedImportType === 'startlist' ? '11px 13px' : '12px 14px',
+                marginBottom: 8, background: selectedImportType === 'startlist' ? '#eff6ff' : 'var(--c-white)',
+                transition: 'border-color .15s, background .15s',
+              }}
+            >
+              <input
+                type="radio" name="importType" value="startlist"
+                checked={selectedImportType === 'startlist'}
+                onChange={() => setSelectedImportType('startlist')}
+                style={{ marginTop: 3, flexShrink: 0 }}
+              />
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 2 }}>Nur Startliste</div>
+                <div style={{ fontSize: 12, color: 'var(--c-text-muted)' }}>
+                  {pendingPdfData.rows.length} Fahrer · keine Punkte
+                </div>
+              </div>
+            </label>
+
+            {/* Option B: Omnium-Ergebnis (Vorauswahl) */}
+            <label
+              onClick={() => setSelectedImportType('omnium')}
+              style={{
+                display: 'flex', gap: 12, alignItems: 'flex-start', cursor: 'pointer',
+                border: selectedImportType === 'omnium' ? '2px solid var(--c-primary)' : '1px solid var(--c-border)',
+                borderRadius: 8, padding: selectedImportType === 'omnium' ? '11px 13px' : '12px 14px',
+                marginBottom: 20, background: selectedImportType === 'omnium' ? '#eff6ff' : 'var(--c-white)',
+                transition: 'border-color .15s, background .15s',
+              }}
+            >
+              <input
+                type="radio" name="importType" value="omnium"
+                checked={selectedImportType === 'omnium'}
+                onChange={() => setSelectedImportType('omnium')}
+                style={{ marginTop: 3, flexShrink: 0 }}
+              />
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 2 }}>Omnium-Zwischenergebnis</div>
+                <div style={{ fontSize: 12, color: 'var(--c-text-muted)' }}>
+                  {pendingPdfData.rows.length} Fahrer · {pendingPdfData.scores.length} Punkte-Einträge
+                </div>
+              </div>
+            </label>
+
+            <div className="flex-between">
+              <button className="btn btn-ghost" onClick={cancelTypeDialog}>Abbrechen</button>
+              <button className="btn btn-primary" onClick={confirmType}>
+                Weiter →
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Hauptformular ────────────────────────────────────────────────── */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, alignItems: 'start' }}>
-        {/* Left: input */}
+
+        {/* Linke Spalte: Eingabe */}
         <div>
-          {/* PDF import button */}
           <div style={{ marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
             <label style={{ cursor: pdfLoading ? 'wait' : 'pointer' }}>
               <input type="file" accept=".pdf" style={{ display: 'none' }} onChange={handlePdfImport} disabled={pdfLoading} />
-              <span className={`btn btn-secondary btn-sm${pdfLoading ? ' ' : ''}`} style={{ pointerEvents: 'none' }}>
+              <span className={`btn btn-secondary btn-sm`} style={{ pointerEvents: 'none' }}>
                 {pdfLoading ? 'Liest PDF…' : '📄 PDF importieren'}
               </span>
             </label>
             {pdfRows && (
-              <button className="btn btn-ghost btn-sm" onClick={() => { setPdfRows(null); setText(''); }}>
+              <button className="btn btn-ghost btn-sm" onClick={() => {
+                setPdfRows(null); setPendingScores([]); setText('');
+              }}>
                 ✕ PDF verwerfen
               </button>
             )}
           </div>
 
-          {/* Manual textarea — hidden when PDF rows are active */}
+          {/* Erkannte Scores anzeigen */}
+          {pendingScores.length > 0 && (
+            <div className="alert alert-info" style={{ marginBottom: 8, fontSize: 13 }}>
+              ✓ {pendingScores.length} Omnium-Punkte werden mitgespeichert
+            </div>
+          )}
+
           {!pdfRows && (
             <div className="form-group" style={{ marginBottom: 8 }}>
               <label className="form-label">oder manuell eingeben</label>
@@ -149,7 +305,7 @@ export default function TeamBulkEntry({ categoryId, format, existingTeams, onSuc
           )}
         </div>
 
-        {/* Right: preview */}
+        {/* Rechte Spalte: Vorschau */}
         <div>
           <div className="section-header" style={{ marginBottom: 8 }}>
             <span className="form-label" style={{ margin: 0 }}>Vorschau</span>
@@ -202,6 +358,6 @@ export default function TeamBulkEntry({ categoryId, format, existingTeams, onSuc
           {saving ? 'Speichert…' : `${validRows.length} Teams speichern`}
         </button>
       </div>
-    </div>
+    </>
   );
 }
