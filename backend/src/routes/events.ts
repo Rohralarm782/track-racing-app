@@ -5,11 +5,10 @@ import { requireAdmin } from '../middleware/auth';
 
 const router = Router();
 
-// GET /api/events
 router.get('/', async (_req, res, next) => {
   try {
     const events = await prisma.event.findMany({
-      orderBy: { date: 'desc' },
+      orderBy: { createdAt: 'desc' },
       include: {
         categories: {
           include: { _count: { select: { teams: true, races: true } } },
@@ -21,7 +20,6 @@ router.get('/', async (_req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// GET /api/events/:id
 router.get('/:id', async (req, res, next) => {
   try {
     const event = await prisma.event.findUnique({
@@ -44,11 +42,9 @@ router.get('/:id', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// POST /api/events
 const CreateEventSchema = z.object({
   name: z.string().min(1, 'Name ist erforderlich'),
-  date: z.string().datetime({ message: 'Ungültiges Datum' }),
-  location: z.string().optional(),
+  date: z.string().datetime().optional(),
 });
 
 router.post('/', requireAdmin, async (req, res, next) => {
@@ -60,7 +56,6 @@ router.post('/', requireAdmin, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// PATCH /api/events/:id
 const UpdateEventSchema = CreateEventSchema.partial();
 
 router.patch('/:id', requireAdmin, async (req, res, next) => {
@@ -75,7 +70,6 @@ router.patch('/:id', requireAdmin, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// DELETE /api/events/:id
 router.delete('/:id', requireAdmin, async (req, res, next) => {
   try {
     await prisma.event.delete({ where: { id: req.params.id } });
