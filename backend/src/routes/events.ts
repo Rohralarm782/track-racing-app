@@ -51,9 +51,12 @@ router.post('/', requireAdmin, async (req, res, next) => {
   try {
     const parsed = CreateEventSchema.safeParse(req.body);
     if (!parsed.success) { res.status(400).json(parsed.error.flatten()); return; }
-    const data: Record<string, unknown> = { name: parsed.data.name };
-    if (parsed.data.date) data.date = new Date(parsed.data.date);
-    const event = await prisma.event.create({ data: data as any });
+const event = await prisma.event.create({
+  data: {
+    name: parsed.data.name,
+    date: parsed.data.date ? new Date(parsed.data.date) : null,
+  } as any,
+});
     res.status(201).json(event);
   } catch (e) { next(e); }
 });
