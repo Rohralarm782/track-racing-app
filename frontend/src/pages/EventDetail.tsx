@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useNavigate } from 'react-router-dom';
 import { api, type Event } from '../api/client';
 import { useAdmin } from '../components/Layout';
 
@@ -19,11 +19,6 @@ const STATUS_BADGE: Record<string, string> = {
   ACTIVE: 'badge-yellow',
   FINISHED: 'badge-green',
 };
-const STATUS_LABEL: Record<string, string> = {
-  SETUP: 'Vorbereitung',
-  ACTIVE: 'Läuft',
-  FINISHED: 'Abgeschlossen',
-};
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString('de-DE', {
@@ -32,15 +27,16 @@ function formatDate(iso: string) {
 }
 
 export default function EventDetail() {
-  const { id }                  = useParams<{ id: string }>();
-  const [event, setEvent]       = useState<Event | null>(null);
-  const [loading, setLoading]   = useState(true);
+  const { id }                      = useParams<{ id: string }>();
+  const navigate                    = useNavigate();
+  const [event, setEvent]           = useState<Event | null>(null);
+  const [loading, setLoading]       = useState(true);
   const [showNewCat, setShowNewCat] = useState(false);
-  const [catName, setCatName]   = useState('');
-  const [catFormat, setCatFormat] = useState<'INDIVIDUAL' | 'TEAM_PAIRS'>('INDIVIDUAL');
-  const [saving, setSaving]     = useState(false);
-  const [error, setError]       = useState('');
-  const { isAdmin }             = useAdmin();
+  const [catName, setCatName]       = useState('');
+  const [catFormat, setCatFormat]   = useState<'INDIVIDUAL' | 'TEAM_PAIRS'>('INDIVIDUAL');
+  const [saving, setSaving]         = useState(false);
+  const [error, setError]           = useState('');
+  const { isAdmin }                 = useAdmin();
 
   function load() {
     if (!id) return;
@@ -67,10 +63,18 @@ export default function EventDetail() {
     }
   }
 
+  async function deleteEvent() {
+    if (!confirm('Veranstaltung wirklich löschen? Alle Kategorien und Teams werden ebenfalls gelöscht.')) return;
+    await api.delete(`/api/events/${id}`);
+    navigate('/');
+  }
+
   if (loading) return (
     <div className="page container"><div className="loading"><span className="spinner" /> Lädt…</div></div>
   );
-  if (!event) return <div className="page container"><div className="alert alert-error">Veranstaltung nicht gefunden.</div></div>;
+  if (!event) return (
+    <div className="page container"><div className="alert alert-error">Veranstaltung nicht gefunden.</div></div>
+  );
 
   return (
     <div className="page container">
@@ -84,12 +88,16 @@ export default function EventDetail() {
         <div>
           <h1>{event.name}</h1>
           <p className="text-sm text-muted" style={{ margin: '2px 0 0' }}>
-            {formatDate(event.date)}{event.location ? ` · ${event.location}` : ''}
+            {event.date ? formatDate(event.date) : ''}
           </p>
         </div>
+        {isAdmin && (
+          <button className="btn btn-danger btn-sm" onClick={deleteEvent}>
+            Löschen
+          </button>
+        )}
       </div>
 
-      {/* ── Categories ── */}
       <div className="section-header">
         <h2 style={{ margin: 0 }}>Kategorien</h2>
         {isAdmin && (
@@ -99,7 +107,6 @@ export default function EventDetail() {
         )}
       </div>
 
-      {/* New category form */}
       {showNewCat && (
         <div className="card mb-3" style={{ borderColor: '#bfdbfe', background: '#f0f7ff' }}>
           <p className="text-sm" style={{ fontWeight: 600, marginBottom: 12 }}>Neue Kategorie</p>
@@ -160,7 +167,7 @@ export default function EventDetail() {
                 </span>
               </div>
               <p className="text-sm text-muted" style={{ margin: '4px 0 0' }}>
-                {cat._count.teams} {cat._count.teams === 1 ? 'Teilnehmer' : 'Teilnehmer'}
+                {cat._count.teams} Teilnehmer
                 {cat.races.length > 0 && ` · ${cat.races.length} Rennen`}
               </p>
             </div>
