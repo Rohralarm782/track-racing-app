@@ -55,7 +55,9 @@ router.delete('/:id', requireAdmin, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// POST /api/categories/:id/import-pdf — Startliste per PDF importieren
+// POST /api/categories/:id/import-pdf
+// Erkennt automatisch ob es eine Startliste oder ein Omnium-Zwischenergebnis ist.
+// Antwort: { detectedType, eventCount, teams, scores }
 router.post('/:id/import-pdf', requireAdmin, async (req, res, next) => {
   try {
     const { pdfBase64 } = req.body;
@@ -63,7 +65,7 @@ router.post('/:id/import-pdf', requireAdmin, async (req, res, next) => {
 
     const message = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 4000,
+      max_tokens: 6000,
       messages: [{
         role: 'user',
         content: [
@@ -73,18 +75,29 @@ router.post('/:id/import-pdf', requireAdmin, async (req, res, next) => {
           } as any,
           {
             type: 'text',
-            text: `Dies ist eine Startliste oder Teilnehmerliste für ein Bahnradrennen.
+            text: `Analysiere dieses PDF und gib NUR JSON zurück (kein Markdown, kein Text davor oder danach).
 
-Extrahiere alle Teilnehmer und gib NUR JSON zurück (kein Markdown):
-{"teams":[{"number":1,"name":"Vorname Nachname","club":"Vereinsname"}]}
+Wenn es eine reine Startliste ist (nur Namen und Startnummern, kein Gesamtpunktstand):
+{"detectedType":"startlist","eventCount":null,"teams":[{"number":1,"name":"Vorname Nachname","club":"Vereinsname"}],"scores":[]}
 
-Regeln:
-- number: Startnummer/BIB/StartNr als Ganzzahl
+Wenn es ein Omnium-Zwischenergebnis ist (Titel enthält "Zwischenstand" o.ä. UND es gibt eine Gesamtpunktespalte):
+{"detectedType":"omnium","eventCount":3,"teams":[{"number":1,"name":"Vorname Nachname","club":"Vereinsname"}],"scores":[{"number":1,"points":106}]}
+
+Regeln für teams:
+- number: Startnummer/BIB als Ganzzahl
 - name: "Vorname Nachname" (NICHT "Nachname Vorname")
-- club: Vereinsname aus der Verein-Spalte
+- club: Vereinsname aus der Verein-Spalte, null wenn nicht vorhanden
 - Überspringe durchgestrichene Einträge
-- Dedupliziere nach Nummer (z.B. Ballustrade/Messlinie-Doppelungen → nur einmal)
-- Ignoriere: Platz, UCI-ID, LV, Q, V, R, Abschnittsüberschriften
+- Dedupliziere nach Nummer
+
+Regeln für scores (nur bei Omnium, sonst leeres Array []):
+- number: Startnummer, identisch mit dem Eintrag in teams
+- points: Gesamtpunktzahl (Spalte "Gesamt" oder letzte Zahlenspalte)
+- Ignoriere Zwischenpunkte (Scratch, TP, AF usw.)
+
+Regeln allgemein:
+- eventCount: Anzahl bisheriger Wettbewerbe aus dem Titel ("nach X Wettbewerben"), sonst null
+- Ignoriere UCI-ID, LV, Q, V, R, Abschnittsüberschriften
 - Nur reines JSON, sonst nichts`,
           },
         ],
