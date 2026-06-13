@@ -47,7 +47,7 @@ export default function EventList() {
             <div>
               <h2>{ev.name}</h2>
               <p className="text-sm text-muted" style={{ margin: '2px 0 0' }}>
-                {formatDate(ev.date)}{ev.location ? ` · ${ev.location}` : ''}
+                {ev.date ? formatDate(ev.date) : ''}
               </p>
             </div>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
