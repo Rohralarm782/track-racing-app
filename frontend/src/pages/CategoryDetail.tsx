@@ -43,6 +43,56 @@ export default function CategoryDetail() {
   const [savingScores, setSavingScores]     = useState(false);
   const [scoreError, setScoreError]         = useState('');
 
+  // ── Inline-Bearbeitung einzelner Fahrer ───────────────────────────────────
+  interface EditValues { number: number; name: string; club: string; rider1: string; rider2: string; }
+  const [editingTeamId, setEditingTeamId] = useState<string | null>(null);
+  const [editValues, setEditValues]       = useState<EditValues>({ number: 0, name: '', club: '', rider1: '', rider2: '' });
+  const [savingEdit, setSavingEdit]       = useState(false);
+  const [editError, setEditError]         = useState('');
+
+  function startEdit(team: Team) {
+    setEditingTeamId(team.id);
+    setEditValues({
+      number: team.number,
+      name:   team.name,
+      club:   team.club   ?? '',
+      rider1: team.rider1 ?? '',
+      rider2: team.rider2 ?? '',
+    });
+    setEditError('');
+  }
+
+  function cancelEdit() { setEditingTeamId(null); setEditError(''); }
+
+  async function saveEdit(teamId: string) {
+    setSavingEdit(true); setEditError('');
+    try {
+      await api.patch(`/api/teams/${teamId}`, {
+        number: editValues.number,
+        name:   editValues.name,
+        club:   editValues.club   || null,
+        rider1: editValues.rider1 || null,
+        rider2: editValues.rider2 || null,
+      });
+      setEditingTeamId(null);
+      load();
+    } catch (e: any) {
+      setEditError(e.message ?? 'Fehler beim Speichern');
+    } finally {
+      setSavingEdit(false);
+    }
+  }
+
+  async function deleteTeam(teamId: string, teamName: string) {
+    if (!confirm(`"${teamName}" wirklich aus der Startliste entfernen?`)) return;
+    try {
+      await api.delete(`/api/teams/${teamId}`);
+      load();
+    } catch (e: any) {
+      alert(e.message ?? 'Fehler beim Löschen');
+    }
+  }
+
   function load() {
     if (!id) return;
     setLoading(true);
@@ -228,7 +278,121 @@ export default function CategoryDetail() {
 
       {showImport && (
         <div className="card mb-4">
-          <div className="flex-between mb-3"><h2 style={{ margin: 0 }}>Startliste einpflegen</h2></div>
+          <div className="flex-between mb-3">
+            <h2 style={{ margin: 0 }}>Startliste bearbeiten</h2>
+            <button className="btn btn-ghost btn-sm" onClick={() => { setShowImport(false); cancelEdit(); }}>
+              ✕ Schließen
+            </button>
+          </div>
+
+          {/* ── Vorhandene Fahrer inline bearbeiten ─────────────────────── */}
+          {teams.length > 0 && (
+            <>
+              {editError && <div className="alert alert-error mb-3">{editError}</div>}
+              <div className="table-wrap" style={{ marginBottom: 20 }}>
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th style={{ width: 60 }}>Nr.</th>
+                      <th>{isTeamPairs ? 'Team' : 'Fahrer'}</th>
+                      {(isTeamPairs || teams.some(t => t.club)) && <th>Verein</th>}
+                      {isTeamPairs && <th>Fahrer</th>}
+                      <th style={{ width: 80 }}></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {teams.map(team => editingTeamId === team.id ? (
+                      /* ── Bearbeitungszeile ── */
+                      <tr key={team.id} style={{ background: '#f0f7ff' }}>
+                        <td>
+                          <input
+                            type="number" className="form-input" style={{ width: 56, padding: '4px 6px', fontSize: 13 }}
+                            value={editValues.number}
+                            onChange={e => setEditValues(v => ({ ...v, number: parseInt(e.target.value) || 0 }))}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="text" className="form-input" style={{ padding: '4px 8px', fontSize: 13 }}
+                            value={editValues.name}
+                            onChange={e => setEditValues(v => ({ ...v, name: e.target.value }))}
+                            onKeyDown={e => { if (e.key === 'Enter') saveEdit(team.id); if (e.key === 'Escape') cancelEdit(); }}
+                            autoFocus
+                          />
+                        </td>
+                        {(isTeamPairs || teams.some(t => t.club)) && (
+                          <td>
+                            <input
+                              type="text" className="form-input" style={{ padding: '4px 8px', fontSize: 13 }}
+                              value={editValues.club} placeholder="Verein"
+                              onChange={e => setEditValues(v => ({ ...v, club: e.target.value }))}
+                            />
+                          </td>
+                        )}
+                        {isTeamPairs && (
+                          <td>
+                            <div style={{ display: 'flex', gap: 4 }}>
+                              <input
+                                type="text" className="form-input" style={{ padding: '4px 8px', fontSize: 12 }}
+                                value={editValues.rider1} placeholder="Fahrer 1"
+                                onChange={e => setEditValues(v => ({ ...v, rider1: e.target.value }))}
+                              />
+                              <input
+                                type="text" className="form-input" style={{ padding: '4px 8px', fontSize: 12 }}
+                                value={editValues.rider2} placeholder="Fahrer 2"
+                                onChange={e => setEditValues(v => ({ ...v, rider2: e.target.value }))}
+                              />
+                            </div>
+                          </td>
+                        )}
+                        <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                          <button
+                            className="btn btn-primary btn-sm" style={{ marginRight: 4 }}
+                            onClick={() => saveEdit(team.id)} disabled={savingEdit || !editValues.name}
+                            title="Speichern"
+                          >
+                            {savingEdit ? '…' : '✓'}
+                          </button>
+                          <button className="btn btn-ghost btn-sm" onClick={cancelEdit} title="Abbrechen">✗</button>
+                        </td>
+                      </tr>
+                    ) : (
+                      /* ── Anzeigezeile ── */
+                      <tr key={team.id}>
+                        <td className="num" style={{ fontWeight: 600 }}>{team.number}</td>
+                        <td>{team.name}</td>
+                        {(isTeamPairs || teams.some(t => t.club)) && (
+                          <td className="text-muted text-sm">{team.club ?? ''}</td>
+                        )}
+                        {isTeamPairs && (
+                          <td className="text-muted text-sm">
+                            {team.rider1 && team.rider2 ? `${team.rider1} / ${team.rider2}` : team.rider1 ?? '—'}
+                          </td>
+                        )}
+                        <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                          <button
+                            className="btn btn-ghost btn-sm" style={{ marginRight: 4 }}
+                            onClick={() => startEdit(team)} title="Bearbeiten"
+                          >✏</button>
+                          <button
+                            className="btn btn-ghost btn-sm" style={{ color: 'var(--c-danger)' }}
+                            onClick={() => deleteTeam(team.id, team.name)} title="Löschen"
+                          >🗑</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div style={{ borderTop: '1px solid var(--c-border)', paddingTop: 16, marginBottom: 12 }}>
+                <h3 style={{ margin: '0 0 12px', color: 'var(--c-text-muted)', fontSize: 13, fontWeight: 500 }}>
+                  Oder neue Startliste importieren
+                </h3>
+              </div>
+            </>
+          )}
+
           <TeamBulkEntry
             categoryId={category.id}
             format={category.format}
