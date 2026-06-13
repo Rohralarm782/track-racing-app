@@ -52,11 +52,11 @@ router.post('/', requireAdmin, async (req, res, next) => {
     const parsed = CreateEventSchema.safeParse(req.body);
     if (!parsed.success) { res.status(400).json(parsed.error.flatten()); return; }
     const event = await prisma.event.create({
-  data: {
-    name: parsed.data.name,
-    date: parsed.data.date ? new Date(parsed.data.date) : undefined,
-  },
-});
+      data: {
+        name: parsed.data.name,
+        ...(parsed.data.date && { date: new Date(parsed.data.date) }),
+      },
+    });
     res.status(201).json(event);
   } catch (e) { next(e); }
 });
@@ -69,7 +69,10 @@ router.patch('/:id', requireAdmin, async (req, res, next) => {
     if (!parsed.success) { res.status(400).json(parsed.error.flatten()); return; }
     const event = await prisma.event.update({
       where: { id: req.params.id },
-      data: parsed.data,
+      data: {
+        ...(parsed.data.name && { name: parsed.data.name }),
+        ...(parsed.data.date && { date: new Date(parsed.data.date) }),
+      },
     });
     res.json(event);
   } catch (e) { next(e); }
