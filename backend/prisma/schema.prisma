@@ -58,9 +58,9 @@ model Team {
   categoryId String
   category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
   number     Int
-  name       String   // Fahrername (INDIVIDUAL) oder Teamname/Kürzel (TEAM_PAIRS)
-  rider1     String?  // TEAM_PAIRS: erster Fahrer
-  rider2     String?  // TEAM_PAIRS: zweiter Fahrer
+  name       String
+  rider1     String?
+  rider2     String?
 
   omniumScores  OmniumScore[]
   sprintResults SprintResult[]
@@ -76,15 +76,16 @@ model Team {
 // ─── Race ────────────────────────────────────────────────────────────────────
 
 model Race {
-  id           String     @id @default(cuid())
+  id           String          @id @default(cuid())
   categoryId   String
-  category     Category   @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  category     Category        @relation(fields: [categoryId], references: [id], onDelete: Cascade)
   type         RaceType
+  format       CategoryFormat? // null = Kategorie-Format übernehmen
   name         String
-  status       RaceStatus @default(SETUP)
-  order        Int        @default(0)
-  finaleActive Boolean    @default(true) // Finale zählt doppelt
-  createdAt    DateTime   @default(now())
+  status       RaceStatus      @default(SETUP)
+  order        Int             @default(0)
+  finaleActive Boolean         @default(true)
+  createdAt    DateTime        @default(now())
 
   omniumScores  OmniumScore[]
   sprints       Sprint[]
@@ -93,7 +94,6 @@ model Race {
   pursuitRounds PursuitRound[]
 }
 
-// Vorpunktestand für ein bestimmtes Rennen (manuell eingetragen)
 model OmniumScore {
   id     String @id @default(cuid())
   raceId String
@@ -111,7 +111,7 @@ model Sprint {
   id       String         @id @default(cuid())
   raceId   String
   race     Race           @relation(fields: [raceId], references: [id], onDelete: Cascade)
-  number   Int            // 1, 2, 3 … oder 0 für Finale
+  number   Int
   isFinale Boolean        @default(false)
   results  SprintResult[]
 
@@ -124,7 +124,7 @@ model SprintResult {
   sprint   Sprint @relation(fields: [sprintId], references: [id], onDelete: Cascade)
   teamId   String
   team     Team   @relation(fields: [teamId], references: [id])
-  position Int    // 1–4
+  position Int
 
   @@unique([sprintId, position])
   @@unique([sprintId, teamId])
@@ -136,7 +136,7 @@ model LapEvent {
   race      Race     @relation(fields: [raceId], references: [id], onDelete: Cascade)
   teamId    String
   team      Team     @relation(fields: [teamId], references: [id])
-  delta     Int      // +1 = Runde gewonnen, -1 = Runde verloren
+  delta     Int
   note      String?
   createdAt DateTime @default(now())
 }
@@ -149,7 +149,7 @@ model TimeResult {
   race   Race       @relation(fields: [raceId], references: [id], onDelete: Cascade)
   teamId String
   team   Team       @relation(fields: [teamId], references: [id])
-  timeMs Int?       // Millisekunden; null bei DNS/DNF
+  timeMs Int?
   status TimeStatus @default(OK)
 
   @@unique([raceId, teamId])
@@ -161,8 +161,8 @@ model PursuitRound {
   id       String  @id @default(cuid())
   raceId   String
   race     Race    @relation(fields: [raceId], references: [id], onDelete: Cascade)
-  round    String  // QUAL | QF | SF | GOLD | BRONZE
-  heat     Int     // laufende Nummer innerhalb der Runde
+  round    String
+  heat     Int
   team1Id  String?
   team1    Team?   @relation("team1",  fields: [team1Id],  references: [id])
   team2Id  String?
