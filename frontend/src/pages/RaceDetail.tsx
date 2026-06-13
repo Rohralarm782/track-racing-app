@@ -3,7 +3,6 @@ import { Link, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAdmin } from '../components/Layout';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
 interface Team { id: string; number: number; name: string; rider1?: string|null; rider2?: string|null; }
 interface SprintResult { id: string; position: number; team: Team; }
 interface Sprint { id: string; number: number; isFinale: boolean; results: SprintResult[]; }
@@ -13,7 +12,8 @@ interface TeamStanding {
   teamId: string; teamNumber: number; teamName: string;
   rider1?: string|null; rider2?: string|null;
   total: number; sprintPoints: number; lapPoints: number; omniumPoints: number;
-  wins: number; seconds: number; thirds: number; fourths: number; lapBalance: number;
+  wins: number; seconds: number; thirds: number; fourths: number;
+  lapBalance: number; finalePosition?: number | null;
 }
 interface Race {
   id: string; name: string; type: string; status: string; finaleActive: boolean;
@@ -23,7 +23,6 @@ interface Race {
   scoreboard: TeamStanding[]|null;
 }
 
-// ─── Scoring helpers ──────────────────────────────────────────────────────────
 const SPRINT_PTS: Record<number, number> = { 1: 5, 2: 3, 3: 2, 4: 1 };
 
 function sprintPts(sprint: Sprint, teamId: string): number|null {
@@ -32,33 +31,29 @@ function sprintPts(sprint: Sprint, teamId: string): number|null {
   return (SPRINT_PTS[r.position] ?? 0) * (sprint.isFinale ? 2 : 1);
 }
 
-// ─── Component ────────────────────────────────────────────────────────────────
 type SlotEntry = { teamId: string; teamNumber: number; teamName: string }|null;
 
 export default function RaceDetail() {
-  const { id }       = useParams<{ id: string }>();
-  const { isAdmin }  = useAdmin();
+  const { id }      = useParams<{ id: string }>();
+  const { isAdmin } = useAdmin();
   const [race, setRace]       = useState<Race|null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState('');
 
-  // Sprint entry/edit
-  const [entryOpen, setEntryOpen]         = useState(false);
-  const [editingSprintId, setEditingId]   = useState<string|null>(null);
-  const [slots, setSlots]                 = useState<SlotEntry[]>([null,null,null,null]);
-  const [activeSlot, setActiveSlot]       = useState(0);
-  const [isFinale, setIsFinale]           = useState(false);
-  const [savingSprint, setSavingSprint]   = useState(false);
+  const [entryOpen, setEntryOpen]       = useState(false);
+  const [editingSprintId, setEditingId] = useState<string|null>(null);
+  const [slots, setSlots]               = useState<SlotEntry[]>([null,null,null,null]);
+  const [activeSlot, setActiveSlot]     = useState(0);
+  const [isFinale, setIsFinale]         = useState(false);
+  const [savingSprint, setSavingSprint] = useState(false);
 
-  // Lap entry
   const [lapDelta, setLapDelta]           = useState<1|-1>(1);
   const [lapPickerOpen, setLapPickerOpen] = useState(false);
   const [savingLap, setSavingLap]         = useState(false);
 
-  // Omnium
-  const [omniumOpen, setOmniumOpen]       = useState(false);
-  const [omniumValues, setOmniumValues]   = useState<Record<string,string>>({});
-  const [savingOmnium, setSavingOmnium]   = useState(false);
+  const [omniumOpen, setOmniumOpen]     = useState(false);
+  const [omniumValues, setOmniumValues] = useState<Record<string,string>>({});
+  const [savingOmnium, setSavingOmnium] = useState(false);
 
   const fetchRace = useCallback(async () => {
     if (!id) return;
@@ -75,18 +70,39 @@ export default function RaceDetail() {
     return () => clearInterval(t);
   }, [fetchRace]);
 
-  // ── Sprint entry ────────────────────────────────────────────────────────────
   function openNew() {
-    setSlots([null,null,null,null]); setActiveSlot(0); setIsFinale(false);
-    setEditingId(null); setEntryOpen(true);
+    setSlots([null,null,null,null]);
+    setActiveSlot(0); setIsFinale(false); setEditingId(null); setEntryOpen(true);
   }
 
   function openEdit(sprint: Sprint) {
-    const s: SlotEntry[] = [null,null,null,null];
-    for (const r of sprint.results) s[r.position-1] = { teamId: r.team.id, teamNumber: r.team.number, teamName: r.team.name };
+    const teams = race?.category.teams ?? [];
+    const numSlots = sprint.isFinale ? teams.length : 4;
+    const s: SlotEntry[] = Array(numSlots).fill(null);
+    for (const r of sprint.results) {
+      if (r.position - 1 < numSlots)
+        s[r.position-1] = { teamId: r.team.id, teamNumber: r.team.number, teamName: r.team.name };
+    }
     setSlots(s); setIsFinale(sprint.isFinale); setEditingId(sprint.id);
-    setActiveSlot(s.findIndex(x => x === null) === -1 ? 0 : s.findIndex(x => x === null));
+    const firstEmpty = s.findIndex(x => x === null);
+    setActiveSlot(firstEmpty === -1 ? 0 : firstEmpty);
     setEntryOpen(true);
+  }
+
+  function handleFinaleToggle(checked: boolean) {
+    const teams = race?.category.teams ?? [];
+    setIsFinale(checked);
+    if (checked) {
+      // Alle Teams → N Slots
+      const newSlots: SlotEntry[] = Array(teams.length).fill(null);
+      slots.forEach((s, i) => { if (i < newSlots.length) newSlots[i] = s; });
+      setSlots(newSlots);
+      if (activeSlot >= teams.length) setActiveSlot(0);
+    } else {
+      // Zurück zu 4 Slots
+      setSlots([slots[0]??null, slots[1]??null, slots[2]??null, slots[3]??null]);
+      if (activeSlot > 3) setActiveSlot(0);
+    }
   }
 
   function selectTeam(team: Team) {
@@ -115,7 +131,6 @@ export default function RaceDetail() {
     await api.delete(`/api/sprints/${sid}`); await fetchRace();
   }
 
-  // ── Lap ─────────────────────────────────────────────────────────────────────
   async function saveLap(team: Team) {
     if (!id) return; setSavingLap(true);
     try {
@@ -129,13 +144,11 @@ export default function RaceDetail() {
     await api.delete(`/api/laps/${lid}`); await fetchRace();
   }
 
-  // ── Omnium ───────────────────────────────────────────────────────────────────
   function openOmnium() {
     if (!race) return;
     const init: Record<string,string> = {};
-    for (const t of race.category.teams) {
+    for (const t of race.category.teams)
       init[t.id] = String(race.omniumScores.find(o => o.team.id === t.id)?.points ?? 0);
-    }
     setOmniumValues(init); setOmniumOpen(true);
   }
 
@@ -150,7 +163,6 @@ export default function RaceDetail() {
     finally { setSavingOmnium(false); }
   }
 
-  // ── Render ───────────────────────────────────────────────────────────────────
   if (loading) return <div className="page container"><div className="loading"><span className="spinner" /> Lädt…</div></div>;
   if (!race) return <div className="page container"><div className="alert alert-error">{error||'Nicht gefunden'}</div></div>;
 
@@ -160,8 +172,9 @@ export default function RaceDetail() {
   const nextNum = (race.sprints[race.sprints.length-1]?.number ?? 0) + 1;
   const usedIds = new Set(slots.filter(Boolean).map(s => s!.teamId));
   const hasOmnium = race.omniumScores.length > 0;
+  const hasFinale = race.sprints.some(s => s.isFinale);
   const filledSlots = slots.filter(Boolean).length;
-  const posLabel = ['1. Platz','2. Platz','3. Platz','4. Platz'];
+  const canSkip = slots.findIndex((s, i) => i > activeSlot && s === null) !== -1;
 
   return (
     <div className="page container">
@@ -193,33 +206,59 @@ export default function RaceDetail() {
       {isAdmin && entryOpen && (
         <div className="card mb-4" style={{borderColor:'#bfdbfe',background:'#f0f7ff'}}>
           <div className="flex-between" style={{marginBottom:12}}>
-            <h3>{editingSprintId ? `Sprint bearbeiten` : `Sprint ${nextNum}`}</h3>
+            <h3>{editingSprintId ? 'Sprint bearbeiten' : `Sprint ${nextNum}`}</h3>
             <label style={{display:'flex',alignItems:'center',gap:6,fontSize:13,cursor:'pointer'}}>
-              <input type="checkbox" checked={isFinale} onChange={e=>setIsFinale(e.target.checked)} />
+              <input type="checkbox" checked={isFinale} onChange={e=>handleFinaleToggle(e.target.checked)} />
               Finale (doppelte Punkte)
             </label>
           </div>
 
-          {/* Position slots */}
-          <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8,marginBottom:14}}>
+          {/* Position slots — kompakt im Finale */}
+          <div style={{
+            display:'grid',
+            gridTemplateColumns: isFinale ? 'repeat(auto-fill, minmax(60px, 1fr))' : 'repeat(4, 1fr)',
+            gap: isFinale ? 4 : 8,
+            marginBottom:14,
+            maxHeight: isFinale ? 180 : 'none',
+            overflowY: isFinale ? 'auto' : 'visible',
+          }}>
             {slots.map((slot,i) => (
               <div key={i} onClick={()=>setActiveSlot(i)} style={{
                 border: activeSlot===i ? '2px solid var(--c-primary)' : '1px solid var(--c-border)',
-                borderRadius:8, padding:'8px 6px', cursor:'pointer', textAlign:'center',
+                borderRadius: isFinale ? 6 : 8,
+                padding: isFinale ? '4px 3px' : '8px 6px',
+                cursor:'pointer', textAlign:'center',
                 background: activeSlot===i ? '#dbeafe' : slot ? '#f0fff4' : 'white',
               }}>
-                <div style={{fontSize:10,color:'var(--c-text-muted)',marginBottom:3}}>{posLabel[i]}</div>
-                <div style={{fontWeight:600,fontSize:15}}>{slot ? slot.teamNumber : '—'}</div>
-                <div style={{fontSize:11,color:'var(--c-text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-                  {slot ? slot.teamName : ''}
+                <div style={{fontSize:9,color:'var(--c-text-muted)',marginBottom:isFinale?1:3}}>
+                  {i+1}.
                 </div>
+                <div style={{fontWeight:600,fontSize:isFinale?13:15}}>
+                  {slot ? slot.teamNumber : '—'}
+                </div>
+                {!isFinale && (
+                  <div style={{fontSize:11,color:'var(--c-text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                    {slot ? slot.teamName : ''}
+                  </div>
+                )}
               </div>
             ))}
           </div>
 
           {/* Team picker */}
           <div style={{marginBottom:12}}>
-            <div className="text-xs text-muted" style={{marginBottom:6}}>{posLabel[activeSlot]} wählen:</div>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+              <span className="text-xs text-muted">{activeSlot+1}. Platz wählen:</span>
+              {canSkip && (
+                <button type="button" className="btn btn-ghost btn-sm" style={{fontSize:11,padding:'3px 8px'}}
+                  onClick={()=>{
+                    const next = slots.findIndex((s,i)=>i>activeSlot&&s===null);
+                    if (next!==-1) setActiveSlot(next);
+                  }}>
+                  Überspringen →
+                </button>
+              )}
+            </div>
             <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(72px,1fr))',gap:6}}>
               {teams.map(team => {
                 const used = usedIds.has(team.id) && slots[activeSlot]?.teamId !== team.id;
@@ -246,8 +285,11 @@ export default function RaceDetail() {
           <div className="flex-between">
             <div style={{display:'flex',alignItems:'center',gap:12}}>
               <button className="btn btn-ghost" onClick={()=>setEntryOpen(false)}>Abbrechen</button>
-              {filledSlots > 0 && filledSlots < 4 && (
-                <span className="text-xs text-muted">{4-filledSlots} Platz/Plätze leer — kann später bearbeitet werden</span>
+              {isFinale && filledSlots > 0 && filledSlots < teams.length && (
+                <span className="text-xs text-muted">{filledSlots}/{teams.length} Teams eingetragen</span>
+              )}
+              {!isFinale && filledSlots > 0 && filledSlots < 4 && (
+                <span className="text-xs text-muted">{4-filledSlots} Platz/Plätze leer — später bearbeiten</span>
               )}
             </div>
             <button className="btn btn-primary" onClick={saveSprint}
@@ -335,7 +377,7 @@ export default function RaceDetail() {
         </div>
       )}
 
-      {/* ── Scoreboard: Sprints als Spalten ── */}
+      {/* ── Scoreboard ── */}
       {race.scoreboard && race.scoreboard.length > 0 && (
         <div className="mb-4">
           <div className="section-header" style={{marginBottom:8}}>
@@ -343,7 +385,7 @@ export default function RaceDetail() {
             <span className="text-xs text-muted">aktualisiert alle 6s</span>
           </div>
           <div className="table-wrap" style={{overflowX:'auto'}}>
-            <table className="table" style={{minWidth: 200 + race.sprints.length * 48 + (hasOmnium?48:0)}}>
+            <table className="table" style={{minWidth: 220 + race.sprints.length*48 + (hasOmnium?48:0) + (hasFinale?36:0)}}>
               <thead>
                 <tr>
                   <th style={{width:28}}>#</th>
@@ -351,9 +393,12 @@ export default function RaceDetail() {
                   <th style={{minWidth:100}}>Name</th>
                   {race.sprints.map(s=>(
                     <th key={s.id} style={{textAlign:'center',width:48,fontSize:11}}>
-                      {s.isFinale ? <span>S{s.number}<span style={{color:'var(--c-warning)'}}>★</span></span> : `S${s.number}`}
+                      {s.isFinale
+                        ? <span>S{s.number}<span style={{color:'var(--c-warning)'}}>★</span></span>
+                        : `S${s.number}`}
                     </th>
                   ))}
+                  {hasFinale && <th style={{textAlign:'center',width:36,fontSize:11}} title="Finale-Platzierung (Tiebreaker)">F.</th>}
                   <th style={{textAlign:'center',width:52}}>R.</th>
                   {hasOmnium && <th style={{textAlign:'center',width:48}}>Omn.</th>}
                   <th style={{textAlign:'right',width:52}}>Ges.</th>
@@ -384,6 +429,11 @@ export default function RaceDetail() {
                         </td>
                       );
                     })}
+                    {hasFinale && (
+                      <td style={{textAlign:'center',fontSize:12,color:'var(--c-text-muted)'}}>
+                        {s.finalePosition ?? ''}
+                      </td>
+                    )}
                     <td style={{textAlign:'center',color:s.lapBalance>0?'var(--c-success)':s.lapBalance<0?'var(--c-danger)':'',fontWeight:s.lapBalance!==0?600:400}}>
                       {s.lapBalance!==0?(s.lapBalance>0?`+${s.lapBalance*20}`:`${s.lapBalance*20}`):''}
                     </td>
@@ -408,7 +458,7 @@ export default function RaceDetail() {
                   <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
                     <span style={{fontWeight:600,fontSize:13,minWidth:64}}>
                       Sprint {sprint.number}
-                      {sprint.isFinale && <span className="badge badge-yellow" style={{marginLeft:6,fontSize:10}}>Finale</span>}
+                      {sprint.isFinale && <span className="badge badge-yellow" style={{marginLeft:6,fontSize:10}}>Finale ★</span>}
                     </span>
                     <span style={{fontSize:12,color:'var(--c-text-muted)'}}>
                       {sprint.results.length===0
