@@ -54,7 +54,7 @@ router.post('/', requireAdmin, async (req, res, next) => {
     const event = await prisma.event.create({
   data: {
     name: parsed.data.name,
-    date: parsed.data.date ? new Date(parsed.data.date) : null,
+    date: parsed.data.date ? new Date(parsed.data.date) : undefined,
   },
 });
     res.status(201).json(event);
