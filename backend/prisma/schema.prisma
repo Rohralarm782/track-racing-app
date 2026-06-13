@@ -1,3 +1,4 @@
+cat > /home/claude/track-racing-app/backend/prisma/schema.prisma << 'EOF'
 generator client {
   provider = "prisma-client-js"
 }
@@ -7,11 +8,9 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ─── Enums ───────────────────────────────────────────────────────────────────
-
 enum CategoryFormat {
-  INDIVIDUAL  // Einzelrennen: nur Fahrername
-  TEAM_PAIRS  // Madison: Teamname + zwei Fahrer
+  INDIVIDUAL
+  TEAM_PAIRS
 }
 
 enum RaceType {
@@ -32,7 +31,10 @@ enum TimeStatus {
   DNF
 }
 
-// ─── Core ────────────────────────────────────────────────────────────────────
+enum FlagType {
+  DSQ
+  WARNING
+}
 
 model Event {
   id         String     @id @default(cuid())
@@ -59,6 +61,8 @@ model Team {
   category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
   number     Int
   name       String
+  club       String?
+  isFavorite Boolean  @default(false)
   rider1     String?
   rider2     String?
 
@@ -66,6 +70,7 @@ model Team {
   sprintResults SprintResult[]
   lapEvents     LapEvent[]
   timeResults   TimeResult[]
+  raceFlags     RaceFlag[]
   pursuitTeam1  PursuitRound[] @relation("team1")
   pursuitTeam2  PursuitRound[] @relation("team2")
   pursuitWinner PursuitRound[] @relation("winner")
@@ -73,14 +78,12 @@ model Team {
   @@unique([categoryId, number])
 }
 
-// ─── Race ────────────────────────────────────────────────────────────────────
-
 model Race {
   id           String          @id @default(cuid())
   categoryId   String
   category     Category        @relation(fields: [categoryId], references: [id], onDelete: Cascade)
   type         RaceType
-  format       CategoryFormat? // null = Kategorie-Format übernehmen
+  format       CategoryFormat?
   name         String
   status       RaceStatus      @default(SETUP)
   order        Int             @default(0)
@@ -92,6 +95,19 @@ model Race {
   lapEvents     LapEvent[]
   timeResults   TimeResult[]
   pursuitRounds PursuitRound[]
+  flags         RaceFlag[]
+}
+
+model RaceFlag {
+  id        String   @id @default(cuid())
+  raceId    String
+  race      Race     @relation(fields: [raceId], references: [id], onDelete: Cascade)
+  teamId    String
+  team      Team     @relation(fields: [teamId], references: [id])
+  type      FlagType
+  createdAt DateTime @default(now())
+
+  @@unique([raceId, teamId, type])
 }
 
 model OmniumScore {
@@ -104,8 +120,6 @@ model OmniumScore {
 
   @@unique([raceId, teamId])
 }
-
-// ─── Punktefahren / Madison ──────────────────────────────────────────────────
 
 model Sprint {
   id       String         @id @default(cuid())
@@ -141,8 +155,6 @@ model LapEvent {
   createdAt DateTime @default(now())
 }
 
-// ─── Temporunden ─────────────────────────────────────────────────────────────
-
 model TimeResult {
   id     String     @id @default(cuid())
   raceId String
@@ -154,8 +166,6 @@ model TimeResult {
 
   @@unique([raceId, teamId])
 }
-
-// ─── Verfolgungsrennen ────────────────────────────────────────────────────────
 
 model PursuitRound {
   id       String  @id @default(cuid())
@@ -172,3 +182,5 @@ model PursuitRound {
   winnerId String?
   winner   Team?   @relation("winner", fields: [winnerId], references: [id])
 }
+EOF
+echo "schema.prisma done"
