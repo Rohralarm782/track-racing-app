@@ -47,7 +47,8 @@ router.get('/:id', async (req, res, next) => {
 // ─── POST /api/races ──────────────────────────────────────────────────────────
 const CreateRaceSchema = z.object({
   categoryId: z.string(),
-  type: z.enum(['PUNKTEFAHREN', 'TEMPORUNDEN', 'VERFOLGUNGSRENNEN']),
+  type: z.enum(["PUNKTEFAHREN", "TEMPORUNDEN", "VERFOLGUNGSRENNEN"]),
+  format: z.enum(["INDIVIDUAL", "TEAM_PAIRS"]).optional(),
   name: z.string().min(1),
   order: z.number().int().default(0),
 });
