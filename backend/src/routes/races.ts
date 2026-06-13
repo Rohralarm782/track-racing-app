@@ -75,29 +75,54 @@ router.delete('/:id', requireAdmin, async (req, res, next) => {
 });
 
 // POST /api/races/:id/omnium
+// strategy: 'import'  → importierte Punkte übernehmen (Standard)
+//           'keep'    → vorhandene Punkte behalten, nur neue ergänzen
+//           'higher'  → jeweils die höhere Punktzahl behalten
 const OmniumBatchSchema = z.object({
   scores: z.array(z.object({ teamId: z.string(), points: z.number().int() })),
+  strategy: z.enum(['import', 'keep', 'higher']).default('import'),
 });
 
 router.post('/:id/omnium', requireAdmin, async (req, res, next) => {
   try {
     const parsed = OmniumBatchSchema.safeParse(req.body);
     if (!parsed.success) { res.status(400).json(parsed.error.flatten()); return; }
+    const { scores, strategy } = parsed.data;
     const raceId = req.params.id;
-    await prisma.$transaction(
-      parsed.data.scores.map(s =>
-        prisma.omniumScore.upsert({
-          where: { raceId_teamId: { raceId, teamId: s.teamId } },
-          create: { raceId, teamId: s.teamId, points: s.points },
-          update: { points: s.points },
+
+    if (strategy === 'higher') {
+      // Erst vorhandene Punkte laden, dann jeweils das Maximum speichern
+      const existing = await prisma.omniumScore.findMany({ where: { raceId } });
+      const existingMap = new Map(existing.map(e => [e.teamId, e.points]));
+
+      await prisma.$transaction(
+        scores.map(s => {
+          const pts = Math.max(existingMap.get(s.teamId) ?? 0, s.points);
+          return prisma.omniumScore.upsert({
+            where: { raceId_teamId: { raceId, teamId: s.teamId } },
+            create: { raceId, teamId: s.teamId, points: pts },
+            update: { points: pts },
+          });
         })
-      )
-    );
+      );
+    } else {
+      // 'import': vorhandene überschreiben | 'keep': nur neue eintragen (update leer lassen)
+      await prisma.$transaction(
+        scores.map(s =>
+          prisma.omniumScore.upsert({
+            where: { raceId_teamId: { raceId, teamId: s.teamId } },
+            create: { raceId, teamId: s.teamId, points: s.points },
+            update: strategy === 'import' ? { points: s.points } : {},
+          })
+        )
+      );
+    }
+
     res.json({ ok: true });
   } catch (e) { next(e); }
 });
 
-// POST /api/races/:id/omnium-pdf — Omnium-Vorpunkte per PDF importieren
+// POST /api/races/:id/omnium-pdf — bestehender Endpunkt unverändert
 router.post('/:id/omnium-pdf', requireAdmin, async (req, res, next) => {
   try {
     const { pdfBase64 } = req.body;
@@ -197,7 +222,7 @@ router.post('/:id/laps', requireAdmin, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// POST /api/races/:id/flags — DSQ oder Verwarnung setzen
+// POST /api/races/:id/flags
 router.post('/:id/flags', requireAdmin, async (req, res, next) => {
   try {
     const { teamId, type } = req.body;
