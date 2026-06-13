@@ -15,12 +15,12 @@ const EMPTY: Selection = {
 
 export default function CreateEvent() {
   const navigate = useNavigate();
-  const [name, setName]       = useState('');
-  const [date, setDate]       = useState('');
+  const [name, setName]         = useState('');
+  const [date, setDate]         = useState('');
   const [selected, setSelected] = useState<Selection>(EMPTY);
-  const [format, setFormat]   = useState<'INDIVIDUAL' | 'TEAM_PAIRS'>('INDIVIDUAL');
-  const [saving, setSaving]   = useState(false);
-  const [error, setError]     = useState('');
+  const [format, setFormat]     = useState<'INDIVIDUAL' | 'TEAM_PAIRS'>('INDIVIDUAL');
+  const [saving, setSaving]     = useState(false);
+  const [error, setError]       = useState('');
 
   const hasAny = AGE_CLASSES.some(a => selected[a].m || selected[a].w);
 
@@ -54,16 +54,16 @@ export default function CreateEvent() {
     }
   }
 
-  const btnStyle = (active: boolean): React.CSSProperties => ({
-    width: 52, height: 36, borderRadius: 7, cursor: 'pointer',
+  const btn = (active: boolean): React.CSSProperties => ({
+    width: 38, height: 28, borderRadius: 6, cursor: 'pointer',
     border: active ? '2px solid var(--c-primary)' : '1px solid var(--c-border)',
     background: active ? '#dbeafe' : 'var(--c-white)',
     color: active ? 'var(--c-primary)' : 'var(--c-text-muted)',
-    fontWeight: 600, fontSize: 13,
+    fontWeight: 600, fontSize: 12, padding: 0,
   });
 
   return (
-    <div className="page container" style={{ maxWidth: 500 }}>
+    <div className="page container" style={{ maxWidth: 480 }}>
       <div className="breadcrumb">
         <Link to="/">Veranstaltungen</Link><span>›</span>Neue Veranstaltung
       </div>
@@ -89,35 +89,34 @@ export default function CreateEvent() {
         </div>
 
         <div className="card mt-3">
-          <h3 style={{ marginBottom: 14 }}>
-            Altersklassen <span className="text-muted text-sm">(optional)</span>
-          </h3>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <span style={{ width: 52 }} />
-              <span style={{ width: 52, textAlign: 'center', fontSize: 12, color: 'var(--c-text-muted)', fontWeight: 500 }}>m</span>
-              <span style={{ width: 52, textAlign: 'center', fontSize: 12, color: 'var(--c-text-muted)', fontWeight: 500 }}>w</span>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+            <h3>Altersklassen <span className="text-muted text-sm">(optional)</span></h3>
+            <div style={{ display: 'flex', gap: 16 }}>
+              <span style={{ width: 38, textAlign: 'center', fontSize: 11, color: 'var(--c-text-muted)', fontWeight: 500 }}>m</span>
+              <span style={{ width: 38, textAlign: 'center', fontSize: 11, color: 'var(--c-text-muted)', fontWeight: 500 }}>w</span>
             </div>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {AGE_CLASSES.map(age => (
-              <div key={age} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <span style={{ width: 52, fontWeight: 500, fontSize: 14 }}>{age}</span>
-                {(['m', 'w'] as const).map(g => (
-                  <button key={g} type="button" style={btnStyle(selected[age][g])}
-                    onClick={() => toggle(age, g)}>
-                    {g}
-                  </button>
-                ))}
+              <div key={age} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: 13, fontWeight: 500 }}>{age}</span>
+                <div style={{ display: 'flex', gap: 16 }}>
+                  {(['m', 'w'] as const).map(g => (
+                    <button key={g} type="button" style={btn(selected[age][g])}
+                      onClick={() => toggle(age, g)}>{g}</button>
+                  ))}
+                </div>
               </div>
             ))}
           </div>
 
           {hasAny && (
-            <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--c-border)' }}>
+            <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--c-border)' }}>
               <label className="form-label">Format</label>
               <div style={{ display: 'flex', gap: 16 }}>
                 {([['INDIVIDUAL', 'Einzelrennen'], ['TEAM_PAIRS', 'Madison']] as const).map(([val, label]) => (
-                  <label key={val} style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 14 }}>
+                  <label key={val} style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 13 }}>
                     <input type="radio" name="format" value={val}
                       checked={format === val} onChange={() => setFormat(val)} />
                     {label}
