@@ -283,42 +283,47 @@ export default function PursuitPage() {
   // ════════════════════════════════════════════════════════════════════════════
   if (view === 'display') {
     return (
-      <div className="page container">
-        <div style={{
-          border: `20px solid ${style.border}`,
-          borderRadius: 12, padding: '20px 16px',
-          textAlign: 'center', minHeight: 270,
-          display: 'flex', flexDirection: 'column',
-          alignItems: 'center', justifyContent: 'center',
-          transition: 'border-color 0.25s',
-        }}>
-          <div className="text-sm text-muted" style={{ marginBottom: 6 }}>
-            {activePlan?.name ?? 'Verfolgung'} · Runde {lapCount} / {timerLaps}
-          </div>
-          <div style={{
-            fontSize: 120, fontWeight: 500, lineHeight: 1,
-            fontVariantNumeric: 'tabular-nums', letterSpacing: -2,
-            color: 'var(--c-text)',
-          }}>
-            {lastLapT !== null ? `${lastLapT.toFixed(2)}s` : '–'}
-          </div>
-          <div style={{ fontSize: 28, fontWeight: 500, marginTop: 10, color: style.text }}>
-            {style.label}
-          </div>
-          {countdown > 0 && (
-            <div className="text-xs text-muted" style={{ marginTop: 14 }}>
-              Zurück in {countdown}s
-            </div>
-          )}
-          <button className="btn btn-ghost btn-sm" style={{ marginTop: 18 }}
-            onClick={() => {
-              clearTimeout(dispTimer.current!);
-              clearInterval(cdInterval.current!);
-              setView('race');
-            }}>
-            ← Trainer
-          </button>
+      <div style={{
+        position: 'fixed', inset: 0, zIndex: 50,
+        background: 'var(--c-white)',
+        border: `16px solid ${style.border}`,
+        display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center',
+        textAlign: 'center',
+        transition: 'border-color 0.25s',
+      }}>
+        <div className="text-sm text-muted" style={{ marginBottom: 8 }}>
+          {activePlan?.name ?? 'Verfolgung'} · Runde {lapCount} / {timerLaps}
         </div>
+        <div style={{
+          fontSize: 'clamp(80px, 22vw, 40vh)',
+          fontWeight: 500, lineHeight: 1,
+          fontVariantNumeric: 'tabular-nums',
+          letterSpacing: '-0.02em',
+          color: 'var(--c-text)',
+        }}>
+          {lastLapT !== null ? `${lastLapT.toFixed(2)}s` : '–'}
+        </div>
+        <div style={{
+          fontSize: 'clamp(24px, 8vw, 14vh)',
+          fontWeight: 500, marginTop: 16, color: style.text,
+        }}>
+          {style.label}
+        </div>
+        {countdown > 0 && (
+          <div className="text-xs text-muted" style={{ marginTop: 20 }}>
+            Zurück in {countdown}s
+          </div>
+        )}
+        <button className="btn btn-ghost btn-sm"
+          style={{ position: 'absolute', bottom: 24 }}
+          onClick={() => {
+            clearTimeout(dispTimer.current!);
+            clearInterval(cdInterval.current!);
+            setView('race');
+          }}>
+          ← Trainer
+        </button>
       </div>
     );
   }
