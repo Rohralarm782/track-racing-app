@@ -181,3 +181,13 @@ model PursuitRound {
   winnerId String?
   winner   Team?   @relation("winner", fields: [winnerId], references: [id])
 }
+
+model PursuitPlan {
+  id          String   @id @default(cuid())
+  name        String
+  trackLength Float    @default(250)
+  totalLaps   Int
+  anfahrtSec  Float
+  lapTimeSec  Float
+  createdAt   DateTime @default(now())
+}
