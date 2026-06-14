@@ -48,6 +48,8 @@ export default function RaceDetail() {
   const [activeSlot, setActiveSlot]     = useState(0);
   const [isFinale, setIsFinale]         = useState(false);
   const [savingSprint, setSavingSprint] = useState(false);
+  const [sprintMode, setSprintMode]     = useState<'buttons'|'bib'>('buttons');
+  const [bibInput, setBibInput]         = useState('');
 
   // ── Lap state (shared) ────────────────────────────────────────────────────
   const [lapDelta, setLapDelta]             = useState<1|-1>(1);
@@ -165,6 +167,16 @@ export default function RaceDetail() {
   }
 
   function selectTeam(team: Team) { const ns=[...slots]; ns[activeSlot]={teamId:team.id,teamNumber:team.number,teamName:team.name}; setSlots(ns); const next=ns.findIndex((x,i)=>i>activeSlot&&x===null); if(next!==-1) setActiveSlot(next); }
+
+  function handleBibKey(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key !== 'Enter') return;
+    const num = parseInt(bibInput);
+    if (isNaN(num)) return;
+    const team = teams.find(t => t.number === num);
+    const alreadyUsed = team && usedIds.has(team.id) && slots[activeSlot]?.teamId !== team.id;
+    if (team && !alreadyUsed) { selectTeam(team); setBibInput(''); }
+    else { setBibInput(''); }
+  }
 
   async function saveSprint() {
     const results = slots.flatMap((s,i) => s ? [{teamId:s.teamId,position:i+1}] : []);
@@ -333,7 +345,7 @@ export default function RaceDetail() {
         )}
 
         {/* ── Rundenerfassung ── */}
-        {isAdmin && !tempoSchlusswertung && (
+        {isAdmin && !tempoSchlusswertung && !tempoSchlusswertungSprint && (
           <div className="card mb-4">
             <div className="flex-between" style={{marginBottom:12}}>
               <div>
@@ -557,7 +569,7 @@ export default function RaceDetail() {
         {isAdmin && (
           <div style={{display:'flex',gap:8}}>
             <button className="btn btn-secondary btn-sm" onClick={openOmnium}>Omnium-Vorpunkte</button>
-            {!entryOpen && <button className="btn btn-primary" onClick={openNew}>+ Sprint {nextNum}</button>}
+            {!hasFinale && !entryOpen && <button className="btn btn-primary" onClick={openNew}>+ Sprint {nextNum}</button>}
           </div>
         )}
       </div>
@@ -568,10 +580,22 @@ export default function RaceDetail() {
         <div className="card mb-4" style={{borderColor:'#bfdbfe',background:'#f0f7ff'}}>
           <div className="flex-between" style={{marginBottom:12}}>
             <h3>{editingSprintId?'Sprint bearbeiten':`Sprint ${nextNum}`}</h3>
-            <label style={{display:'flex',alignItems:'center',gap:6,fontSize:13,cursor:'pointer'}}>
-              <input type="checkbox" checked={isFinale} onChange={e=>handleFinaleToggle(e.target.checked)}/>
-              Finale (doppelte Punkte)
-            </label>
+            <div style={{display:'flex',alignItems:'center',gap:12}}>
+              <label style={{display:'flex',alignItems:'center',gap:6,fontSize:13,cursor:'pointer'}}>
+                <input type="checkbox" checked={isFinale} onChange={e=>handleFinaleToggle(e.target.checked)}/>
+                Finale (doppelte Punkte)
+              </label>
+              <div style={{display:'flex',border:'1px solid var(--c-border)',borderRadius:6,overflow:'hidden',fontSize:12}}>
+                <button type="button" onClick={()=>{setSprintMode('buttons');setBibInput('');}}
+                  style={{padding:'4px 10px',background:sprintMode==='buttons'?'var(--c-primary)':'transparent',color:sprintMode==='buttons'?'white':'var(--c-text-muted)',border:'none',cursor:'pointer'}}>
+                  ⊞ Buttons
+                </button>
+                <button type="button" onClick={()=>{setSprintMode('bib');setBibInput('');}}
+                  style={{padding:'4px 10px',background:sprintMode==='bib'?'var(--c-primary)':'transparent',color:sprintMode==='bib'?'white':'var(--c-text-muted)',border:'none',cursor:'pointer'}}>
+                  ⌨ Nummer
+                </button>
+              </div>
+            </div>
           </div>
           <div style={{display:'grid',gridTemplateColumns:isFinale?'repeat(auto-fill,minmax(60px,1fr))':'repeat(4,1fr)',gap:isFinale?4:8,marginBottom:14,maxHeight:isFinale?180:'none',overflowY:isFinale?'auto':'visible'}}>
             {slots.map((slot,i)=>(
@@ -587,16 +611,48 @@ export default function RaceDetail() {
               <span className="text-xs text-muted">{activeSlot+1}. Platz wählen:</span>
               {canSkip&&<button type="button" className="btn btn-ghost btn-sm" style={{fontSize:11,padding:'3px 8px'}} onClick={()=>{const n=slots.findIndex((s,i)=>i>activeSlot&&s===null);if(n!==-1)setActiveSlot(n);}}>Überspringen →</button>}
             </div>
-            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(72px,1fr))',gap:6}}>
-              {teams.map(team=>{
-                const used=usedIds.has(team.id)&&slots[activeSlot]?.teamId!==team.id;
-                const sel=slots[activeSlot]?.teamId===team.id;
-                return(<button key={team.id} type="button" onClick={()=>!used&&selectTeam(team)} style={{padding:'8px 4px',borderRadius:7,cursor:used?'not-allowed':'pointer',textAlign:'center',border:sel?'2px solid var(--c-primary)':'1px solid var(--c-border)',background:used?'#f3f4f6':sel?'#dbeafe':'var(--c-white)',opacity:used?0.4:1}}>
-                  <div style={{fontWeight:700,fontSize:16}}>{team.number}</div>
-                  <div style={{fontSize:10,color:'var(--c-text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{team.name}</div>
-                </button>);
-              })}
-            </div>
+            {sprintMode==='bib' ? (
+              <div>
+                <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:8}}>
+                  <input
+                    type="number" autoFocus placeholder={`Startnummer ${activeSlot+1}. Platz`}
+                    value={bibInput} onChange={e=>setBibInput(e.target.value)}
+                    onKeyDown={handleBibKey}
+                    className="form-input"
+                    style={{fontSize:20,fontWeight:500,textAlign:'center',width:160,padding:'10px'}}
+                  />
+                  {bibInput && (() => {
+                    const t=teams.find(x=>x.number===parseInt(bibInput));
+                    const used=t&&usedIds.has(t.id)&&slots[activeSlot]?.teamId!==t.id;
+                    return t
+                      ? <span style={{fontSize:13,color:used?'var(--c-danger)':'var(--c-success)',fontWeight:500}}>
+                          {used?'bereits vergeben':t.name+' ✓ (Enter)'}
+                        </span>
+                      : <span className="text-sm text-muted">nicht gefunden</span>;
+                  })()}
+                </div>
+                <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
+                  {slots.map((slot,i)=>(
+                    <div key={i} onClick={()=>setActiveSlot(i)} style={{border:activeSlot===i?'2px solid var(--c-primary)':'1px solid var(--c-border)',borderRadius:6,padding:'6px 10px',cursor:'pointer',background:activeSlot===i?'#dbeafe':slot?'#f0fff4':'white',fontSize:13}}>
+                      <span className="text-muted" style={{marginRight:4}}>{i+1}.</span>
+                      <span style={{fontWeight:600}}>{slot?slot.teamNumber:'—'}</span>
+                      {slot&&<span className="text-muted" style={{marginLeft:4,fontSize:11}}>{slot.teamName}</span>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(72px,1fr))',gap:6}}>
+                {teams.map(team=>{
+                  const used=usedIds.has(team.id)&&slots[activeSlot]?.teamId!==team.id;
+                  const sel=slots[activeSlot]?.teamId===team.id;
+                  return(<button key={team.id} type="button" onClick={()=>!used&&selectTeam(team)} style={{padding:'8px 4px',borderRadius:7,cursor:used?'not-allowed':'pointer',textAlign:'center',border:sel?'2px solid var(--c-primary)':'1px solid var(--c-border)',background:used?'#f3f4f6':sel?'#dbeafe':'var(--c-white)',opacity:used?0.4:1}}>
+                    <div style={{fontWeight:700,fontSize:16}}>{team.number}</div>
+                    <div style={{fontSize:10,color:'var(--c-text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{team.name}</div>
+                  </button>);
+                })}
+              </div>
+            )}
           </div>
           <div className="flex-between">
             <div style={{display:'flex',alignItems:'center',gap:12}}>
@@ -611,7 +667,7 @@ export default function RaceDetail() {
         </div>
       )}
 
-      {isAdmin&&!entryOpen&&(
+      {isAdmin&&!entryOpen&&!hasFinale&&(
         <div className="card mb-4">
           <h3 style={{marginBottom:10}}>Rundenwertung</h3>
           <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
