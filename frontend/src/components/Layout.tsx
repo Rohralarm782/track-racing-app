@@ -56,6 +56,7 @@ export default function Layout() {
       <header className="header">
         <div className="header-inner">
           <Link to="/" className="header-brand">🚴 Bahnrad-Tracker</Link>
+          <Link to="/pursuit" className="btn btn-ghost btn-sm">Verfolgung</Link>
           <div className="flex-center gap-2">
             {token ? (
               <>
