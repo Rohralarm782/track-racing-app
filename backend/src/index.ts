@@ -8,6 +8,7 @@ import teamsRouter from './routes/teams';
 import racesRouter from './routes/races';
 import { sprintsRouter, lapsRouter, raceFlagsRouter } from './routes/resources';
 import { requireAdmin } from './middleware/auth';
+import pursuitRouter from './routes/pursuit';
 
 dotenv.config();
 
@@ -31,6 +32,7 @@ app.use('/api/races',       racesRouter);
 app.use('/api/sprints',     sprintsRouter);
 app.use('/api/laps',        lapsRouter);
 app.use('/api/race-flags',  raceFlagsRouter);
+app.use('/api/pursuit-plans', pursuitRouter);
 
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);
