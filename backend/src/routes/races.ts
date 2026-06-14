@@ -3,7 +3,7 @@ import { z } from 'zod';
 import Anthropic from '@anthropic-ai/sdk';
 import prisma from '../prisma';
 import { requireAdmin } from '../middleware/auth';
-import { computePunktefahren } from '../lib/scoring';
+import { computePunktefahren, computeTemporennen } from '../lib/scoring';
 
 const router = Router();
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -32,6 +32,8 @@ router.get('/:id', async (req, res, next) => {
 
     const scoreboard = race.type === 'PUNKTEFAHREN'
       ? computePunktefahren(race.category.teams, race.sprints, race.lapEvents, race.omniumScores, race.flags)
+      : race.type === 'TEMPORUNDEN'
+      ? computeTemporennen(race.category.teams, race.sprints, race.lapEvents, race.flags)
       : null;
 
     res.json({ ...race, scoreboard });
@@ -173,6 +175,45 @@ Extrahiere Startnummern und Gesamtpunkte. Gib NUR JSON zurück:
     );
 
     res.json({ imported: matched.length, total: scores.length });
+  } catch (e) { next(e); }
+});
+
+// POST /api/races/:id/tempo-round — eine Temporunden-Runde eintragen
+// results = [] → Runde übersprungen (kein Sieger erfasst)
+// results = [{ teamId, position: 1 }] → Rundensieger
+// number = explizite Rundennummer (für Nachtragen / Überschreiben)
+const TempoRoundSchema = z.object({
+  number: z.number().int().min(1),
+  results: z.array(z.object({ teamId: z.string(), position: z.number().int().min(1) })),
+});
+
+router.post('/:id/tempo-round', requireAdmin, async (req, res, next) => {
+  try {
+    const parsed = TempoRoundSchema.safeParse(req.body);
+    if (!parsed.success) { res.status(400).json(parsed.error.flatten()); return; }
+    const { number, results } = parsed.data;
+    const raceId = req.params.id;
+
+    const sprint = await prisma.$transaction(async (tx) => {
+      // Vorhandenen Sprint mit gleicher Nummer ersetzen (Nachtragen / Korrigieren)
+      const existing = await tx.sprint.findUnique({ where: { raceId_number: { raceId, number } } });
+      if (existing) {
+        await tx.sprintResult.deleteMany({ where: { sprintId: existing.id } });
+        await tx.sprint.delete({ where: { id: existing.id } });
+      }
+
+      const s = await tx.sprint.create({ data: { raceId, number, isFinale: false } });
+      if (results.length > 0) {
+        await tx.sprintResult.createMany({
+          data: results.map(r => ({ sprintId: s.id, teamId: r.teamId, position: r.position })),
+        });
+      }
+      return tx.sprint.findUnique({
+        where: { id: s.id },
+        include: { results: { include: { team: true }, orderBy: { position: 'asc' } } },
+      });
+    });
+    res.status(201).json(sprint);
   } catch (e) { next(e); }
 });
 
