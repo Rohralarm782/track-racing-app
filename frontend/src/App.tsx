@@ -5,6 +5,7 @@ import CreateEvent from './pages/CreateEvent';
 import EventDetail from './pages/EventDetail';
 import CategoryDetail from './pages/CategoryDetail';
 import RaceDetail from './pages/RaceDetail';
+import PursuitPage from './pages/PursuitPage';
 
 const router = createBrowserRouter([
   {
@@ -16,6 +17,7 @@ const router = createBrowserRouter([
       { path: 'events/:id',     element: <EventDetail /> },
       { path: 'categories/:id', element: <CategoryDetail /> },
       { path: 'races/:id',      element: <RaceDetail /> },
+      { path: 'pursuit', element: <PursuitPage /> },
     ],
   },
 ]);
