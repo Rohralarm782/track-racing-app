@@ -229,8 +229,34 @@ export default function RaceDetail() {
   const teams = category.teams;
   const displayFormat = (race.format ?? category.format) as string;
   const isTemporennen = race.type === 'TEMPORUNDEN';
+  const isVerfolgung  = race.type === 'VERFOLGUNGSRENNEN';
 
   // ══════════════════════════════════════════════════════════════════════════
+  // VERFOLGUNGSRENNEN VIEW
+  // ══════════════════════════════════════════════════════════════════════════
+  if (isVerfolgung) {
+    return (
+      <div className="page container">
+        <div className="breadcrumb">
+          <Link to="/">Veranstaltungen</Link><span>›</span>
+          <Link to={`/events/${category.event.id}`}>{category.event.name}</Link><span>›</span>
+          <Link to={`/categories/${category.id}`}>{category.name}</Link><span>›</span>
+          {race.name}
+        </div>
+        <h1 style={{marginBottom:8}}>{race.name}</h1>
+        <p className="text-sm text-muted" style={{marginBottom:24}}>{category.name}</p>
+        <div className="alert alert-info">
+          Verfolgungsrennen werden über die Verfolgungsplanung erfasst –
+          Pläne anlegen, Timer starten und Rundenzeiten direkt dort eintragen.
+        </div>
+        <div style={{marginTop:16}}>
+          <Link to="/pursuit" className="btn btn-primary">Zur Verfolgungsplanung →</Link>
+        </div>
+      </div>
+    );
+  }
+
+    // ══════════════════════════════════════════════════════════════════════════
   // TEMPORUNDEN VIEW
   // ══════════════════════════════════════════════════════════════════════════
   if (isTemporennen) {
