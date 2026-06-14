@@ -168,6 +168,14 @@ export default function CategoryDetail() {
     } catch (e: any) { setRaceError(e.message ?? 'Fehler'); setSavingRace(false); }
   }
 
+  async function deleteRace(raceId: string, raceName: string) {
+    if (!confirm(`Rennen "${raceName}" wirklich löschen? Alle Sprints und Ergebnisse werden ebenfalls gelöscht.`)) return;
+    try {
+      await api.delete(`/api/races/${raceId}`);
+      load();
+    } catch (e: any) { alert(e.message ?? 'Fehler beim Löschen'); }
+  }
+
   if (loading) return <div className="page container"><div className="loading"><span className="spinner" /> Lädt…</div></div>;
   if (!category) return <div className="page container"><div className="alert alert-error">Kategorie nicht gefunden.</div></div>;
 
@@ -452,19 +460,30 @@ export default function CategoryDetail() {
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 24 }}>
               {races.map(race => (
-                <Link key={race.id} to={`/races/${race.id}`} className="card card-link" style={{ display: 'block' }}>
+                <div key={race.id} className="card" style={{ display: 'block' }}>
                   <div className="flex-between">
-                    <div className="flex-center gap-2">
+                    <Link to={`/races/${race.id}`} className="flex-center gap-2" style={{ textDecoration: 'none', flex: 1 }}>
                       <h3>{race.name}</h3>
                       <span className={`badge ${STATUS_BADGE[race.status]}`} style={{ fontSize: 11 }}>
                         {STATUS_LABEL[race.status]}
                       </span>
+                    </Link>
+                    <div className="flex-center gap-2">
+                      <span className="badge badge-gray" style={{ fontSize: 11 }}>
+                        {race.type === 'PUNKTEFAHREN' ? 'Punktefahren' : race.type === 'TEMPORUNDEN' ? 'Temporunden' : 'Verfolgung'}
+                      </span>
+                      {isAdmin && (
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          style={{ color: 'var(--c-danger)', fontSize: 11 }}
+                          onClick={() => deleteRace(race.id, race.name)}
+                        >
+                          Löschen
+                        </button>
+                      )}
                     </div>
-                    <span className="badge badge-gray" style={{ fontSize: 11 }}>
-                      {race.type === 'PUNKTEFAHREN' ? 'Punktefahren' : race.type === 'TEMPORUNDEN' ? 'Temporunden' : 'Verfolgung'}
-                    </span>
                   </div>
-                </Link>
+                </div>
               ))}
             </div>
           )}
