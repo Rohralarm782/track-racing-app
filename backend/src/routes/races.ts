@@ -8,6 +8,15 @@ import { computePunktefahren, computeTemporennen } from '../lib/scoring';
 const router = Router();
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
+// Status-Hilfsfunktion – nur upgraden, nie downgraden (SETUP→ACTIVE→FINISHED)
+async function advanceStatus(raceId: string, target: 'ACTIVE' | 'FINISHED') {
+  const race = await prisma.race.findUnique({ where: { id: raceId }, select: { status: true } });
+  if (!race) return;
+  if (target === 'ACTIVE'   && race.status === 'SETUP')   await prisma.race.update({ where: { id: raceId }, data: { status: 'ACTIVE' } });
+  if (target === 'FINISHED' && race.status !== 'FINISHED') await prisma.race.update({ where: { id: raceId }, data: { status: 'FINISHED' } });
+}
+
+
 router.get('/:id', async (req, res, next) => {
   try {
     const race = await prisma.race.findUnique({
@@ -213,6 +222,8 @@ router.post('/:id/tempo-round', requireAdmin, async (req, res, next) => {
         include: { results: { include: { team: true }, orderBy: { position: 'asc' } } },
       });
     });
+    // Ersten Eintrag → ACTIVE
+    if (results.length > 0) await advanceStatus(raceId, 'ACTIVE');
     res.status(201).json(sprint);
   } catch (e) { next(e); }
 });
@@ -240,6 +251,12 @@ router.post('/:id/sprints', requireAdmin, async (req, res, next) => {
         include: { results: { include: { team: true }, orderBy: { position: 'asc' } } },
       });
     });
+    // Status automatisch setzen
+    if (parsed.data.isFinale) {
+      await advanceStatus(raceId, 'FINISHED');
+    } else {
+      await advanceStatus(raceId, 'ACTIVE');
+    }
     res.status(201).json(sprint);
   } catch (e) { next(e); }
 });
@@ -259,6 +276,7 @@ router.post('/:id/laps', requireAdmin, async (req, res, next) => {
       data: { raceId: req.params.id, ...parsed.data },
       include: { team: true },
     });
+    await advanceStatus(req.params.id, 'ACTIVE');
     res.status(201).json(lap);
   } catch (e) { next(e); }
 });
