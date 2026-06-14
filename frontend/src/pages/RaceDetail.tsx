@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAdmin } from '../components/Layout';
 
-interface Team { id: string; number: number; name: string; club?: string|null; rider1?: string|null; rider2?: string|null; }
+interface Team { id: string; number: number; name: string; club?: string|null; rider1?: string|null; rider2?: string|null; isFavorite?: boolean; }
 interface SprintResult { id: string; position: number; team: Team; }
 interface Sprint { id: string; number: number; isFinale: boolean; results: SprintResult[]; }
 interface LapEvent { id: string; delta: number; createdAt: string; team: Team; }
