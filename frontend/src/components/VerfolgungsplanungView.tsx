@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 
+// ── Typen ──────────────────────────────────────────────────────────────────────
 interface Team {
   id: string;
   number: number;
@@ -13,25 +14,26 @@ interface Props {
   teams: Team[];
 }
 
-// ── Optionen ───────────────────────────────────────────────────────────────────
+// ── Konstanten ─────────────────────────────────────────────────────────────────
 const TRACK_OPTIONS = [
-  { label: '250 m (Olympia)', value: 250 },
-  { label: '333,33 m', value: 333.33 },
-  { label: '400 m', value: 400 },
+  { label: '250m', value: 250 },
+  { label: '333m', value: 333.33 },
+  { label: '400m', value: 400 },
 ];
 
-const DISTANCE_OPTIONS = [
-  { label: '750 m', value: 750 },
-  { label: '1000 m', value: 1000 },
-  { label: '2000 m', value: 2000 },
-  { label: '3000 m', value: 3000 },
-  { label: '4000 m', value: 4000 },
-];
+const ROUND_OPTIONS = [3, 4, 5, 6, 8, 10, 12, 15, 16, 18, 20, 24];
+
+const KB_OPTIONS = [50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60];
+const RZ_OPTIONS = [13, 14, 15, 16, 17, 18];
+
+// Standardumfang 700c Bahnreifen
+const DEFAULT_CIRC_MM = 2100;
 
 // ── Hilfsfunktionen ────────────────────────────────────────────────────────────
-/** Parst "4:00", "3:45.2" oder einfach "240" (Sekunden) */
-function parseTimeStr(s: string): number | null {
-  const colonMatch = s.trim().match(/^(\d+):(\d{2})(?:[.,](\d+))?$/);
+
+/** Parst "3:45.0", "3:45", "225" oder "18.32" (Sekunden) */
+function parseTime(s: string): number | null {
+  const colonMatch = s.trim().match(/^(\d+):(\d{1,2})(?:[.,](\d+))?$/);
   if (colonMatch) {
     return (
       parseInt(colonMatch[1]) * 60 +
@@ -43,369 +45,495 @@ function parseTimeStr(s: string): number | null {
   return isNaN(n) || n <= 0 ? null : n;
 }
 
-function formatSecs(s: number): string {
-  if (s < 60) return s.toFixed(2) + ' s';
-  const min = Math.floor(s / 60);
-  const secs = s % 60;
-  const secsStr = secs < 10 ? '0' + secs.toFixed(3) : secs.toFixed(3);
-  return `${min}:${secsStr}`;
+/** Formatiert Sekunden als "23.50s" (< 60s) oder "3:45.00" (≥ 60s) */
+function fmtTime(secs: number): string {
+  if (secs < 60) {
+    return secs.toFixed(2) + 's';
+  }
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  const ss = (s < 10 ? '0' : '') + s.toFixed(2);
+  return `${m}:${ss}`;
 }
 
-function calcCadence(lapSec: number, trackM: number, cr: number, sp: number, circumMm: number): number {
+/** Rollout in Metern = (KB/Rz) × Umfang */
+function rollout(kb: number, rz: number, circMm = DEFAULT_CIRC_MM): number {
+  return (kb / rz) * (circMm / 1000);
+}
+
+/** Trittfrequenz (rpm) für gegebene Rundenzeit */
+function cadence(lapSec: number, trackM: number, kb: number, rz: number, circMm = DEFAULT_CIRC_MM): number {
   const speedMs = trackM / lapSec;
-  const devM = (cr / sp) * (circumMm / 1000);
-  return (speedMs / devM) * 60;
+  return (speedMs / rollout(kb, rz, circMm)) * 60;
 }
 
-// ── Haupt-Komponente ───────────────────────────────────────────────────────────
+// ── Hauptkomponente ────────────────────────────────────────────────────────────
 export default function VerfolgungsplanungView({ teams }: Props) {
-  // Mode: Zielzeit eingeben und Rundenzeit ausrechnen — oder umgekehrt
+  // Tabs
+  const [tab, setTab] = useState<'rechner' | 'timer'>('rechner');
+
+  // Strecke
+  const [trackM, setTrackM]       = useState(250);
+  const [numRounds, setNumRounds] = useState(12);
+
+  // Modus
   const [mode, setMode] = useState<'zielzeit' | 'rundenzeit'>('zielzeit');
 
-  // Streckenparameter
-  const [trackLength, setTrackLength] = useState(250);
-  const [distance, setDistance]       = useState(4000);
+  // Zeitfelder
+  const [anfahrtStr, setAnfahrtStr]   = useState('23.5');
+  const [zielzeitStr, setZielzeitStr] = useState('3:45.0');
+  const [rdzeitStr, setRdzeitStr]     = useState('18.32');
 
-  // Zeitinput
-  const [zielzeit, setZielzeit]   = useState('4:00');
-  const [rundenzeit, setRundenzeit] = useState('15.00');
+  // Verfügbares Material — Toggle
+  const [selKB, setSelKB] = useState<Set<number>>(new Set());
+  const [selRZ, setSelRZ] = useState<Set<number>>(new Set());
 
-  // Gangeinstellung
-  const [chainring, setChainring] = useState(52);
-  const [sprocket, setSprocket]   = useState(15);
-  const [circumMm, setCircumMm]   = useState(2080);
+  const toggleKB = (kb: number) =>
+    setSelKB(p => { const n = new Set(p); n.has(kb) ? n.delete(kb) : n.add(kb); return n; });
+  const toggleRZ = (rz: number) =>
+    setSelRZ(p => { const n = new Set(p); n.has(rz) ? n.delete(rz) : n.add(rz); return n; });
 
-  const numLaps = Math.round(distance / trackLength);
+  // Timer-Plan (von Rechner an Timer übergeben)
+  const [timerPlan, setTimerPlan] = useState<number[]|null>(null);
 
-  // ── Berechnungen ──────────────────────────────────────────────────────────────
+  // ── Berechnungen ─────────────────────────────────────────────────────────────
   const calc = useMemo(() => {
+    const anfahrt = parseFloat(anfahrtStr.replace(',', '.'));
+    if (isNaN(anfahrt) || anfahrt <= 0) return null;
+
     let lapSec: number, totalSec: number;
 
     if (mode === 'zielzeit') {
-      const t = parseTimeStr(zielzeit);
-      if (!t) return null;
-      totalSec = t;
-      lapSec   = t / numLaps;
+      const total = parseTime(zielzeitStr);
+      if (!total) return null;
+      if (numRounds < 2) return null;
+      totalSec = total;
+      lapSec   = (total - anfahrt) / (numRounds - 1);
     } else {
-      const l = parseFloat(rundenzeit.replace(',', '.'));
-      if (isNaN(l) || l <= 0) return null;
-      lapSec   = l;
-      totalSec = l * numLaps;
+      const lap = parseTime(rdzeitStr);
+      if (!lap) return null;
+      lapSec   = lap;
+      totalSec = anfahrt + (numRounds - 1) * lap;
     }
 
-    const speedMs   = trackLength / lapSec;
-    const speedKmh  = speedMs * 3.6;
-    const devM      = (chainring / sprocket) * (circumMm / 1000);
-    const cadence   = (speedMs / devM) * 60;
+    if (lapSec <= 0) return null;
 
-    return { lapSec, totalSec, speedKmh, devM, cadence };
-  }, [mode, zielzeit, rundenzeit, numLaps, trackLength, chainring, sprocket, circumMm]);
+    const distM   = trackM * numRounds;
+    const speedKmh = (distM / totalSec) * 3.6;
 
-  // ── Gangvorschläge ────────────────────────────────────────────────────────────
-  const suggestions = useMemo(() => {
-    if (!calc) return [];
-    const rows: Array<{ cr: number; sp: number; dev: number; cadence: number }> = [];
+    return { anfahrt, lapSec, totalSec, distM, speedKmh };
+  }, [mode, anfahrtStr, zielzeitStr, rdzeitStr, numRounds, trackM]);
 
-    for (let cr = 46; cr <= 58; cr++) {
-      for (let sp = 13; sp <= 18; sp++) {
-        const c = calcCadence(calc.lapSec, trackLength, cr, sp, circumMm);
-        if (c >= 78 && c <= 120) {
-          rows.push({ cr, sp, dev: (cr / sp) * (circumMm / 1000), cadence: c });
+  // Gear-Kombinationen aus gewähltem Material
+  const gearRows = useMemo(() => {
+    if (!calc || selKB.size === 0 || selRZ.size === 0) return [];
+    const rows: Array<{ kb: number; rz: number; ro: number; cad: number }> = [];
+    for (const kb of selKB) {
+      for (const rz of selRZ) {
+        const cad = cadence(calc.lapSec, trackM, kb, rz);
+        if (cad >= 100 && cad <= 130) {
+          rows.push({ kb, rz, ro: rollout(kb, rz), cad });
         }
       }
     }
+    return rows.sort((a, b) => a.cad - b.cad);
+  }, [calc, selKB, selRZ, trackM]);
 
-    // Sortiert nach Abstand zur Ziel-Trittfrequenz 92 rpm
-    return rows.sort((a, b) => Math.abs(a.cadence - 92) - Math.abs(b.cadence - 92)).slice(0, 10);
-  }, [calc, trackLength, circumMm]);
+  // Rundenplan
+  const lapPlan = useMemo(() => {
+    if (!calc) return [];
+    const plan: Array<{ rnd: number; zeit: number; gesamt: number }> = [];
+    let cumul = 0;
+    for (let i = 1; i <= numRounds; i++) {
+      const t = i === 1 ? calc.anfahrt : calc.lapSec;
+      cumul += t;
+      plan.push({ rnd: i, zeit: t, gesamt: cumul });
+    }
+    return plan;
+  }, [calc, numRounds]);
 
-  // ── Render ────────────────────────────────────────────────────────────────────
+  // Plan an Timer übergeben
+  function useInTimer() {
+    if (!lapPlan.length) return;
+    setTimerPlan(lapPlan.map(l => l.gesamt));
+    setTab('timer');
+  }
+
+  // ── Render ───────────────────────────────────────────────────────────────────
   return (
     <div>
-      {/* ── Kalkulator ─────────────────────────────────────────────────────────── */}
-      <div className="card mb-4">
-        <h3 style={{ marginBottom: 14 }}>Gangplanung / Schrittmacherrechner</h3>
-
-        {/* Mode-Toggle */}
-        <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-          <button
-            className={`btn btn-sm ${mode === 'zielzeit' ? 'btn-primary' : 'btn-secondary'}`}
-            onClick={() => setMode('zielzeit')}
-          >
-            Zielzeit → Rundenzeit
-          </button>
-          <button
-            className={`btn btn-sm ${mode === 'rundenzeit' ? 'btn-primary' : 'btn-secondary'}`}
-            onClick={() => setMode('rundenzeit')}
-          >
-            Rundenzeit → Zielzeit
-          </button>
-        </div>
-
-        {/* Streckenparameter + Zeitinput */}
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))',
-            gap: 12,
-            marginBottom: 16,
-          }}
+      {/* Tabs */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
+        <button
+          className={tab === 'rechner' ? 'btn btn-primary' : 'btn btn-secondary'}
+          onClick={() => setTab('rechner')}
         >
-          <div className="form-group" style={{ margin: 0 }}>
-            <label className="form-label">Bahn</label>
-            <select
-              className="form-select"
-              value={trackLength}
-              onChange={e => setTrackLength(+e.target.value)}
-            >
-              {TRACK_OPTIONS.map(o => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
-            </select>
-          </div>
+          Verfolgungsrechner
+        </button>
+        <button
+          className={tab === 'timer' ? 'btn btn-primary' : 'btn btn-secondary'}
+          onClick={() => setTab('timer')}
+        >
+          Renntimer
+        </button>
+      </div>
 
-          <div className="form-group" style={{ margin: 0 }}>
-            <label className="form-label">Renndistanz</label>
-            <select
-              className="form-select"
-              value={distance}
-              onChange={e => setDistance(+e.target.value)}
-            >
-              {DISTANCE_OPTIONS.map(o => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
-            </select>
-          </div>
+      {/* ── VERFOLGUNGSRECHNER ──────────────────────────────────────────────────── */}
+      {tab === 'rechner' && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 28, alignItems: 'start' }}>
 
-          {mode === 'zielzeit' ? (
-            <div className="form-group" style={{ margin: 0 }}>
-              <label className="form-label">Zielzeit (m:ss)</label>
-              <input
-                className="form-input"
-                value={zielzeit}
-                onChange={e => setZielzeit(e.target.value)}
-                placeholder="4:00"
-              />
+          {/* ── Linke Spalte: Eingaben ── */}
+          <div>
+            {/* Bahn + Runden */}
+            <div style={{ display: 'flex', gap: 12, marginBottom: 16 }}>
+              <div className="form-group" style={{ margin: 0, flex: 1 }}>
+                <label className="form-label" style={{ textTransform: 'lowercase' }}>bahnlänge</label>
+                <select className="form-select" value={trackM}
+                  onChange={e => setTrackM(+e.target.value)}>
+                  {TRACK_OPTIONS.map(o => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="form-group" style={{ margin: 0, flex: 1 }}>
+                <label className="form-label" style={{ textTransform: 'lowercase' }}>runden</label>
+                <select className="form-select" value={numRounds}
+                  onChange={e => setNumRounds(+e.target.value)}>
+                  {ROUND_OPTIONS.map(n => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+              </div>
             </div>
-          ) : (
-            <div className="form-group" style={{ margin: 0 }}>
-              <label className="form-label">Rundenzeit (s)</label>
+
+            {/* Modus-Toggle */}
+            <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+              <button
+                className={`btn btn-sm ${mode === 'zielzeit' ? 'btn-primary' : 'btn-secondary'}`}
+                style={{ flex: 1 }}
+                onClick={() => setMode('zielzeit')}
+              >
+                Zielzeit → Rundenzeit
+              </button>
+              <button
+                className={`btn btn-sm ${mode === 'rundenzeit' ? 'btn-primary' : 'btn-secondary'}`}
+                style={{ flex: 1 }}
+                onClick={() => setMode('rundenzeit')}
+              >
+                Rundenzeit → Zielzeit
+              </button>
+            </div>
+
+            {/* Anfahrtszeit */}
+            <div className="form-group">
+              <label className="form-label" style={{ textTransform: 'lowercase' }}>
+                anfahrtszeit runde 1 (s)
+              </label>
               <input
                 className="form-input"
                 type="number"
-                step="0.01"
-                value={rundenzeit}
-                onChange={e => setRundenzeit(e.target.value)}
-                placeholder="15.00"
+                step="0.1"
+                value={anfahrtStr}
+                onChange={e => setAnfahrtStr(e.target.value)}
+                placeholder="23.5"
               />
             </div>
-          )}
-        </div>
 
-        {/* Gangeinstellung */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 16 }}>
-          <div className="form-group" style={{ margin: 0 }}>
-            <label className="form-label">Kettenblatt (Zähne)</label>
-            <input
-              className="form-input"
-              type="number"
-              min={36}
-              max={62}
-              value={chainring}
-              onChange={e => setChainring(+e.target.value)}
-            />
-          </div>
-          <div className="form-group" style={{ margin: 0 }}>
-            <label className="form-label">Ritzel (Zähne)</label>
-            <input
-              className="form-input"
-              type="number"
-              min={11}
-              max={22}
-              value={sprocket}
-              onChange={e => setSprocket(+e.target.value)}
-            />
-          </div>
-          <div className="form-group" style={{ margin: 0 }}>
-            <label className="form-label">Reifenumfang (mm)</label>
-            <input
-              className="form-input"
-              type="number"
-              step="10"
-              value={circumMm}
-              onChange={e => setCircumMm(+e.target.value)}
-            />
-          </div>
-        </div>
-
-        {/* Ergebnis */}
-        {calc ? (
-          <div
-            style={{
-              background: '#f0f7ff',
-              border: '1px solid #bfdbfe',
-              borderRadius: 8,
-              padding: '14px 18px',
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
-              gap: 16,
-            }}
-          >
+            {/* Zeitfeld je nach Modus */}
             {mode === 'zielzeit' ? (
+              <div className="form-group">
+                <label className="form-label" style={{ textTransform: 'lowercase' }}>
+                  zielzeit gesamt (M:SS oder s)
+                </label>
+                <input
+                  className="form-input"
+                  value={zielzeitStr}
+                  onChange={e => setZielzeitStr(e.target.value)}
+                  placeholder="3:45.0"
+                />
+              </div>
+            ) : (
+              <div className="form-group">
+                <label className="form-label" style={{ textTransform: 'lowercase' }}>
+                  rundenzeit rd. 2+ (s)
+                </label>
+                <input
+                  className="form-input"
+                  type="number"
+                  step="0.01"
+                  value={rdzeitStr}
+                  onChange={e => setRdzeitStr(e.target.value)}
+                  placeholder="18.32"
+                />
+              </div>
+            )}
+
+            {/* ── Verfügbares Material ── */}
+            <div
+              style={{
+                background: '#f7f6f2',
+                border: '1px solid var(--c-border)',
+                borderRadius: 10,
+                padding: '14px 16px',
+                marginTop: 4,
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  letterSpacing: '0.04em',
+                  color: 'var(--c-text-muted)',
+                  textTransform: 'uppercase',
+                  marginBottom: 12,
+                }}
+              >
+                verfügbares material
+              </div>
+
+              {/* Kettenblatt */}
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 12, color: 'var(--c-text-muted)', marginBottom: 6 }}>
+                  kettenblatt
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {KB_OPTIONS.map(kb => (
+                    <MaterialBtn
+                      key={kb}
+                      label={String(kb)}
+                      active={selKB.has(kb)}
+                      onClick={() => toggleKB(kb)}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              {/* Ritzel */}
+              <div>
+                <div style={{ fontSize: 12, color: 'var(--c-text-muted)', marginBottom: 6 }}>
+                  ritzel
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {RZ_OPTIONS.map(rz => (
+                    <MaterialBtn
+                      key={rz}
+                      label={String(rz)}
+                      active={selRZ.has(rz)}
+                      onClick={() => toggleRZ(rz)}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* ── Rechte Spalte: Ergebnisse ── */}
+          <div>
+            {calc ? (
               <>
-                <Tile label="Zielzeit" value={formatSecs(calc.totalSec)} />
-                <Tile label="Rundenzeit" value={calc.lapSec.toFixed(2) + ' s'} big />
+                {/* Key metrics */}
+                <div style={{ display: 'flex', gap: 24, marginBottom: 24 }}>
+                  <div>
+                    <div style={{ fontSize: 11, color: 'var(--c-text-muted)', marginBottom: 3 }}>
+                      rundenzeit rd. 2+
+                    </div>
+                    <div style={{ fontWeight: 700, fontSize: 26, letterSpacing: '-0.5px' }}>
+                      {calc.lapSec.toFixed(2)}s
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: 'var(--c-text-muted)', marginBottom: 3 }}>
+                      zielzeit / distanz
+                    </div>
+                    <div style={{ fontWeight: 700, fontSize: 26, letterSpacing: '-0.5px' }}>
+                      {fmtTime(calc.totalSec)} / {(calc.distM / 1000).toFixed(1)}km
+                    </div>
+                  </div>
+                </div>
+
+                {/* Passende Übersetzungen */}
+                {selKB.size > 0 && selRZ.size > 0 ? (
+                  <div style={{ marginBottom: 20 }}>
+                    <div style={{ fontSize: 12, color: 'var(--c-text-muted)', marginBottom: 6 }}>
+                      passende übersetzungen
+                    </div>
+                    <table className="table" style={{ fontSize: 13 }}>
+                      <thead>
+                        <tr>
+                          <th>KB / R</th>
+                          <th>Rollout</th>
+                          <th>Trittfrequenz</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {gearRows.map((g, i) => (
+                          <tr key={i}>
+                            <td style={{ fontWeight: 600 }}>{g.kb} / {g.rz}</td>
+                            <td>{g.ro.toFixed(2)}m</td>
+                            <td>{g.cad.toFixed(0)} rpm</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {gearRows.length === 0 && (
+                      <p className="form-hint">Keine Kombinationen aus gewähltem Material</p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="alert" style={{ marginBottom: 20, fontSize: 13, background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e' }}>
+                    Kettenblatt und Ritzel aus dem verfügbaren Material auswählen
+                  </div>
+                )}
+
+                {/* Rundenplan */}
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ fontSize: 12, color: 'var(--c-text-muted)', marginBottom: 6 }}>
+                    rundenplan
+                  </div>
+                  <div style={{ maxHeight: 340, overflowY: 'auto', borderRadius: 8, border: '1px solid var(--c-border)' }}>
+                    <table className="table" style={{ fontSize: 13, margin: 0 }}>
+                      <thead>
+                        <tr>
+                          <th style={{ width: 44 }}>Rd.</th>
+                          <th>Zeit</th>
+                          <th>Gesamt</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {lapPlan.map(lap => (
+                          <tr
+                            key={lap.rnd}
+                            style={{
+                              background: lap.rnd === numRounds ? '#f0fff4' : '',
+                            }}
+                          >
+                            <td style={{ color: 'var(--c-text-muted)', fontWeight: lap.rnd === numRounds ? 700 : 400 }}>
+                              {lap.rnd}
+                            </td>
+                            <td
+                              style={{
+                                fontWeight: lap.rnd > 1 ? 600 : 400,
+                                color: lap.rnd === 1 ? 'var(--c-text-muted)' : 'var(--c-text)',
+                              }}
+                            >
+                              {fmtTime(lap.zeit)}
+                            </td>
+                            <td style={{ fontWeight: lap.rnd === numRounds ? 700 : 400 }}>
+                              {fmtTime(lap.gesamt)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Plan an Timer übergeben */}
+                <button
+                  className="btn btn-secondary"
+                  style={{ width: '100%' }}
+                  onClick={useInTimer}
+                >
+                  Plan im Timer verwenden →
+                </button>
               </>
             ) : (
-              <>
-                <Tile label="Rundenzeit" value={calc.lapSec.toFixed(2) + ' s'} />
-                <Tile label="Zielzeit" value={formatSecs(calc.totalSec)} big />
-              </>
+              <div className="alert alert-info">
+                {mode === 'zielzeit'
+                  ? 'Anfahrtszeit und Zielzeit eingeben (z.B. 23.5 und 3:45.0)'
+                  : 'Anfahrtszeit und Rundenzeit eingeben (z.B. 23.5 und 18.32)'}
+              </div>
             )}
-            <Tile label="Runden" value={String(numLaps)} />
-            <Tile label="Ø km/h" value={calc.speedKmh.toFixed(1)} />
-            <Tile label="Entfaltung" value={calc.devM.toFixed(2) + ' m'} />
-            <Tile
-              label="Trittfrequenz"
-              value={calc.cadence.toFixed(0) + ' rpm'}
-              color={
-                calc.cadence < 85
-                  ? 'var(--c-warning)'
-                  : calc.cadence > 106
-                  ? 'var(--c-warning)'
-                  : 'var(--c-success)'
-              }
-            />
           </div>
-        ) : (
-          <div className="alert alert-info" style={{ margin: 0 }}>
-            {mode === 'zielzeit'
-              ? 'Zielzeit eingeben (Format: m:ss, z.B. 4:00 oder 3:55.5)'
-              : 'Rundenzeit in Sekunden eingeben (z.B. 15.20)'}
-          </div>
-        )}
-      </div>
-
-      {/* ── Gangvorschläge ──────────────────────────────────────────────────────── */}
-      {suggestions.length > 0 && (
-        <div className="card mb-4">
-          <div className="section-header" style={{ marginBottom: 8 }}>
-            <h3 style={{ margin: 0 }}>Gangvorschläge für diese Zeit</h3>
-            <span className="text-xs text-muted">Zeile anklicken → Gang übernehmen</span>
-          </div>
-          <div className="table-wrap">
-            <table className="table" style={{ fontSize: 13 }}>
-              <thead>
-                <tr>
-                  <th style={{ width: 56 }}>KB</th>
-                  <th style={{ width: 56 }}>Rz</th>
-                  <th>Übersetzung</th>
-                  <th>Entfaltung</th>
-                  <th>Trittfrequenz</th>
-                </tr>
-              </thead>
-              <tbody>
-                {suggestions.map((s, i) => {
-                  const isCurrent = s.cr === chainring && s.sp === sprocket;
-                  const isIdeal   = s.cadence >= 88 && s.cadence <= 96;
-                  return (
-                    <tr
-                      key={i}
-                      onClick={() => { setChainring(s.cr); setSprocket(s.sp); }}
-                      style={{
-                        cursor: 'pointer',
-                        background: isCurrent ? '#dbeafe' : isIdeal ? '#f0fff4' : '',
-                        fontWeight: isCurrent ? 600 : 400,
-                      }}
-                    >
-                      <td>{s.cr}{isCurrent ? ' ✓' : ''}</td>
-                      <td>{s.sp}</td>
-                      <td>{(s.cr / s.sp).toFixed(3)}</td>
-                      <td>{s.dev.toFixed(2)} m</td>
-                      <td
-                        style={{
-                          color: isIdeal ? 'var(--c-success)' : '',
-                          fontWeight: isIdeal ? 600 : 'inherit',
-                        }}
-                      >
-                        {s.cadence.toFixed(0)} rpm{isIdeal ? ' ✓' : ''}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          <p className="form-hint" style={{ marginTop: 6 }}>
-            Grün hinterlegt = Zielbereich 88–96 rpm · Blau = aktuell ausgewählter Gang
-          </p>
         </div>
       )}
 
-      {/* ── Startliste ──────────────────────────────────────────────────────────── */}
-      {teams.length > 0 && (
-        <div className="card">
-          <h3 style={{ marginBottom: 8 }}>
-            Startliste
-            <span className="text-muted text-sm" style={{ fontWeight: 400, marginLeft: 8 }}>
-              ({teams.length})
-            </span>
-          </h3>
-          <div className="table-wrap">
-            <table className="table" style={{ fontSize: 13 }}>
-              <thead>
-                <tr>
-                  <th style={{ width: 50 }}>Nr.</th>
-                  <th>Name</th>
-                  <th>Fahrer</th>
-                </tr>
-              </thead>
-              <tbody>
-                {teams.map(t => (
-                  <tr key={t.id} style={{ background: t.isFavorite ? '#fffbeb' : '' }}>
-                    <td className="num" style={{ fontWeight: 600 }}>{t.number}</td>
-                    <td>
-                      {t.isFavorite && <span style={{ marginRight: 4 }}>⭐</span>}
-                      {t.name}
-                    </td>
-                    <td className="text-muted">
-                      {[t.rider1, t.rider2].filter(Boolean).join(' / ') || '—'}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+      {/* ── RENNTIMER ───────────────────────────────────────────────────────────── */}
+      {tab === 'timer' && (
+        <RenntimerView
+          lapPlan={timerPlan}
+          numRounds={numRounds}
+          trackM={trackM}
+          onBack={() => setTab('rechner')}
+          teams={teams}
+        />
       )}
     </div>
   );
 }
 
-// ── Hilfselement ──────────────────────────────────────────────────────────────
-function Tile({
+// ── MaterialBtn ───────────────────────────────────────────────────────────────
+function MaterialBtn({
   label,
-  value,
-  big,
-  color,
+  active,
+  onClick,
 }: {
   label: string;
-  value: string;
-  big?: boolean;
-  color?: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        width: 44,
+        height: 36,
+        borderRadius: 7,
+        border: active ? '2px solid var(--c-primary)' : '1px solid var(--c-border)',
+        background: active ? '#dbeafe' : 'white',
+        color: active ? 'var(--c-primary)' : 'var(--c-text)',
+        fontWeight: active ? 700 : 400,
+        fontSize: 14,
+        cursor: 'pointer',
+        transition: 'all 0.1s',
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+// ── RenntimerView (Stub – wird in einem späteren Schritt vollständig wiederhergestellt) ──
+function RenntimerView({
+  lapPlan,
+  numRounds,
+  trackM,
+  onBack,
+  teams,
+}: {
+  lapPlan: number[] | null;
+  numRounds: number;
+  trackM: number;
+  onBack: () => void;
+  teams: Team[];
 }) {
   return (
     <div>
-      <div style={{ fontSize: 11, color: 'var(--c-text-muted)', marginBottom: 2 }}>{label}</div>
-      <div
-        style={{
-          fontWeight: 700,
-          fontSize: big ? 20 : 16,
-          color: color ?? 'var(--c-text)',
-          letterSpacing: big ? '-0.5px' : 0,
-        }}
-      >
-        {value}
+      {lapPlan ? (
+        <div className="card mb-4" style={{ background: '#f0fff4', border: '1px solid #86efac' }}>
+          <p style={{ margin: 0, fontSize: 14 }}>
+            ✓ Plan übernommen: {numRounds} Runden × {trackM}m
+          </p>
+          <p className="form-hint" style={{ marginTop: 4 }}>
+            Zielzeit Runde {numRounds}: <strong>{lapPlan[lapPlan.length - 1].toFixed(2)}s</strong>
+          </p>
+        </div>
+      ) : (
+        <div className="alert alert-info mb-4">
+          Kein Plan übergeben – im Rechner-Tab einen Plan erstellen und „Plan im Timer verwenden →" klicken.
+        </div>
+      )}
+
+      <div className="card" style={{ textAlign: 'center', padding: 40, color: 'var(--c-text-muted)' }}>
+        <div style={{ fontSize: 32, marginBottom: 12 }}>⏱</div>
+        <p style={{ margin: 0, fontWeight: 600 }}>Renntimer</p>
+        <p className="text-sm" style={{ marginTop: 6 }}>
+          Der Timer (Halbrundentracking, Sollzeit-Vergleich, Vollbildanzeige) wird in einem
+          späteren Schritt wiederhergestellt.
+        </p>
+        <button className="btn btn-secondary" style={{ marginTop: 16 }} onClick={onBack}>
+          ← Zurück zum Rechner
+        </button>
       </div>
     </div>
   );
