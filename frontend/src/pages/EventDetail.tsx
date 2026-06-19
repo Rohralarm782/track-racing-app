@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { api, type Event } from '../api/client';
 import { useAdmin } from '../components/Layout';
+import StartlistImport from '../components/StartlistImport';
 
 const FORMAT_LABEL: Record<string, string> = {
   INDIVIDUAL: 'Einzelrennen',
@@ -27,16 +28,17 @@ function formatDate(iso: string) {
 }
 
 export default function EventDetail() {
-  const { id }                      = useParams<{ id: string }>();
-  const navigate                    = useNavigate();
-  const [event, setEvent]           = useState<Event | null>(null);
-  const [loading, setLoading]       = useState(true);
-  const [showNewCat, setShowNewCat] = useState(false);
-  const [catName, setCatName]       = useState('');
-  const [catFormat, setCatFormat]   = useState<'INDIVIDUAL' | 'TEAM_PAIRS'>('INDIVIDUAL');
-  const [saving, setSaving]         = useState(false);
-  const [error, setError]           = useState('');
-  const { isAdmin }                 = useAdmin();
+  const { id }                        = useParams<{ id: string }>();
+  const navigate                      = useNavigate();
+  const [event, setEvent]             = useState<Event | null>(null);
+  const [loading, setLoading]         = useState(true);
+  const [showNewCat, setShowNewCat]   = useState(false);
+  const [showImport, setShowImport]   = useState(false);   // ← neu: Startlisten-Import
+  const [catName, setCatName]         = useState('');
+  const [catFormat, setCatFormat]     = useState<'INDIVIDUAL' | 'TEAM_PAIRS'>('INDIVIDUAL');
+  const [saving, setSaving]           = useState(false);
+  const [error, setError]             = useState('');
+  const { isAdmin }                   = useAdmin();
 
   function load() {
     if (!id) return;
@@ -78,6 +80,15 @@ export default function EventDetail() {
 
   return (
     <div className="page container">
+      {/* Startlisten-Import Modal */}
+      {showImport && id && (
+        <StartlistImport
+          eventId={id}
+          onDone={() => { setShowImport(false); load(); }}
+          onClose={() => setShowImport(false)}
+        />
+      )}
+
       <div className="breadcrumb">
         <Link to="/">Veranstaltungen</Link>
         <span>›</span>
@@ -101,9 +112,15 @@ export default function EventDetail() {
       <div className="section-header">
         <h2 style={{ margin: 0 }}>Kategorien</h2>
         {isAdmin && (
-          <button className="btn btn-primary btn-sm" onClick={() => setShowNewCat(!showNewCat)}>
-            {showNewCat ? '✕ Schließen' : '+ Kategorie'}
-          </button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {/* ← neu: Startlisten-Import Button */}
+            <button className="btn btn-secondary btn-sm" onClick={() => setShowImport(true)}>
+              📄 Startliste importieren
+            </button>
+            <button className="btn btn-primary btn-sm" onClick={() => setShowNewCat(!showNewCat)}>
+              {showNewCat ? '✕ Schließen' : '+ Kategorie'}
+            </button>
+          </div>
         )}
       </div>
 
@@ -149,38 +166,52 @@ export default function EventDetail() {
 
       {event.categories.length === 0 ? (
         <div className="empty">
-          <p>Noch keine Kategorien.</p>
-          {isAdmin && !showNewCat && (
-            <button className="btn btn-primary" onClick={() => setShowNewCat(true)}>
-              Erste Kategorie anlegen
-            </button>
+          <p>Noch keine Kategorien angelegt.</p>
+          {isAdmin && (
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+              <button className="btn btn-secondary" onClick={() => setShowImport(true)}>
+                📄 Startliste importieren
+              </button>
+              <button className="btn btn-primary" onClick={() => setShowNewCat(true)}>
+                + Erste Kategorie
+              </button>
+            </div>
           )}
         </div>
-      ) : event.categories.map(cat => (
-        <Link to={`/categories/${cat.id}`} key={cat.id} className="card card-link" style={{ display: 'block' }}>
-          <div className="flex-between">
-            <div>
-              <div className="flex-center gap-2">
-                <h3>{cat.name}</h3>
-                <span className="badge badge-gray" style={{ fontSize: 11 }}>
-                  {FORMAT_LABEL[cat.format]}
-                </span>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {event.categories.map(cat => (
+            <Link
+              key={cat.id}
+              to={`/categories/${cat.id}`}
+              className="card card-link"
+              style={{ display: 'block' }}
+            >
+              <div className="flex-between">
+                <div>
+                  <h3 style={{ marginBottom: 3 }}>{cat.name}</h3>
+                  <p className="text-sm text-muted" style={{ margin: 0 }}>
+                    {FORMAT_LABEL[cat.format] ?? cat.format} · {cat._count.teams} Teilnehmer
+                  </p>
+                </div>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                  {cat.races.map(race => (
+                    <span
+                      key={race.id}
+                      className={`badge ${STATUS_BADGE[race.status] ?? 'badge-gray'}`}
+                    >
+                      {race.name}
+                    </span>
+                  ))}
+                  {cat.races.length === 0 && (
+                    <span className="badge badge-gray">Keine Rennen</span>
+                  )}
+                </div>
               </div>
-              <p className="text-sm text-muted" style={{ margin: '4px 0 0' }}>
-                {cat._count.teams} Teilnehmer
-                {cat.races.length > 0 && ` · ${cat.races.length} Rennen`}
-              </p>
-            </div>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-              {cat.races.map(r => (
-                <span key={r.id} className={`badge ${STATUS_BADGE[r.status]}`}>
-                  {RACE_TYPE_LABEL[r.type]}
-                </span>
-              ))}
-            </div>
-          </div>
-        </Link>
-      ))}
+            </Link>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
