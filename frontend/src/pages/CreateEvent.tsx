@@ -7,9 +7,9 @@ type AgeClass = typeof AGE_CLASSES[number];
 type Selection = Record<AgeClass, { m: boolean; w: boolean }>;
 
 const EMPTY: Selection = {
-  U15: { m: false, w: false },
-  U17: { m: false, w: false },
-  U19: { m: false, w: false },
+  U15:   { m: false, w: false },
+  U17:   { m: false, w: false },
+  U19:   { m: false, w: false },
   Elite: { m: false, w: false },
 };
 
@@ -18,11 +18,8 @@ export default function CreateEvent() {
   const [name, setName]         = useState('');
   const [date, setDate]         = useState('');
   const [selected, setSelected] = useState<Selection>(EMPTY);
-  const [format, setFormat]     = useState<'INDIVIDUAL' | 'TEAM_PAIRS'>('INDIVIDUAL');
   const [saving, setSaving]     = useState(false);
   const [error, setError]       = useState('');
-
-  const hasAny = AGE_CLASSES.some(a => selected[a].m || selected[a].w);
 
   function toggle(age: AgeClass, g: 'm' | 'w') {
     setSelected(prev => ({ ...prev, [age]: { ...prev[age], [g]: !prev[age][g] } }));
@@ -42,7 +39,7 @@ export default function CreateEvent() {
         AGE_CLASSES.flatMap(age =>
           (['m', 'w'] as const).flatMap(g =>
             selected[age][g]
-              ? [api.post('/api/categories', { eventId: ev.id, name: `${age} ${g}`, format })]
+              ? [api.post('/api/categories', { eventId: ev.id, name: `${age} ${g}`, format: 'INDIVIDUAL' })]
               : []
           )
         )
@@ -110,27 +107,11 @@ export default function CreateEvent() {
               </div>
             ))}
           </div>
-
-          {hasAny && (
-            <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--c-border)' }}>
-              <label className="form-label">Format</label>
-              <div style={{ display: 'flex', gap: 16 }}>
-                {([['INDIVIDUAL', 'Einzelrennen'], ['TEAM_PAIRS', 'Madison']] as const).map(([val, label]) => (
-                  <label key={val} style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 13 }}>
-                    <input type="radio" name="format" value={val}
-                      checked={format === val} onChange={() => setFormat(val)} />
-                    {label}
-                  </label>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
 
         <div className="flex-between mt-4">
           <Link to="/" className="btn btn-ghost">Abbrechen</Link>
-          <button type="submit" className="btn btn-primary btn-lg"
-            disabled={saving || !name}>
+          <button type="submit" className="btn btn-primary btn-lg" disabled={saving || !name}>
             {saving ? 'Erstelle…' : 'Veranstaltung erstellen'}
           </button>
         </div>
