@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAdmin } from '../components/Layout';
-import VerfolgungsplanungView from '../components/VerfolgungsplanungView';
+import VerfolgungsplanungView, { PlanSaveData } from '../components/VerfolgungsplanungView';
 
 interface Team { id: string; number: number; name: string; club?: string|null; rider1?: string|null; rider2?: string|null; isFavorite?: boolean; }
 interface SprintResult { id: string; position: number; team: Team; }
@@ -151,6 +151,11 @@ export default function RaceDetail() {
   const canSkip=slots.findIndex((s,i)=>i>activeSlot&&s===null)!==-1;
 
   // ── VERFOLGUNGSRENNEN ─────────────────────────────────────────────────────────
+  async function handleSavePlan(data: PlanSaveData) {
+    await api.post('/api/pursuit-plans', data);
+  }
+
+  // ── VERFOLGUNGSRENNEN ─────────────────────────────────────────────────────────
   if (race.type === 'VERFOLGUNGSRENNEN') {
     return (
       <div className="page container">
@@ -169,7 +174,11 @@ export default function RaceDetail() {
           </div>
         </div>
         {error && <div className="alert alert-error mb-3">{error}</div>}
-        <VerfolgungsplanungView teams={teams} />
+        <VerfolgungsplanungView
+          teams={teams}
+          isAdmin={isAdmin}
+          onSave={isAdmin ? handleSavePlan : undefined}
+        />
       </div>
     );
   }
