@@ -19,6 +19,7 @@ export interface PlanSaveData {
   totalSec: number;
   selectedKb: number | null;
   selectedRz: number | null;
+  notes: string | null;
 }
 
 interface Props {
@@ -36,7 +37,7 @@ const TRACK_OPTIONS = [
   { label: '400m', value: 400 },
 ];
 
-const ROUND_OPTIONS = [3, 4, 5, 6, 8, 10, 12, 15, 16, 18, 20, 24];
+const ROUND_OPTIONS = [6, 8, 10, 12, 14, 16];
 
 const KB_OPTIONS = [50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60];
 const RZ_OPTIONS = [13, 14, 15, 16, 17, 18];
@@ -92,6 +93,7 @@ export default function VerfolgungsplanungView({ teams = [], isAdmin = false, on
 
   /** Ausgewählter Gang (durch Klick in Tabelle) */
   const [selectedGear, setSelectedGear] = useState<{ kb: number; rz: number } | null>(null);
+  const [planName, setPlanName] = useState('');
   const [saving, setSaving] = useState(false);
 
   const [timerPlan, setTimerPlan] = useState<number[] | null>(null);
@@ -178,7 +180,9 @@ export default function VerfolgungsplanungView({ teams = [], isAdmin = false, on
         totalSec: calc.totalSec,
         selectedKb: selectedGear?.kb ?? null,
         selectedRz: selectedGear?.rz ?? null,
+        notes: planName.trim() || null,
       });
+      setPlanName('');
     } finally {
       setSaving(false);
     }
@@ -403,16 +407,25 @@ export default function VerfolgungsplanungView({ teams = [], isAdmin = false, on
                     Plan im Timer verwenden →
                   </button>
                   {isAdmin && onSave && (
-                    <button
-                      className="btn btn-primary"
-                      style={{ width: '100%' }}
-                      onClick={handleSave}
-                      disabled={saving}
-                    >
-                      {saving ? 'Speichert…' : selectedGear
-                        ? `Plan speichern (Gang ${selectedGear.kb}/${selectedGear.rz})`
-                        : 'Plan speichern (kein Gang gewählt)'}
-                    </button>
+                    <>
+                      <input
+                        className="form-input"
+                        placeholder="Planname (z.B. Max Mustermann · LVM U17)"
+                        value={planName}
+                        onChange={e => setPlanName(e.target.value)}
+                        style={{ fontSize: 13 }}
+                      />
+                      <button
+                        className="btn btn-primary"
+                        style={{ width: '100%' }}
+                        onClick={handleSave}
+                        disabled={saving}
+                      >
+                        {saving ? 'Speichert…' : selectedGear
+                          ? `Plan speichern (Gang ${selectedGear.kb}/${selectedGear.rz})`
+                          : 'Plan speichern (kein Gang gewählt)'}
+                      </button>
+                    </>
                   )}
                 </div>
               </>
