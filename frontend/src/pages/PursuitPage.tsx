@@ -27,74 +27,62 @@ function cadenceFromPlan(plan: SavedPlan): number {
   const dev = (plan.selectedKb! / plan.selectedRz!) * (DEFAULT_CIRC_MM / 1000);
   return (speedMs / dev) * 60;
 }
-
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleString('de-DE', {
-    weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric',
+    weekday: 'short', day: '2-digit', month: '2-digit',
     hour: '2-digit', minute: '2-digit',
   });
 }
 
-// ── Gespeicherter Plan Card ───────────────────────────────────────────────────
-function SavedPlanCard({
-  plan,
-  isAdmin,
-  onDelete,
-}: {
+// ── Kompakte Plan-Karte ────────────────────────────────────────────────────────
+function SavedPlanCard({ plan, isAdmin, onDelete }: {
   plan: SavedPlan;
   isAdmin: boolean;
   onDelete: () => void;
 }) {
-  const hasGear = plan.selectedKb !== null && plan.selectedRz !== null;
-  const ro  = hasGear ? rollout(plan.selectedKb!, plan.selectedRz!) : null;
-  const cad = hasGear ? cadenceFromPlan(plan) : null;
+  const hasGear    = plan.selectedKb !== null && plan.selectedRz !== null;
+  const ro         = hasGear ? rollout(plan.selectedKb!, plan.selectedRz!) : null;
+  const cad        = hasGear ? cadenceFromPlan(plan) : null;
   const totalDistM = Math.round(plan.numRounds * plan.trackM);
 
   return (
-    <div
-      className="card mb-4"
-      style={{ border: '2px solid var(--c-primary)', background: '#f8fbff', padding: '14px 18px' }}
-    >
-      {/* Header: Name + Datum + Löschen */}
-      <div className="flex-between" style={{ marginBottom: 10 }}>
+    <div className="card mb-3" style={{ border: '1.5px solid var(--c-primary)', background: '#f8fbff', padding: '12px 16px' }}>
+      {/* Header */}
+      <div className="flex-between" style={{ marginBottom: 8 }}>
         <div>
-          {plan.notes && (
-            <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 2 }}>{plan.notes}</div>
-          )}
-          <div style={{ fontSize: 11, color: 'var(--c-primary)', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase' }}>
-            Gespeicherter Plan · {formatDate(plan.createdAt)}
-          </div>
+          {plan.notes && <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 1 }}>{plan.notes}</div>}
+          <div style={{ fontSize: 11, color: 'var(--c-text-muted)' }}>{formatDate(plan.createdAt)}</div>
         </div>
         {isAdmin && (
-          <button className="btn btn-ghost btn-sm" style={{ color: 'var(--c-danger)', fontSize: 12 }} onClick={onDelete}>
+          <button className="btn btn-ghost btn-sm" style={{ color: 'var(--c-danger)', fontSize: 11 }} onClick={onDelete}>
             Löschen
           </button>
         )}
       </div>
 
-      {/* Alle Metriken in einer Zeile */}
-      <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'baseline', marginBottom: 12 }}>
+      {/* Metriken */}
+      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'baseline', marginBottom: hasGear ? 10 : 0 }}>
         <span style={{ fontSize: 13, color: 'var(--c-text-muted)' }}>
-          Zielzeit <strong style={{ color: 'var(--c-text)', fontSize: 15 }}>{fmtTime(plan.totalSec)}</strong>
+          Zielzeit <strong style={{ color: 'var(--c-text)', fontSize: 14 }}>{fmtTime(plan.totalSec)}</strong>
         </span>
         <span style={{ fontSize: 13, color: 'var(--c-text-muted)' }}>
-          Rundenzeit <strong style={{ color: 'var(--c-text)', fontSize: 15 }}>{plan.lapSec.toFixed(2)}s</strong>
+          Rundenzeit <strong style={{ color: 'var(--c-text)', fontSize: 14 }}>{plan.lapSec.toFixed(2)}s</strong>
         </span>
         <span style={{ fontSize: 13, color: 'var(--c-text-muted)' }}>
           {plan.numRounds} Runden · <strong style={{ color: 'var(--c-text)' }}>{totalDistM}m</strong>
         </span>
       </div>
 
-      {/* Gang – kompaktes Display */}
-      {hasGear ? (
+      {/* Gang */}
+      {hasGear && (
         <div style={{
-          background: 'var(--c-primary)', borderRadius: 8, padding: '10px 16px',
-          display: 'flex', alignItems: 'center', gap: 20,
+          background: 'var(--c-primary)', borderRadius: 7, padding: '8px 14px',
+          display: 'flex', alignItems: 'center', gap: 16,
         }}>
-          <div style={{ fontWeight: 900, fontSize: 28, color: 'white', letterSpacing: '-1px', lineHeight: 1 }}>
+          <div style={{ fontWeight: 900, fontSize: 24, color: 'white', letterSpacing: '-1px', lineHeight: 1 }}>
             {plan.selectedKb} / {plan.selectedRz}
           </div>
-          <div style={{ borderLeft: '1px solid rgba(255,255,255,0.3)', paddingLeft: 16, fontSize: 13 }}>
+          <div style={{ borderLeft: '1px solid rgba(255,255,255,0.3)', paddingLeft: 14, fontSize: 12 }}>
             <div style={{ color: 'rgba(255,255,255,0.85)' }}>
               Rollout <strong style={{ color: 'white' }}>{ro!.toFixed(2)} m</strong>
             </div>
@@ -103,8 +91,6 @@ function SavedPlanCard({
             </div>
           </div>
         </div>
-      ) : (
-        <div style={{ fontSize: 12, color: 'var(--c-text-muted)', fontStyle: 'italic' }}>Kein Gang festgelegt</div>
       )}
     </div>
   );
@@ -113,34 +99,38 @@ function SavedPlanCard({
 // ── Hauptseite ────────────────────────────────────────────────────────────────
 export default function PursuitPage() {
   const { isAdmin } = useAdmin();
-  const [savedPlan, setSavedPlan]     = useState<SavedPlan | null>(null);
-  const [loadingPlan, setLoadingPlan] = useState(true);
+  const [plans, setPlans]             = useState<SavedPlan[]>([]);
+  const [loadingPlans, setLoadingPlans] = useState(true);
   const [error, setError]             = useState('');
 
-  useEffect(() => { loadPlan(); }, []);
+  useEffect(() => { loadPlans(); }, []);
 
-  async function loadPlan() {
+  async function loadPlans() {
     try {
-      const plan = await api.get<SavedPlan | null>('/api/pursuit-plans/latest');
-      setSavedPlan(plan ?? null);
+      const data = await api.get<SavedPlan[]>('/api/pursuit-plans');
+      setPlans(data ?? []);
     } catch {
-      // Kein Plan vorhanden – kein Fehler für den User
+      // Keine Pläne – kein Fehler für den User
     } finally {
-      setLoadingPlan(false);
+      setLoadingPlans(false);
     }
   }
 
   async function handleSave(data: PlanSaveData) {
     setError('');
-    const plan = await api.post<SavedPlan>('/api/pursuit-plans', data);
-    setSavedPlan(plan);
+    try {
+      const plan = await api.post<SavedPlan>('/api/pursuit-plans', data);
+      setPlans(prev => [plan, ...prev]);
+    } catch (e: any) {
+      setError(e.message);
+    }
   }
 
-  async function handleDelete() {
-    if (!savedPlan || !confirm('Gespeicherten Plan löschen?')) return;
+  async function handleDelete(id: string) {
+    if (!confirm('Plan löschen?')) return;
     try {
-      await api.delete(`/api/pursuit-plans/${savedPlan.id}`);
-      setSavedPlan(null);
+      await api.delete(`/api/pursuit-plans/${id}`);
+      setPlans(prev => prev.filter(p => p.id !== id));
     } catch (e: any) {
       setError(e.message);
     }
@@ -151,27 +141,34 @@ export default function PursuitPage() {
       <div className="flex-between mb-4">
         <div>
           <h1>Verfolgungsplanung</h1>
-          <p className="text-sm text-muted" style={{ margin: '2px 0 0' }}>
-            Gangplanung und Schrittmacherrechner
-          </p>
+          <p className="text-sm text-muted" style={{ margin: '2px 0 0' }}>Gangplanung und Schrittmacherrechner</p>
         </div>
       </div>
 
       {error && <div className="alert alert-error mb-3">{error}</div>}
 
-      {/* Gespeicherter Plan — für alle sichtbar */}
-      {!loadingPlan && savedPlan && (
-        <SavedPlanCard plan={savedPlan} isAdmin={isAdmin} onDelete={handleDelete} />
+      {/* Gespeicherte Pläne — für alle sichtbar */}
+      {!loadingPlans && plans.length > 0 && (
+        <div className="mb-4">
+          {plans.map(plan => (
+            <SavedPlanCard
+              key={plan.id}
+              plan={plan}
+              isAdmin={isAdmin}
+              onDelete={() => handleDelete(plan.id)}
+            />
+          ))}
+        </div>
       )}
 
-      {!loadingPlan && !savedPlan && !isAdmin && (
+      {!loadingPlans && plans.length === 0 && !isAdmin && (
         <div className="alert alert-info mb-4" style={{ fontSize: 13 }}>
           Noch kein Plan gespeichert – der Trainer kann den Rechner unten verwenden und einen Plan speichern.
         </div>
       )}
 
-      {/* Trennlinie wenn Plan vorhanden */}
-      {savedPlan && (
+      {/* Trennlinie */}
+      {plans.length > 0 && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
           <div style={{ flex: 1, height: 1, background: 'var(--c-border)' }} />
           <span style={{ fontSize: 12, color: 'var(--c-text-muted)', whiteSpace: 'nowrap' }}>
@@ -181,7 +178,7 @@ export default function PursuitPage() {
         </div>
       )}
 
-      {/* Rechner — für alle nutzbar */}
+      {/* Rechner */}
       <VerfolgungsplanungView isAdmin={isAdmin} onSave={isAdmin ? handleSave : undefined} />
     </div>
   );
