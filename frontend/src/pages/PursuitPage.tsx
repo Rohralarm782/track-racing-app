@@ -35,18 +35,6 @@ function formatDate(iso: string): string {
   });
 }
 
-// ── Rundenplan aus gespeichertem Plan ─────────────────────────────────────────
-function buildLapPlan(plan: SavedPlan): Array<{ rnd: number; zeit: number; gesamt: number }> {
-  const rows = [];
-  let cumul = 0;
-  for (let i = 1; i <= plan.numRounds; i++) {
-    const t = i === 1 ? plan.anfahrtSec : plan.lapSec;
-    cumul += t;
-    rows.push({ rnd: i, zeit: t, gesamt: cumul });
-  }
-  return rows;
-}
-
 // ── Gespeicherter Plan Card ───────────────────────────────────────────────────
 function SavedPlanCard({
   plan,
@@ -57,113 +45,67 @@ function SavedPlanCard({
   isAdmin: boolean;
   onDelete: () => void;
 }) {
-  const lapPlan = buildLapPlan(plan);
   const hasGear = plan.selectedKb !== null && plan.selectedRz !== null;
   const ro  = hasGear ? rollout(plan.selectedKb!, plan.selectedRz!) : null;
   const cad = hasGear ? cadenceFromPlan(plan) : null;
+  const totalDistM = Math.round(plan.numRounds * plan.trackM);
 
   return (
     <div
       className="card mb-4"
-      style={{ border: '2px solid var(--c-primary)', background: '#f8fbff' }}
+      style={{ border: '2px solid var(--c-primary)', background: '#f8fbff', padding: '14px 18px' }}
     >
-      {/* Header */}
-      <div className="flex-between" style={{ marginBottom: 16 }}>
+      {/* Header: Name + Datum + Löschen */}
+      <div className="flex-between" style={{ marginBottom: 10 }}>
         <div>
-          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--c-primary)', textTransform: 'uppercase', marginBottom: 4 }}>
-            Gespeicherter Plan
-          </div>
-          <div style={{ fontSize: 12, color: 'var(--c-text-muted)' }}>
-            {formatDate(plan.createdAt)}
+          {plan.notes && (
+            <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 2 }}>{plan.notes}</div>
+          )}
+          <div style={{ fontSize: 11, color: 'var(--c-primary)', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase' }}>
+            Gespeicherter Plan · {formatDate(plan.createdAt)}
           </div>
         </div>
         {isAdmin && (
-          <button
-            className="btn btn-ghost btn-sm"
-            style={{ color: 'var(--c-danger)', fontSize: 12 }}
-            onClick={onDelete}
-          >
-            Plan löschen
+          <button className="btn btn-ghost btn-sm" style={{ color: 'var(--c-danger)', fontSize: 12 }} onClick={onDelete}>
+            Löschen
           </button>
         )}
       </div>
 
-      {/* Schlüssel-Metriken */}
-      <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', marginBottom: 16 }}>
-        <div>
-          <div style={{ fontSize: 11, color: 'var(--c-text-muted)', marginBottom: 2 }}>Zielzeit</div>
-          <div style={{ fontWeight: 800, fontSize: 22, letterSpacing: '-0.5px' }}>{fmtTime(plan.totalSec)}</div>
-        </div>
-        <div>
-          <div style={{ fontSize: 11, color: 'var(--c-text-muted)', marginBottom: 2 }}>Rundenzeit rd. 2+</div>
-          <div style={{ fontWeight: 700, fontSize: 20 }}>{plan.lapSec.toFixed(2)}s</div>
-        </div>
-        <div>
-          <div style={{ fontSize: 11, color: 'var(--c-text-muted)', marginBottom: 2 }}>Distanz</div>
-          <div style={{ fontWeight: 700, fontSize: 20 }}>{plan.numRounds} × {plan.trackM}m</div>
-        </div>
+      {/* Alle Metriken in einer Zeile */}
+      <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'baseline', marginBottom: 12 }}>
+        <span style={{ fontSize: 13, color: 'var(--c-text-muted)' }}>
+          Zielzeit <strong style={{ color: 'var(--c-text)', fontSize: 15 }}>{fmtTime(plan.totalSec)}</strong>
+        </span>
+        <span style={{ fontSize: 13, color: 'var(--c-text-muted)' }}>
+          Rundenzeit <strong style={{ color: 'var(--c-text)', fontSize: 15 }}>{plan.lapSec.toFixed(2)}s</strong>
+        </span>
+        <span style={{ fontSize: 13, color: 'var(--c-text-muted)' }}>
+          {plan.numRounds} Runden · <strong style={{ color: 'var(--c-text)' }}>{totalDistM}m</strong>
+        </span>
       </div>
 
-      {/* Gewählter Gang – großes Display */}
+      {/* Gang – kompaktes Display */}
       {hasGear ? (
-        <div
-          style={{
-            background: 'var(--c-primary)',
-            borderRadius: 10,
-            padding: '16px 20px',
-            marginBottom: 16,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 24,
-          }}
-        >
-          <div>
-            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.75)', fontWeight: 600, marginBottom: 4, letterSpacing: '0.05em' }}>
-              GANG
-            </div>
-            <div style={{ fontWeight: 900, fontSize: 36, color: 'white', letterSpacing: '-1px', lineHeight: 1 }}>
-              {plan.selectedKb} / {plan.selectedRz}
-            </div>
+        <div style={{
+          background: 'var(--c-primary)', borderRadius: 8, padding: '10px 16px',
+          display: 'flex', alignItems: 'center', gap: 20,
+        }}>
+          <div style={{ fontWeight: 900, fontSize: 28, color: 'white', letterSpacing: '-1px', lineHeight: 1 }}>
+            {plan.selectedKb} / {plan.selectedRz}
           </div>
-          <div style={{ borderLeft: '1px solid rgba(255,255,255,0.3)', paddingLeft: 20 }}>
-            <div style={{ color: 'rgba(255,255,255,0.85)', fontSize: 14, marginBottom: 6 }}>
-              Rollout: <strong style={{ color: 'white' }}>{ro!.toFixed(2)} m</strong>
+          <div style={{ borderLeft: '1px solid rgba(255,255,255,0.3)', paddingLeft: 16, fontSize: 13 }}>
+            <div style={{ color: 'rgba(255,255,255,0.85)' }}>
+              Rollout <strong style={{ color: 'white' }}>{ro!.toFixed(2)} m</strong>
             </div>
-            <div style={{ color: 'rgba(255,255,255,0.85)', fontSize: 14 }}>
-              Trittfrequenz: <strong style={{ color: 'white' }}>{cad!.toFixed(0)} rpm</strong>
+            <div style={{ color: 'rgba(255,255,255,0.85)', marginTop: 2 }}>
+              <strong style={{ color: 'white' }}>{cad!.toFixed(0)} rpm</strong>
             </div>
           </div>
         </div>
       ) : (
-        <div className="alert" style={{ marginBottom: 16, fontSize: 13, background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e' }}>
-          Kein Gang in diesem Plan festgelegt
-        </div>
+        <div style={{ fontSize: 12, color: 'var(--c-text-muted)', fontStyle: 'italic' }}>Kein Gang festgelegt</div>
       )}
-
-      {/* Rundenplan */}
-      <div style={{ fontSize: 12, color: 'var(--c-text-muted)', marginBottom: 6 }}>Rundenplan</div>
-      <div style={{ maxHeight: 260, overflowY: 'auto', borderRadius: 8, border: '1px solid var(--c-border)' }}>
-        <table className="table" style={{ fontSize: 13, margin: 0 }}>
-          <thead>
-            <tr>
-              <th style={{ width: 44 }}>Rd.</th>
-              <th>Zeit</th>
-              <th>Gesamt</th>
-            </tr>
-          </thead>
-          <tbody>
-            {lapPlan.map(lap => (
-              <tr key={lap.rnd} style={{ background: lap.rnd === plan.numRounds ? '#f0fff4' : '' }}>
-                <td style={{ color: 'var(--c-text-muted)', fontWeight: lap.rnd === plan.numRounds ? 700 : 400 }}>{lap.rnd}</td>
-                <td style={{ fontWeight: lap.rnd > 1 ? 600 : 400, color: lap.rnd === 1 ? 'var(--c-text-muted)' : '' }}>
-                  {fmtTime(lap.zeit)}
-                </td>
-                <td style={{ fontWeight: lap.rnd === plan.numRounds ? 700 : 400 }}>{fmtTime(lap.gesamt)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
     </div>
   );
 }
