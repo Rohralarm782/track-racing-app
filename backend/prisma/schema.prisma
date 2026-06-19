@@ -183,11 +183,15 @@ model PursuitRound {
 }
 
 model PursuitPlan {
-  id          String   @id @default(cuid())
-  name        String
-  trackLength Float    @default(250)
-  totalLaps   Int
-  anfahrtSec  Float
-  lapTimeSec  Float
-  createdAt   DateTime @default(now())
+  id         String   @id @default(cuid())
+  trackM     Float
+  numRounds  Int
+  anfahrtSec Float
+  lapSec     Float
+  totalSec   Float
+  selectedKb Int?
+  selectedRz Int?
+  notes      String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 }
