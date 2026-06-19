@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState, useMemo } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAdmin } from '../components/Layout';
+import VerfolgungsplanungView from '../components/VerfolgungsplanungView';
 
 interface Team { id: string; number: number; name: string; club?: string|null; rider1?: string|null; rider2?: string|null; isFavorite?: boolean; }
 interface SprintResult { id: string; position: number; team: Team; }
@@ -41,34 +42,22 @@ export default function RaceDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState('');
 
-  // ── Punktefahren state ────────────────────────────────────────────────────
   const [entryOpen, setEntryOpen]       = useState(false);
   const [editingSprintId, setEditingId] = useState<string|null>(null);
   const [slots, setSlots]               = useState<SlotEntry[]>([null,null,null,null]);
   const [activeSlot, setActiveSlot]     = useState(0);
   const [isFinale, setIsFinale]         = useState(false);
   const [savingSprint, setSavingSprint] = useState(false);
-  const [sprintMode, setSprintMode]     = useState<'buttons'|'bib'>('buttons');
-  const [bibInput, setBibInput]         = useState('');
 
-  // ── Lap state (shared) ────────────────────────────────────────────────────
   const [lapDelta, setLapDelta]             = useState<1|-1>(1);
   const [lapPickerOpen, setLapPickerOpen]   = useState(false);
   const [selectedLapIds, setSelectedLapIds] = useState<Set<string>>(new Set());
   const [savingLap, setSavingLap]           = useState(false);
 
-  // ── Omnium state ──────────────────────────────────────────────────────────
   const [omniumOpen, setOmniumOpen]     = useState(false);
   const [omniumValues, setOmniumValues] = useState<Record<string,string>>({});
   const [savingOmnium, setSavingOmnium] = useState(false);
   const omniumPdfRef = useRef<HTMLInputElement>(null);
-
-  // ── Temporunden state ─────────────────────────────────────────────────────
-  const [savingTempo, setSavingTempo]           = useState(false);
-  const [tempoSchlusswertung, setTempoSchlusswertung] = useState(false);
-  const [tempoSlots, setTempoSlots]             = useState<SlotEntry[]>([]);
-  const [tempoActiveSlot, setTempoActiveSlot]   = useState(0);
-  const [retroRound, setRetroRound]             = useState<number|null>(null);
 
   const fetchRace = useCallback(async () => {
     if (!id) return;
@@ -79,76 +68,6 @@ export default function RaceDetail() {
 
   useEffect(() => { fetchRace(); const t = setInterval(fetchRace, 6000); return () => clearInterval(t); }, [fetchRace]);
 
-  // ── Temporunden helpers ───────────────────────────────────────────────────
-
-  const tempoRounds = useMemo(() => {
-    if (!race || race.type !== 'TEMPORUNDEN') return [];
-    return race.sprints.filter(s => !s.isFinale).sort((a, b) => a.number - b.number);
-  }, [race]);
-
-  const currentTempoRound = useMemo(() => {
-    if (tempoRounds.length === 0) return 1;
-    return Math.max(...tempoRounds.map(s => s.number)) + 1;
-  }, [tempoRounds]);
-
-  const tempoSchlusswertungSprint = useMemo(
-    () => race?.sprints.find(s => s.isFinale) ?? null,
-    [race]
-  );
-
-  async function saveTempoRound(teamId: string|null, forRound?: number) {
-    const roundNum = forRound ?? currentTempoRound;
-    setSavingTempo(true); setError('');
-    try {
-      const results = teamId ? [{ teamId, position: 1 }] : [];
-      await api.post(`/api/races/${id}/tempo-round`, { number: roundNum, results });
-      setRetroRound(null);
-      await fetchRace();
-    } catch (e: any) { setError(e.message); }
-    finally { setSavingTempo(false); }
-  }
-
-  async function saveTempoSchlusswertung() {
-    const results = tempoSlots.flatMap((s, i) => s ? [{ teamId: s.teamId, position: i + 1 }] : []);
-    if (results.length === 0) return;
-    setSavingTempo(true); setError('');
-    try {
-      if (tempoSchlusswertungSprint) {
-        await api.put(`/api/sprints/${tempoSchlusswertungSprint.id}`, { isFinale: true, results });
-      } else {
-        await api.post(`/api/races/${id}/sprints`, { isFinale: true, results });
-      }
-      setTempoSchlusswertung(false);
-      setTempoSlots([]);
-      setTempoActiveSlot(0);
-      await fetchRace();
-    } catch (e: any) { setError(e.message); }
-    finally { setSavingTempo(false); }
-  }
-
-  function openTempoSchlusswertung() {
-    const n = teams.length;
-    if (tempoSchlusswertungSprint) {
-      const s: SlotEntry[] = Array(n).fill(null);
-      for (const r of tempoSchlusswertungSprint.results)
-        if (r.position <= n) s[r.position - 1] = { teamId: r.team.id, teamNumber: r.team.number, teamName: r.team.name };
-      setTempoSlots(s);
-    } else {
-      setTempoSlots(Array(n).fill(null));
-    }
-    setTempoActiveSlot(0);
-    setTempoSchlusswertung(true);
-  }
-
-  function selectTempoSlot(team: Team) {
-    const ns = [...tempoSlots];
-    ns[tempoActiveSlot] = { teamId: team.id, teamNumber: team.number, teamName: team.name };
-    setTempoSlots(ns);
-    const next = ns.findIndex((x, i) => i > tempoActiveSlot && x === null);
-    if (next !== -1) setTempoActiveSlot(next);
-  }
-
-  // ── Punktefahren handlers ─────────────────────────────────────────────────
   function openNew() { setSlots([null,null,null,null]); setActiveSlot(0); setIsFinale(false); setEditingId(null); setEntryOpen(true); }
 
   function openEdit(sprint: Sprint) {
@@ -168,16 +87,6 @@ export default function RaceDetail() {
 
   function selectTeam(team: Team) { const ns=[...slots]; ns[activeSlot]={teamId:team.id,teamNumber:team.number,teamName:team.name}; setSlots(ns); const next=ns.findIndex((x,i)=>i>activeSlot&&x===null); if(next!==-1) setActiveSlot(next); }
 
-  function handleBibKey(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key !== 'Enter') return;
-    const num = parseInt(bibInput);
-    if (isNaN(num)) return;
-    const team = teams.find(t => t.number === num);
-    const alreadyUsed = team && usedIds.has(team.id) && slots[activeSlot]?.teamId !== team.id;
-    if (team && !alreadyUsed) { selectTeam(team); setBibInput(''); }
-    else { setBibInput(''); }
-  }
-
   async function saveSprint() {
     const results = slots.flatMap((s,i) => s ? [{teamId:s.teamId,position:i+1}] : []);
     if (results.length===0||!id) return; setSavingSprint(true); setError('');
@@ -187,7 +96,6 @@ export default function RaceDetail() {
 
   async function deleteSprint(sid: string) { if(!confirm('Sprint löschen?')) return; await api.delete(`/api/sprints/${sid}`); await fetchRace(); }
 
-  // ── Lap handlers (shared) ─────────────────────────────────────────────────
   function openLapPicker(delta: 1|-1) { setLapDelta(delta); setSelectedLapIds(new Set()); setLapPickerOpen(true); }
   function toggleLapTeam(id: string) { setSelectedLapIds(p => { const n=new Set(p); n.has(id)?n.delete(id):n.add(id); return n; }); }
 
@@ -199,7 +107,6 @@ export default function RaceDetail() {
 
   async function deleteLap(lid: string) { await api.delete(`/api/laps/${lid}`); await fetchRace(); }
 
-  // ── Flags ─────────────────────────────────────────────────────────────────
   async function toggleFlag(teamId: string, type: 'DSQ'|'WARNING') {
     if (!id) return;
     const existing = race?.flags.find(f => f.teamId===teamId && f.type===type);
@@ -208,7 +115,6 @@ export default function RaceDetail() {
     await fetchRace();
   }
 
-  // ── Omnium ────────────────────────────────────────────────────────────────
   function openOmnium() {
     if (!race) return;
     const init: Record<string,string> = {};
@@ -227,324 +133,16 @@ export default function RaceDetail() {
     try {
       const base64 = await new Promise<string>((res,rej)=>{const r=new FileReader();r.onload=()=>res((r.result as string).split(',')[1]);r.onerror=()=>rej(new Error('Fehler'));r.readAsDataURL(file);});
       const result = await api.post<{imported:number,total:number}>(`/api/races/${id}/omnium-pdf`,{pdfBase64:base64});
-      await fetchRace(); setError('');
-      alert(`${result.imported} von ${result.total} Einträgen importiert`);
+      await fetchRace(); alert(`${result.imported} von ${result.total} Einträgen importiert`);
     } catch(e:any){setError(e.message);}
     finally{if(omniumPdfRef.current) omniumPdfRef.current.value='';}
   }
 
-  // ── Render ────────────────────────────────────────────────────────────────
   if (loading) return <div className="page container"><div className="loading"><span className="spinner"/>Lädt…</div></div>;
-  if (!race) return <div className="page container"><div className="alert alert-error">{error||'Nicht gefunden'}</div></div>;
+  if (!race)   return <div className="page container"><div className="alert alert-error">{error||'Nicht gefunden'}</div></div>;
 
-  const {category} = race;
-  const teams = category.teams;
-  const displayFormat = (race.format ?? category.format) as string;
-  const isTemporennen = race.type === 'TEMPORUNDEN';
-  const isVerfolgung  = race.type === 'VERFOLGUNGSRENNEN';
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // VERFOLGUNGSRENNEN VIEW
-  // ══════════════════════════════════════════════════════════════════════════
-  if (isVerfolgung) {
-    return (
-      <div className="page container">
-        <div className="breadcrumb">
-          <Link to="/">Veranstaltungen</Link><span>›</span>
-          <Link to={`/events/${category.event.id}`}>{category.event.name}</Link><span>›</span>
-          <Link to={`/categories/${category.id}`}>{category.name}</Link><span>›</span>
-          {race.name}
-        </div>
-        <h1 style={{marginBottom:8}}>{race.name}</h1>
-        <p className="text-sm text-muted" style={{marginBottom:24}}>{category.name}</p>
-        <div className="alert alert-info">
-          Verfolgungsrennen werden über die Verfolgungsplanung erfasst –
-          Pläne anlegen, Timer starten und Rundenzeiten direkt dort eintragen.
-        </div>
-        <div style={{marginTop:16}}>
-          <Link to="/pursuit" className="btn btn-primary">Zur Verfolgungsplanung →</Link>
-        </div>
-      </div>
-    );
-  }
-
-    // ══════════════════════════════════════════════════════════════════════════
-  // TEMPORUNDEN VIEW
-  // ══════════════════════════════════════════════════════════════════════════
-  if (isTemporennen) {
-    const tempoUsedIds = new Set(tempoSlots.filter(Boolean).map(s => s!.teamId));
-    const tempoFilled  = tempoSlots.filter(Boolean).length;
-    const tempoCanSkip = tempoSlots.findIndex((s,i) => i > tempoActiveSlot && s === null) !== -1;
-
-    return (
-      <div className="page container">
-        <div className="breadcrumb">
-          <Link to="/">Veranstaltungen</Link><span>›</span>
-          <Link to={`/events/${category.event.id}`}>{category.event.name}</Link><span>›</span>
-          <Link to={`/categories/${category.id}`}>{category.name}</Link><span>›</span>
-          {race.name}
-        </div>
-
-        <div className="flex-between mb-4">
-          <div>
-            <h1>{race.name}</h1>
-            <p className="text-sm text-muted" style={{margin:'2px 0 0'}}>{category.name} · {tempoRounds.length} Runden</p>
-          </div>
-          {isAdmin && (
-            <button className="btn btn-secondary btn-sm" onClick={openTempoSchlusswertung}>
-              {tempoSchlusswertungSprint ? 'Schlusswertung bearbeiten' : '+ Schlusswertung'}
-            </button>
-          )}
-        </div>
-
-        {error && <div className="alert alert-error mb-3">{error}</div>}
-
-        {/* ── Schlusswertung entry ── */}
-        {isAdmin && tempoSchlusswertung && (
-          <div className="card mb-4" style={{borderColor:'#bfdbfe',background:'#f0f7ff'}}>
-            <div className="flex-between" style={{marginBottom:12}}>
-              <h3>Schlusswertung – Platzierungen eingeben</h3>
-              <button className="btn btn-ghost btn-sm" onClick={() => setTempoSchlusswertung(false)}>Abbrechen</button>
-            </div>
-            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(60px,1fr))',gap:4,marginBottom:14,maxHeight:180,overflowY:'auto'}}>
-              {tempoSlots.map((slot,i)=>(
-                <div key={i} onClick={()=>setTempoActiveSlot(i)} style={{border:tempoActiveSlot===i?'2px solid var(--c-primary)':'1px solid var(--c-border)',borderRadius:6,padding:'4px 3px',cursor:'pointer',textAlign:'center',background:tempoActiveSlot===i?'#dbeafe':slot?'#f0fff4':'white'}}>
-                  <div style={{fontSize:9,color:'var(--c-text-muted)',marginBottom:1}}>{i+1}.</div>
-                  <div style={{fontWeight:600,fontSize:13}}>{slot?slot.teamNumber:'—'}</div>
-                </div>
-              ))}
-            </div>
-            <div style={{marginBottom:12}}>
-              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
-                <span className="text-xs text-muted">{tempoActiveSlot+1}. Platz wählen:</span>
-                {tempoCanSkip && <button type="button" className="btn btn-ghost btn-sm" style={{fontSize:11,padding:'3px 8px'}} onClick={() => { const n=tempoSlots.findIndex((s,i)=>i>tempoActiveSlot&&s===null); if(n!==-1) setTempoActiveSlot(n); }}>Überspringen →</button>}
-              </div>
-              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(72px,1fr))',gap:6}}>
-                {teams.map(team => {
-                  const used=tempoUsedIds.has(team.id)&&tempoSlots[tempoActiveSlot]?.teamId!==team.id;
-                  const sel=tempoSlots[tempoActiveSlot]?.teamId===team.id;
-                  return(<button key={team.id} type="button" onClick={()=>!used&&selectTempoSlot(team)} style={{padding:'8px 4px',borderRadius:7,cursor:used?'not-allowed':'pointer',textAlign:'center',border:sel?'2px solid var(--c-primary)':'1px solid var(--c-border)',background:used?'#f3f4f6':sel?'#dbeafe':'var(--c-white)',opacity:used?0.4:1}}>
-                    <div style={{fontWeight:700,fontSize:16}}>{team.number}</div>
-                    <div style={{fontSize:10,color:'var(--c-text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{team.name}</div>
-                  </button>);
-                })}
-              </div>
-            </div>
-            <div className="flex-between">
-              <div style={{display:'flex',alignItems:'center',gap:12}}>
-                <button className="btn btn-ghost" onClick={() => { setTempoSchlusswertung(false); setTempoSlots([]); }}>Abbrechen</button>
-                {tempoFilled > 0 && tempoFilled < tempoSlots.length && (
-                  <span className="text-xs text-muted">{tempoFilled}/{tempoSlots.length} Fahrer</span>
-                )}
-              </div>
-              <button className="btn btn-primary" onClick={saveTempoSchlusswertung} disabled={tempoFilled===0||savingTempo}>
-                {savingTempo?'Speichert…':'Schlusswertung speichern ✓'}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* ── Rundenerfassung ── */}
-        {isAdmin && !tempoSchlusswertung && !tempoSchlusswertungSprint && (
-          <div className="card mb-4">
-            <div className="flex-between" style={{marginBottom:12}}>
-              <div>
-                <span className="text-xs text-muted">aktuelle runde</span>
-                <div style={{fontSize:28,fontWeight:500,lineHeight:1.1}}>{currentTempoRound}</div>
-              </div>
-              <div style={{textAlign:'right'}}>
-                <span className="text-xs text-muted">wer hat runde {currentTempoRound} gewonnen?</span>
-              </div>
-            </div>
-
-            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(86px,1fr))',gap:8,marginBottom:12}}>
-              {teams.map(team => {
-                const s = race.scoreboard?.find(x => x.teamId === team.id);
-                return (
-                  <button key={team.id} type="button" onClick={() => saveTempoRound(team.id)} disabled={savingTempo}
-                    style={{padding:'10px 6px',borderRadius:8,cursor:'pointer',textAlign:'center',border:team.isFavorite?'1px solid #d97706':'1px solid var(--c-border)',background:'var(--c-white)',transition:'background .1s'}}>
-                    <div style={{fontWeight:700,fontSize:20}}>{team.number}</div>
-                    <div style={{fontSize:11,color:'var(--c-text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{team.name}</div>
-                    {s && s.total > 0 && <div style={{fontSize:11,fontWeight:500,color:'var(--c-success)',marginTop:2}}>{s.total} Pkt</div>}
-                  </button>
-                );
-              })}
-            </div>
-
-            <div style={{textAlign:'center',marginBottom:12}}>
-              <button onClick={() => saveTempoRound(null)} disabled={savingTempo}
-                style={{fontSize:12,color:'var(--c-text-muted)',border:'1px dashed var(--c-border)',background:'transparent',borderRadius:6,padding:'5px 18px',cursor:'pointer'}}>
-                Runde auslassen →
-              </button>
-            </div>
-
-            <div style={{display:'flex',alignItems:'center',gap:8,paddingTop:12,borderTop:'1px solid var(--c-border)'}}>
-              <span className="text-xs text-muted" style={{flexShrink:0}}>Rundengewinn:</span>
-              <button className="btn btn-secondary btn-sm" style={{borderColor:'var(--c-success)',color:'var(--c-success)'}} onClick={() => openLapPicker(1)}>+ gewonnen</button>
-              <button className="btn btn-secondary btn-sm" style={{borderColor:'var(--c-danger)',color:'var(--c-danger)'}} onClick={() => openLapPicker(-1)}>− verloren</button>
-            </div>
-
-            {race.lapEvents.length > 0 && (
-              <div style={{marginTop:10}}>
-                <div className="text-xs text-muted" style={{marginBottom:4}}>Letzte Rundengewinne</div>
-                {[...race.lapEvents].reverse().slice(0,5).map(lap => (
-                  <div key={lap.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'4px 0',borderBottom:'1px solid var(--c-border)',fontSize:13}}>
-                    <span><span style={{color:lap.delta>0?'var(--c-success)':'var(--c-danger)',fontWeight:600}}>{lap.delta>0?'+1':'-1'}</span>{' · '}{lap.team.number} {lap.team.name}</span>
-                    <button className="btn btn-ghost btn-sm" style={{fontSize:11}} onClick={() => deleteLap(lap.id)}>Rückgängig</button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ── Lap picker modal (multi-select) ── */}
-        {lapPickerOpen && (
-          <div className="modal-overlay" onClick={() => setLapPickerOpen(false)}>
-            <div className="modal" style={{maxWidth:520}} onClick={e => e.stopPropagation()}>
-              <p className="modal-title">{lapDelta>0?'+ Runde gewonnen':'− Runde verloren'} — Teams wählen</p>
-              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(84px,1fr))',gap:8,marginBottom:16}}>
-                {teams.map(team => { const sel=selectedLapIds.has(team.id); return (
-                  <button key={team.id} type="button" onClick={() => toggleLapTeam(team.id)} style={{padding:'10px 6px',borderRadius:8,textAlign:'center',cursor:'pointer',border:sel?'2px solid var(--c-primary)':'1px solid var(--c-border)',background:sel?'#dbeafe':'var(--c-white)'}}>
-                    <div style={{fontWeight:700,fontSize:20,color:sel?'var(--c-primary)':'var(--c-text)'}}>{team.number}</div>
-                    <div style={{fontSize:11,color:'var(--c-text-muted)',marginTop:2}}>{team.name}</div>
-                    {sel && <div style={{fontSize:10,color:'var(--c-primary)',fontWeight:600}}>✓</div>}
-                  </button>
-                ); })}
-              </div>
-              <div className="flex-between">
-                <button className="btn btn-ghost" onClick={() => setLapPickerOpen(false)}>Abbrechen</button>
-                <button className="btn btn-primary" onClick={saveSelectedLaps} disabled={selectedLapIds.size===0||savingLap}>
-                  {savingLap?'Speichert…':selectedLapIds.size===0?'Team auswählen':`Bestätigen (${selectedLapIds.size})`}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ── Nachtragen modal ── */}
-        {retroRound !== null && (
-          <div className="modal-overlay" onClick={() => setRetroRound(null)}>
-            <div className="modal" style={{maxWidth:480}} onClick={e => e.stopPropagation()}>
-              <p className="modal-title">Runde {retroRound} nachtragen</p>
-              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(84px,1fr))',gap:8,marginBottom:16}}>
-                {teams.map(team => (
-                  <button key={team.id} type="button" onClick={() => saveTempoRound(team.id, retroRound)}
-                    style={{padding:'10px 6px',borderRadius:8,textAlign:'center',cursor:'pointer',border:'1px solid var(--c-border)',background:'var(--c-white)'}}>
-                    <div style={{fontWeight:700,fontSize:20}}>{team.number}</div>
-                    <div style={{fontSize:11,color:'var(--c-text-muted)',marginTop:2}}>{team.name}</div>
-                  </button>
-                ))}
-              </div>
-              <div className="flex-between">
-                <button className="btn btn-ghost" onClick={() => setRetroRound(null)}>Abbrechen</button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ── Scoreboard ── */}
-        {race.scoreboard && race.scoreboard.length > 0 && (
-          <div className="mb-4">
-            <div className="section-header" style={{marginBottom:8}}>
-              <h2 style={{margin:0}}>Zwischenstand</h2>
-              <span className="text-xs text-muted">aktualisiert alle 6s</span>
-            </div>
-            <div className="table-wrap">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th style={{width:28}}>#</th>
-                    <th style={{width:40}}>Nr.</th>
-                    <th style={{minWidth:100}}>Name</th>
-                    <th style={{textAlign:'center',width:48}}>Siege</th>
-                    <th style={{textAlign:'center',width:52}}>Rd.</th>
-                    {tempoSchlusswertungSprint && <th style={{textAlign:'center',width:48}}>SW</th>}
-                    <th style={{textAlign:'right',width:52}}>Ges.</th>
-                    {isAdmin && <th style={{width:60}}></th>}
-                  </tr>
-                </thead>
-                <tbody>
-                  {race.scoreboard.map((s, idx) => {
-                    const rowStyle: React.CSSProperties = s.isDsq ? {opacity:0.5,textDecoration:'line-through'} : s.isFavorite ? {background:'#fffbeb'} : {};
-                    return (
-                      <tr key={s.teamId} style={rowStyle}>
-                        <td style={{color:'var(--c-text-muted)',fontSize:12}}>{s.isDsq?'':idx+1}</td>
-                        <td className="num" style={{fontWeight:600}}>{s.teamNumber}</td>
-                        <td>
-                          <div style={{display:'flex',alignItems:'center',gap:4}}>
-                            {s.isFavorite && <span>⭐</span>}
-                            {s.isWarned && <span title="Verwarnung" style={{color:'var(--c-warning)'}}>⚠</span>}
-                            {s.isDsq && <span title="Disqualifiziert" style={{color:'var(--c-danger)'}}>⛔</span>}
-                            <span style={{fontWeight:500}}>{s.teamName}</span>
-                          </div>
-                          {s.club && <div style={{fontSize:11,color:'var(--c-text-muted)'}}>{s.club}</div>}
-                        </td>
-                        <td style={{textAlign:'center'}}>{s.wins||''}</td>
-                        <td style={{textAlign:'center',color:s.lapBalance>0?'var(--c-success)':s.lapBalance<0?'var(--c-danger)':'',fontWeight:s.lapBalance!==0?600:400}}>
-                          {s.lapBalance!==0?(s.lapBalance>0?`+${s.lapBalance}`:`${s.lapBalance}`):''}
-                        </td>
-                        {tempoSchlusswertungSprint && <td style={{textAlign:'center',fontSize:12,color:'var(--c-text-muted)'}}>{s.finalePosition??''}</td>}
-                        <td style={{textAlign:'right',fontWeight:700,fontSize:15,color:s.isDsq?'var(--c-danger)':''}}>{s.isDsq?'DSQ':s.total}</td>
-                        {isAdmin && (
-                          <td style={{textAlign:'center'}}>
-                            <div style={{display:'flex',gap:2,justifyContent:'center'}}>
-                              <button type="button" title={s.isWarned?'Verwarnung aufheben':'Verwarnung'} onClick={() => toggleFlag(s.teamId,'WARNING')}
-                                style={{background:'none',border:'none',cursor:'pointer',fontSize:14,opacity:s.isWarned?1:0.3}}>⚠</button>
-                              <button type="button" title={s.isDsq?'DSQ aufheben':'Disqualifizieren'} onClick={() => toggleFlag(s.teamId,'DSQ')}
-                                style={{background:'none',border:'none',cursor:'pointer',fontSize:14,opacity:s.isDsq?1:0.3}}>⛔</button>
-                            </div>
-                          </td>
-                        )}
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* ── Rundenverlauf ── */}
-        {tempoRounds.length > 0 && (
-          <div>
-            <h2 style={{marginBottom:10}}>Rundenverlauf</h2>
-            <div style={{display:'flex',flexDirection:'column',gap:6}}>
-              {[...tempoRounds].reverse().map(sprint => {
-                const winner = sprint.results.find(r => r.position === 1);
-                const isEmpty = sprint.results.length === 0;
-                return (
-                  <div key={sprint.id} className="card" style={{padding:'9px 14px'}}>
-                    <div className="flex-between">
-                      <div style={{display:'flex',alignItems:'center',gap:10}}>
-                        <span style={{fontWeight:600,fontSize:13,minWidth:60,color:isEmpty?'var(--c-text-muted)':'inherit'}}>
-                          Runde {sprint.number}
-                        </span>
-                        {isEmpty
-                          ? <span style={{fontSize:12,color:'var(--c-danger)'}}>— nicht erfasst</span>
-                          : <span style={{fontSize:12,color:'var(--c-text-muted)'}}>{winner?.team.number} {winner?.team.name}</span>
-                        }
-                      </div>
-                      {isAdmin && (
-                        <button className="btn btn-secondary btn-sm" style={{fontSize:11,borderColor:isEmpty?'var(--c-warning)':undefined,color:isEmpty?'var(--c-warning)':undefined}}
-                          onClick={() => setRetroRound(sprint.number)}>
-                          {isEmpty ? 'Nachtragen' : 'Ändern'}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // PUNKTEFAHREN VIEW (unverändert)
-  // ══════════════════════════════════════════════════════════════════════════
+  const {category}=race, teams=category.teams;
+  const displayFormat=(race.format??category.format) as string;
   const nextNum=(race.sprints[race.sprints.length-1]?.number??0)+1;
   const usedIds=new Set(slots.filter(Boolean).map(s=>s!.teamId));
   const hasOmnium=race.omniumScores.length>0;
@@ -552,6 +150,31 @@ export default function RaceDetail() {
   const filledSlots=slots.filter(Boolean).length;
   const canSkip=slots.findIndex((s,i)=>i>activeSlot&&s===null)!==-1;
 
+  // ── VERFOLGUNGSRENNEN ─────────────────────────────────────────────────────────
+  if (race.type === 'VERFOLGUNGSRENNEN') {
+    return (
+      <div className="page container">
+        <div className="breadcrumb">
+          <Link to="/">Veranstaltungen</Link><span>›</span>
+          <Link to={`/events/${category.event.id}`}>{category.event.name}</Link><span>›</span>
+          <Link to={`/categories/${category.id}`}>{category.name}</Link><span>›</span>
+          {race.name}
+        </div>
+        <div className="flex-between mb-4">
+          <div>
+            <h1>{race.name}</h1>
+            <p className="text-sm text-muted" style={{margin:'2px 0 0'}}>
+              {category.name} · {teams.length} Teams · Verfolgung
+            </p>
+          </div>
+        </div>
+        {error && <div className="alert alert-error mb-3">{error}</div>}
+        <VerfolgungsplanungView teams={teams} />
+      </div>
+    );
+  }
+
+  // ── PUNKTEFAHREN / MADISON ────────────────────────────────────────────────────
   return (
     <div className="page container">
       <div className="breadcrumb">
@@ -569,7 +192,7 @@ export default function RaceDetail() {
         {isAdmin && (
           <div style={{display:'flex',gap:8}}>
             <button className="btn btn-secondary btn-sm" onClick={openOmnium}>Omnium-Vorpunkte</button>
-            {!hasFinale && !entryOpen && <button className="btn btn-primary" onClick={openNew}>+ Sprint {nextNum}</button>}
+            {!entryOpen && <button className="btn btn-primary" onClick={openNew}>+ Sprint {nextNum}</button>}
           </div>
         )}
       </div>
@@ -580,22 +203,10 @@ export default function RaceDetail() {
         <div className="card mb-4" style={{borderColor:'#bfdbfe',background:'#f0f7ff'}}>
           <div className="flex-between" style={{marginBottom:12}}>
             <h3>{editingSprintId?'Sprint bearbeiten':`Sprint ${nextNum}`}</h3>
-            <div style={{display:'flex',alignItems:'center',gap:12}}>
-              <label style={{display:'flex',alignItems:'center',gap:6,fontSize:13,cursor:'pointer'}}>
-                <input type="checkbox" checked={isFinale} onChange={e=>handleFinaleToggle(e.target.checked)}/>
-                Finale (doppelte Punkte)
-              </label>
-              <div style={{display:'flex',border:'1px solid var(--c-border)',borderRadius:6,overflow:'hidden',fontSize:12}}>
-                <button type="button" onClick={()=>{setSprintMode('buttons');setBibInput('');}}
-                  style={{padding:'4px 10px',background:sprintMode==='buttons'?'var(--c-primary)':'transparent',color:sprintMode==='buttons'?'white':'var(--c-text-muted)',border:'none',cursor:'pointer'}}>
-                  ⊞ Buttons
-                </button>
-                <button type="button" onClick={()=>{setSprintMode('bib');setBibInput('');}}
-                  style={{padding:'4px 10px',background:sprintMode==='bib'?'var(--c-primary)':'transparent',color:sprintMode==='bib'?'white':'var(--c-text-muted)',border:'none',cursor:'pointer'}}>
-                  ⌨ Nummer
-                </button>
-              </div>
-            </div>
+            <label style={{display:'flex',alignItems:'center',gap:6,fontSize:13,cursor:'pointer'}}>
+              <input type="checkbox" checked={isFinale} onChange={e=>handleFinaleToggle(e.target.checked)}/>
+              Finale (doppelte Punkte)
+            </label>
           </div>
           <div style={{display:'grid',gridTemplateColumns:isFinale?'repeat(auto-fill,minmax(60px,1fr))':'repeat(4,1fr)',gap:isFinale?4:8,marginBottom:14,maxHeight:isFinale?180:'none',overflowY:isFinale?'auto':'visible'}}>
             {slots.map((slot,i)=>(
@@ -611,54 +222,21 @@ export default function RaceDetail() {
               <span className="text-xs text-muted">{activeSlot+1}. Platz wählen:</span>
               {canSkip&&<button type="button" className="btn btn-ghost btn-sm" style={{fontSize:11,padding:'3px 8px'}} onClick={()=>{const n=slots.findIndex((s,i)=>i>activeSlot&&s===null);if(n!==-1)setActiveSlot(n);}}>Überspringen →</button>}
             </div>
-            {sprintMode==='bib' ? (
-              <div>
-                <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:8}}>
-                  <input
-                    type="number" autoFocus placeholder={`Startnummer ${activeSlot+1}. Platz`}
-                    value={bibInput} onChange={e=>setBibInput(e.target.value)}
-                    onKeyDown={handleBibKey}
-                    className="form-input"
-                    style={{fontSize:20,fontWeight:500,textAlign:'center',width:160,padding:'10px'}}
-                  />
-                  {bibInput && (() => {
-                    const t=teams.find(x=>x.number===parseInt(bibInput));
-                    const used=t&&usedIds.has(t.id)&&slots[activeSlot]?.teamId!==t.id;
-                    return t
-                      ? <span style={{fontSize:13,color:used?'var(--c-danger)':'var(--c-success)',fontWeight:500}}>
-                          {used?'bereits vergeben':t.name+' ✓ (Enter)'}
-                        </span>
-                      : <span className="text-sm text-muted">nicht gefunden</span>;
-                  })()}
-                </div>
-                <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
-                  {slots.map((slot,i)=>(
-                    <div key={i} onClick={()=>setActiveSlot(i)} style={{border:activeSlot===i?'2px solid var(--c-primary)':'1px solid var(--c-border)',borderRadius:6,padding:'6px 10px',cursor:'pointer',background:activeSlot===i?'#dbeafe':slot?'#f0fff4':'white',fontSize:13}}>
-                      <span className="text-muted" style={{marginRight:4}}>{i+1}.</span>
-                      <span style={{fontWeight:600}}>{slot?slot.teamNumber:'—'}</span>
-                      {slot&&<span className="text-muted" style={{marginLeft:4,fontSize:11}}>{slot.teamName}</span>}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(72px,1fr))',gap:6}}>
-                {teams.map(team=>{
-                  const used=usedIds.has(team.id)&&slots[activeSlot]?.teamId!==team.id;
-                  const sel=slots[activeSlot]?.teamId===team.id;
-                  return(<button key={team.id} type="button" onClick={()=>!used&&selectTeam(team)} style={{padding:'8px 4px',borderRadius:7,cursor:used?'not-allowed':'pointer',textAlign:'center',border:sel?'2px solid var(--c-primary)':'1px solid var(--c-border)',background:used?'#f3f4f6':sel?'#dbeafe':'var(--c-white)',opacity:used?0.4:1}}>
-                    <div style={{fontWeight:700,fontSize:16}}>{team.number}</div>
-                    <div style={{fontSize:10,color:'var(--c-text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{team.name}</div>
-                  </button>);
-                })}
-              </div>
-            )}
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(72px,1fr))',gap:6}}>
+              {teams.map(team=>{
+                const used=usedIds.has(team.id)&&slots[activeSlot]?.teamId!==team.id;
+                const sel=slots[activeSlot]?.teamId===team.id;
+                return(<button key={team.id} type="button" onClick={()=>!used&&selectTeam(team)} style={{padding:'8px 4px',borderRadius:7,cursor:used?'not-allowed':'pointer',textAlign:'center',border:sel?'2px solid var(--c-primary)':'1px solid var(--c-border)',background:used?'#f3f4f6':sel?'#dbeafe':'var(--c-white)',opacity:used?0.4:1}}>
+                  <div style={{fontWeight:700,fontSize:16}}>{team.number}</div>
+                  <div style={{fontSize:10,color:'var(--c-text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{team.name}</div>
+                </button>);
+              })}
+            </div>
           </div>
           <div className="flex-between">
             <div style={{display:'flex',alignItems:'center',gap:12}}>
               <button className="btn btn-ghost" onClick={()=>setEntryOpen(false)}>Abbrechen</button>
               {isFinale&&filledSlots>0&&filledSlots<teams.length&&<span className="text-xs text-muted">{filledSlots}/{teams.length} Teams</span>}
-              {!isFinale&&filledSlots>0&&filledSlots<4&&<span className="text-xs text-muted">{4-filledSlots} Plätze leer</span>}
             </div>
             <button className="btn btn-primary" onClick={saveSprint} disabled={filledSlots===0||savingSprint}>
               {savingSprint?'Speichert…':editingSprintId?'Änderungen speichern':'Sprint speichern ✓'}
@@ -667,7 +245,7 @@ export default function RaceDetail() {
         </div>
       )}
 
-      {isAdmin&&!entryOpen&&!hasFinale&&(
+      {isAdmin&&!entryOpen&&(
         <div className="card mb-4">
           <h3 style={{marginBottom:10}}>Rundenwertung</h3>
           <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
