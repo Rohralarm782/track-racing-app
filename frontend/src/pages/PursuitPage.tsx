@@ -93,6 +93,7 @@ export default function PursuitPage() {
   const [nextIsHalf, setNextIsHalf]   = useState(false);
   const [countdown, setCountdown]     = useState(0);
   const [finished, setFinished]       = useState(false);
+  const [btnArmed, setBtnArmed]       = useState(false); // Finger liegt auf Button
 
   // Refs für stabile Callbacks
   const eventsRef     = useRef<TEvent[]>([]);
@@ -386,14 +387,39 @@ export default function PursuitPage() {
               </div>
             </div>
 
-            {/* Haupt-Tipp-Knopf */}
-            <button onClick={mainTap} style={{
-              width: '100%', padding: '28px 16px', fontSize: 22, fontWeight: 500,
-              borderRadius: 10, cursor: 'pointer', marginBottom: 8,
-              background: '#dbeafe', border: '2px solid var(--c-primary)',
-              color: 'var(--c-primary)', fontFamily: 'inherit',
-            }}>
-              {mainLabel}
+            {/* Haupt-Tipp-Knopf — löst beim Loslassen aus (onPointerUp) */}
+            <button
+              onPointerDown={e => {
+                e.preventDefault();
+                (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+                setBtnArmed(true);
+              }}
+              onPointerUp={e => {
+                if (!btnArmed) return;
+                setBtnArmed(false);
+                mainTap();
+              }}
+              onPointerCancel={() => setBtnArmed(false)}
+              onContextMenu={e => e.preventDefault()}
+              style={{
+                width: '100%',
+                height: 'clamp(100px, 22vh, 160px)',
+                fontSize: 'clamp(20px, 4vw, 26px)',
+                fontWeight: 500,
+                borderRadius: 12,
+                cursor: 'pointer',
+                marginBottom: 8,
+                border: `3px solid var(--c-primary)`,
+                color: btnArmed ? 'white' : 'var(--c-primary)',
+                background: btnArmed ? 'var(--c-primary)' : '#dbeafe',
+                fontFamily: 'inherit',
+                transition: 'background 0.08s, color 0.08s',
+                userSelect: 'none',
+                WebkitUserSelect: 'none',
+                touchAction: 'none',
+              }}
+            >
+              {btnArmed ? '↑ Loslassen zum Auslösen' : mainLabel}
             </button>
 
             {/* Nebensteuerung */}
