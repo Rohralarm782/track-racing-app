@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import prisma from '../prisma';
+import { prisma } from '../prisma';
+import { requireAdmin } from '../middleware/auth';
 
 const router = Router();
 
@@ -15,11 +16,8 @@ router.get('/latest', async (_req, res) => {
   }
 });
 
-// ── POST /api/pursuit-plans — nur Admin ───────────────────────────────────────
-router.post('/', async (req, res) => {
-  if (!(req as any).session?.isAdmin) {
-    return res.status(403).json({ error: 'Nicht autorisiert' });
-  }
+// ── POST /api/pursuit-plans — nur Admin (Bearer Token) ────────────────────────
+router.post('/', requireAdmin, async (req, res) => {
   const { trackM, numRounds, anfahrtSec, lapSec, totalSec, selectedKb, selectedRz, notes } = req.body;
   try {
     const plan = await prisma.pursuitPlan.create({
@@ -41,10 +39,7 @@ router.post('/', async (req, res) => {
 });
 
 // ── DELETE /api/pursuit-plans/:id — nur Admin ─────────────────────────────────
-router.delete('/:id', async (req, res) => {
-  if (!(req as any).session?.isAdmin) {
-    return res.status(403).json({ error: 'Nicht autorisiert' });
-  }
+router.delete('/:id', requireAdmin, async (req, res) => {
   try {
     await prisma.pursuitPlan.delete({ where: { id: req.params.id } });
     res.json({ success: true });
