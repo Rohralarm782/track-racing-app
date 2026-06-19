@@ -4,22 +4,26 @@ import { requireAdmin } from '../middleware/auth';
 
 const router = Router();
 
-// ── GET /api/pursuit-plans/latest — öffentlich, kein Login nötig ──────────────
-router.get('/latest', async (_req, res) => {
+// ── GET /api/pursuit-plans — alle Pläne, öffentlich ──────────────────────────
+router.get('/', async (_req, res) => {
   try {
-    const plan = await prisma.pursuitPlan.findFirst({
+    const plans = await prisma.pursuitPlan.findMany({
       orderBy: { createdAt: 'desc' },
     });
-    res.json(plan ?? null);
+    res.json(plans);
   } catch (e) {
     res.status(500).json({ error: String(e) });
   }
 });
 
-// ── POST /api/pursuit-plans — nur Admin (Bearer Token) ────────────────────────
+// ── POST /api/pursuit-plans — nur Admin, löscht Pläne > 90 Tage ──────────────
 router.post('/', requireAdmin, async (req, res) => {
   const { trackM, numRounds, anfahrtSec, lapSec, totalSec, selectedKb, selectedRz, notes } = req.body;
   try {
+    // Pläne älter als 90 Tage automatisch löschen
+    const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+    await prisma.pursuitPlan.deleteMany({ where: { createdAt: { lt: cutoff } } });
+
     const plan = await prisma.pursuitPlan.create({
       data: {
         trackM:     Number(trackM),
