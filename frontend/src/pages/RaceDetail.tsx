@@ -68,9 +68,8 @@ export default function RaceDetail() {
   const omniumPdfRef = useRef<HTMLInputElement>(null);
 
   // ── TEMPORUNDEN-spezifisch ────────────────────────────────────────────────
-  const [tempoRoundOpen, setTempoRoundOpen]     = useState(false);
-  const [tempoWinnerId, setTempoWinnerId]       = useState<string|null>(null);
   const [savingTempoRound, setSavingTempoRound] = useState(false);
+  const [savedFeedback, setSavedFeedback]       = useState<string|null>(null);
 
   // ── Datenabruf ────────────────────────────────────────────────────────────
   const fetchRace = useCallback(async () => {
@@ -166,7 +165,7 @@ export default function RaceDetail() {
   }
 
   // ── TEMPORUNDEN-spezifische Funktionen ────────────────────────────────────
-  async function saveTempoRound(winnerId: string|null) {
+  async function saveTempoRound(winnerId: string|null, winnerName?: string) {
     if (!id || !race) return;
     setSavingTempoRound(true);
     const regularSprints = race.sprints.filter(s => !s.isFinale);
@@ -178,9 +177,10 @@ export default function RaceDetail() {
         number: nextNum,
         results: winnerId ? [{ teamId: winnerId, position: 1 }] : [],
       });
-      setTempoRoundOpen(false);
-      setTempoWinnerId(null);
       await fetchRace();
+      const fb = winnerId ? `✓ Runde ${nextNum}: ${winnerName}` : `✓ Runde ${nextNum}: übersprungen`;
+      setSavedFeedback(fb);
+      setTimeout(() => setSavedFeedback(null), 2000);
     } catch(e: any) { setError(e.message); }
     finally { setSavingTempoRound(false); }
   }
@@ -264,56 +264,43 @@ export default function RaceDetail() {
               {category.name} · {regularRounds.length} Runden{schlusswertung ? ' + Schlusswertung' : ''}
             </p>
           </div>
-          {isAdmin && !isLocked && !tempoRoundOpen && !entryOpen && (
-            <div style={{display:'flex',gap:8}}>
-              <button className="btn btn-primary" onClick={()=>{setTempoWinnerId(null);setTempoRoundOpen(true);}}>
-                + Runde {nextTempoNum}
-              </button>
-              {!schlusswertung && (
-                <button className="btn btn-secondary" onClick={openTempoSchlusswertung} style={{borderColor:'#f59e0b',color:'#b45309'}}>
-                  Schlusswertung ★
-                </button>
-              )}
-            </div>
+          {isAdmin && !isLocked && !entryOpen && !schlusswertung && (
+            <button className="btn btn-secondary" onClick={openTempoSchlusswertung} style={{borderColor:'#f59e0b',color:'#b45309'}}>
+              Schlusswertung ★
+            </button>
           )}
         </div>
 
         {error && <div className="alert alert-error mb-3">{error}</div>}
 
-        {/* ── Runden-Eingabepanel ── */}
-        {isAdmin && tempoRoundOpen && (
+        {/* ── Runden-Eingabepanel — immer offen, Klick = sofort speichern ── */}
+        {isAdmin && !isLocked && !entryOpen && (
           <div className="card mb-4" style={{borderColor:'#bfdbfe',background:'#f0f7ff'}}>
-            <h3 style={{marginBottom:10}}>Runde {nextTempoNum} — Sieger wählen</h3>
-            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(84px,1fr))',gap:8,marginBottom:14}}>
-              {teams.map(team => {
-                const sel = team.id === tempoWinnerId;
-                return (
-                  <button key={team.id} type="button"
-                    onClick={() => setTempoWinnerId(sel ? null : team.id)}
-                    style={{padding:'10px 6px',borderRadius:8,cursor:'pointer',textAlign:'center',
-                      border:sel?'2px solid var(--c-primary)':'1px solid var(--c-border)',
-                      background:sel?'#dbeafe':'var(--c-white)'}}>
-                    <div style={{fontWeight:700,fontSize:20,color:sel?'var(--c-primary)':'var(--c-text)'}}>{team.number}</div>
-                    <div style={{fontSize:11,color:'var(--c-text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{team.name}</div>
-                    {sel && <div style={{fontSize:10,color:'var(--c-primary)',fontWeight:600,marginTop:2}}>✓ Sieger</div>}
-                  </button>
-                );
-              })}
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+              <h3 style={{margin:0}}>Runde {nextTempoNum} — Sieger anklicken</h3>
+              {savedFeedback && (
+                <span style={{fontSize:12,color:'var(--c-success)',fontWeight:600,background:'#f0fff4',padding:'3px 10px',borderRadius:12,border:'1px solid var(--c-success)'}}>
+                  {savedFeedback}
+                </span>
+              )}
             </div>
-            <div className="flex-between">
-              <div style={{display:'flex',gap:8,alignItems:'center'}}>
-                <button className="btn btn-ghost" onClick={()=>{setTempoRoundOpen(false);setTempoWinnerId(null);}}>Abbrechen</button>
-                <button className="btn btn-secondary" style={{fontSize:12,color:'var(--c-text-muted)'}}
-                  onClick={()=>saveTempoRound(null)} disabled={savingTempoRound}>
-                  Überspringen (kein Sieger)
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(84px,1fr))',gap:8,marginBottom:12}}>
+              {teams.map(team => (
+                <button key={team.id} type="button"
+                  disabled={savingTempoRound}
+                  onClick={() => saveTempoRound(team.id, String(team.number))}
+                  style={{padding:'10px 6px',borderRadius:8,cursor:savingTempoRound?'wait':'pointer',textAlign:'center',
+                    border:'1px solid var(--c-border)',background:'var(--c-white)',
+                    opacity:savingTempoRound?0.6:1}}>
+                  <div style={{fontWeight:700,fontSize:20}}>{team.number}</div>
+                  <div style={{fontSize:11,color:'var(--c-text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{team.name}</div>
                 </button>
-              </div>
-              <button className="btn btn-primary"
-                onClick={()=>saveTempoRound(tempoWinnerId)}
-                disabled={!tempoWinnerId||savingTempoRound}>
-                {savingTempoRound?'Speichert…':'Runde speichern ✓'}
-              </button>
+              ))}
             </div>
+            <button className="btn btn-ghost btn-sm" style={{fontSize:12,color:'var(--c-text-muted)'}}
+              onClick={() => saveTempoRound(null)} disabled={savingTempoRound}>
+              Überspringen (kein Sieger) →
+            </button>
           </div>
         )}
 
@@ -360,7 +347,7 @@ export default function RaceDetail() {
         )}
 
         {/* ── Rundenwertung (Rundengewinn/-verlust) ── */}
-        {isAdmin && !tempoRoundOpen && !entryOpen && (
+        {isAdmin && !entryOpen && (
           <div className="card mb-4">
             <h3 style={{marginBottom:10}}>Rundenwertung</h3>
             <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
