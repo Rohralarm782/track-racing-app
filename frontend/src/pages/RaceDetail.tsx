@@ -70,6 +70,9 @@ export default function RaceDetail() {
   // ── TEMPORUNDEN-spezifisch ────────────────────────────────────────────────
   const [savingTempoRound, setSavingTempoRound] = useState(false);
   const [savedFeedback, setSavedFeedback]       = useState<string|null>(null);
+  const [editingRoundId, setEditingRoundId]     = useState<string|null>(null);
+  const [editRoundWinnerId, setEditRoundWinnerId] = useState<string|null>(null);
+  const [savingRoundEdit, setSavingRoundEdit]   = useState(false);
 
   // ── Datenabruf ────────────────────────────────────────────────────────────
   const fetchRace = useCallback(async () => {
@@ -190,6 +193,21 @@ export default function RaceDetail() {
     setSlots(Array(t.length).fill(null));
     setIsFinale(true); setEditingId(null); setActiveSlot(0); setBibInput('');
     setEntryOpen(true);
+  }
+
+  async function saveRoundEdit() {
+    if (!editingRoundId) return;
+    setSavingRoundEdit(true);
+    try {
+      await api.put(`/api/sprints/${editingRoundId}`, {
+        isFinale: false,
+        results: editRoundWinnerId ? [{ teamId: editRoundWinnerId, position: 1 }] : [],
+      });
+      setEditingRoundId(null);
+      setEditRoundWinnerId(null);
+      await fetchRace();
+    } catch(e: any) { setError(e.message); }
+    finally { setSavingRoundEdit(false); }
   }
 
   // ── Ladezustände ─────────────────────────────────────────────────────────
@@ -368,41 +386,6 @@ export default function RaceDetail() {
           </div>
         )}
 
-        {/* ── Rundenprotokoll ── */}
-        {(regularRounds.length>0||schlusswertung)&&(
-          <div className="card mb-4">
-            <h3 style={{marginBottom:8}}>Rundenprotokoll</h3>
-            <div style={{maxHeight:260,overflowY:'auto'}}>
-              {regularRounds.map(round=>{
-                const winner=round.results.find(r=>r.position===1);
-                return(
-                  <div key={round.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'5px 0',borderBottom:'1px solid var(--c-border)',fontSize:13}}>
-                    <div>
-                      <span style={{color:'var(--c-text-muted)',minWidth:56,display:'inline-block',fontSize:12}}>Rd. {round.number}</span>
-                      {winner
-                        ? <span><span style={{fontWeight:600}}>{winner.team.number}</span> {winner.team.name} <span style={{color:'var(--c-success)',fontSize:11}}>+1 Pkt</span></span>
-                        : <span style={{color:'var(--c-text-muted)',fontStyle:'italic'}}>übersprungen</span>
-                      }
-                    </div>
-                    {isAdmin&&<button className="btn btn-ghost btn-sm" style={{fontSize:11,color:'var(--c-text-muted)'}} onClick={()=>deleteSprint(round.id)}>×</button>}
-                  </div>
-                );
-              })}
-              {schlusswertung&&(
-                <div style={{paddingTop:8,marginTop:4,borderTop:'2px solid #fde68a'}}>
-                  <div style={{fontWeight:600,fontSize:12,color:'#b45309',marginBottom:4}}>Schlusswertung ★</div>
-                  <div style={{fontSize:13}}>
-                    {[...schlusswertung.results].sort((a,b)=>a.position-b.position).map(r=>(
-                      <span key={r.team.id} style={{marginRight:10}}>{r.position}. <span style={{fontWeight:600}}>{r.team.number}</span> {r.team.name}</span>
-                    ))}
-                  </div>
-                  {isAdmin&&<button className="btn btn-ghost btn-sm" style={{fontSize:11,marginTop:6,color:'var(--c-danger)'}} onClick={()=>deleteSprint(schlusswertung.id)}>Schlusswertung löschen</button>}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
         {/* ── Scoreboard ── */}
         {race.scoreboard&&race.scoreboard.length>0&&(
           <div className="mb-4">
@@ -459,6 +442,84 @@ export default function RaceDetail() {
                   })}
                 </tbody>
               </table>
+            </div>
+          </div>
+        )}
+
+        {/* ── Rundenprotokoll ── */}
+        {(regularRounds.length>0||schlusswertung)&&(
+          <div className="card mb-4">
+            <h3 style={{marginBottom:8}}>Rundenprotokoll</h3>
+            <div style={{maxHeight:320,overflowY:'auto'}}>
+              {regularRounds.map(round=>{
+                const winner=round.results.find(r=>r.position===1);
+                const isEditing=editingRoundId===round.id;
+                return(
+                  <div key={round.id} style={{borderBottom:'1px solid var(--c-border)'}}>
+                    {/* ── Anzeigezeile ── */}
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'6px 0',fontSize:13}}>
+                      <div>
+                        <span style={{color:'var(--c-text-muted)',minWidth:56,display:'inline-block',fontSize:12}}>Rd. {round.number}</span>
+                        {winner
+                          ? <span><span style={{fontWeight:600}}>{winner.team.number}</span> {winner.team.name} <span style={{color:'var(--c-success)',fontSize:11}}>+1 Pkt</span></span>
+                          : <span style={{color:'var(--c-text-muted)',fontStyle:'italic'}}>übersprungen</span>
+                        }
+                      </div>
+                      {isAdmin&&!isEditing&&(
+                        <div style={{display:'flex',gap:4}}>
+                          <button className="btn btn-ghost btn-sm" style={{fontSize:11}} title="Bearbeiten"
+                            onClick={()=>{setEditingRoundId(round.id);setEditRoundWinnerId(winner?.team.id??null);}}>
+                            ✏
+                          </button>
+                          <button className="btn btn-ghost btn-sm" style={{fontSize:11,color:'var(--c-text-muted)'}}
+                            onClick={()=>deleteSprint(round.id)}>×</button>
+                        </div>
+                      )}
+                    </div>
+                    {/* ── Inline-Edit ── */}
+                    {isAdmin&&isEditing&&(
+                      <div style={{paddingBottom:10,paddingTop:4}}>
+                        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(72px,1fr))',gap:6,marginBottom:8}}>
+                          {teams.map(team=>{
+                            const sel=editRoundWinnerId===team.id;
+                            return(
+                              <button key={team.id} type="button"
+                                onClick={()=>setEditRoundWinnerId(sel?null:team.id)}
+                                style={{padding:'7px 4px',borderRadius:7,cursor:'pointer',textAlign:'center',
+                                  border:sel?'2px solid var(--c-primary)':'1px solid var(--c-border)',
+                                  background:sel?'#dbeafe':'var(--c-white)'}}>
+                                <div style={{fontWeight:700,fontSize:15,color:sel?'var(--c-primary)':''}}>{team.number}</div>
+                                <div style={{fontSize:10,color:'var(--c-text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{team.name}</div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                          <button className="btn btn-ghost btn-sm" onClick={()=>{setEditingRoundId(null);setEditRoundWinnerId(null);}}>Abbrechen</button>
+                          <button className="btn btn-ghost btn-sm" style={{fontSize:11,color:'var(--c-text-muted)'}}
+                            onClick={()=>setEditRoundWinnerId(null)}>
+                            Kein Sieger
+                          </button>
+                          <button className="btn btn-primary btn-sm" onClick={saveRoundEdit} disabled={savingRoundEdit}>
+                            {savingRoundEdit?'…':'Speichern ✓'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              {schlusswertung&&(
+                <div style={{paddingTop:8,marginTop:4,borderTop:'2px solid #fde68a'}}>
+                  <div style={{fontWeight:600,fontSize:12,color:'#b45309',marginBottom:4}}>Schlusswertung ★</div>
+                  <div style={{fontSize:13}}>
+                    {[...schlusswertung.results].sort((a,b)=>a.position-b.position).map(r=>(
+                      <span key={r.team.id} style={{marginRight:10}}>{r.position}. <span style={{fontWeight:600}}>{r.team.number}</span> {r.team.name}</span>
+                    ))}
+                  </div>
+                  {isAdmin&&<button className="btn btn-ghost btn-sm" style={{fontSize:11,marginTop:6,color:'var(--c-danger)'}} onClick={()=>deleteSprint(schlusswertung.id)}>Schlusswertung löschen</button>}
+                </div>
+              )}
             </div>
           </div>
         )}
