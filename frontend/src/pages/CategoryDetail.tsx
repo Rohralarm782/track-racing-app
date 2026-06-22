@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, type Category, type Team } from '../api/client';
 import { useAdmin } from '../components/Layout';
 import TeamBulkEntry, { type DetectedScore } from '../components/TeamBulkEntry';
+import MadisonTeamBuilder from '../components/MadisonTeamBuilder';
 
 const RACE_TYPE_OPTIONS = [
   { value: 'PUNKTEFAHREN',      label: 'Punktefahren / Madison' },
@@ -26,7 +27,8 @@ export default function CategoryDetail() {
   const navigate                      = useNavigate();
   const [category, setCategory]       = useState<Category | null>(null);
   const [loading, setLoading]         = useState(true);
-  const [showImport, setShowImport]   = useState(false);
+  const [showImport, setShowImport]           = useState(false);
+  const [showMadisonBuilder, setShowMadisonBuilder] = useState(false);  // ← NEU
   const [showNewRace, setShowNewRace] = useState(false);
   const [raceName, setRaceName]       = useState('');
   const [raceType, setRaceType]       = useState<string>('PUNKTEFAHREN');
@@ -36,12 +38,12 @@ export default function CategoryDetail() {
   const { isAdmin }                   = useAdmin();
 
   // ── Score-Import nach Startlisten-Upload ───────────────────────────────────
-  const [pendingScores, setPendingScores]   = useState<DetectedScore[]>([]);
+  const [pendingScores, setPendingScores]     = useState<DetectedScore[]>([]);
   const [showScoreImport, setShowScoreImport] = useState(false);
-  const [scoreRaceId, setScoreRaceId]       = useState('');
-  const [scoreStrategy, setScoreStrategy]   = useState<Strategy>('import');
-  const [savingScores, setSavingScores]     = useState(false);
-  const [scoreError, setScoreError]         = useState('');
+  const [scoreRaceId, setScoreRaceId]         = useState('');
+  const [scoreStrategy, setScoreStrategy]     = useState<Strategy>('import');
+  const [savingScores, setSavingScores]       = useState(false);
+  const [scoreError, setScoreError]           = useState('');
 
   // ── Inline-Bearbeitung einzelner Fahrer ───────────────────────────────────
   interface EditValues { number: number; name: string; club: string; rider1: string; rider2: string; }
@@ -100,34 +102,26 @@ export default function CategoryDetail() {
   }
   useEffect(load, [id]);
 
-  // Wird aufgerufen wenn TeamBulkEntry Teams gespeichert hat.
-  // scores: nur gesetzt wenn Nutzer "Omnium-Zwischenergebnis" gewählt hat.
   function handleImportSuccess(teams: Team[], scores?: DetectedScore[]) {
     setShowImport(false);
     setCategory(prev => prev ? { ...prev, teams } : prev);
 
     const races = category?.races ?? [];
     if (scores && scores.length > 0 && races.length > 0) {
-      // Scores erkannt UND mindestens ein Rennen vorhanden → Dialog anzeigen
       setPendingScores(scores);
       setScoreRaceId(races[0].id);
       setScoreStrategy('import');
       setScoreError('');
       setShowScoreImport(true);
     } else if (scores && scores.length > 0) {
-      // Scores erkannt, aber noch kein Rennen – Info-Hinweis
-      // (Scores gehen verloren; Nutzer muss Punkte später manuell eingeben)
-      // Hier könntest du einen Toast o.ä. anzeigen:
       console.info('Omnium-Punkte erkannt, aber noch kein Rennen vorhanden. Punkte werden nicht gespeichert.');
     }
   }
 
-  // Erkannte Scores ins gewählte Rennen importieren
   async function saveDetectedScores() {
     if (!scoreRaceId || pendingScores.length === 0) return;
     setSavingScores(true); setScoreError('');
     try {
-      // BIB-Nummer → Team-ID mappen (Teams sind nach dem Import aktuell)
       const teams = category?.teams ?? [];
       const teamMap = new Map(teams.map(t => [t.number, t.id]));
       const scores = pendingScores
@@ -182,6 +176,7 @@ export default function CategoryDetail() {
   const teams       = category.teams ?? [];
   const races       = category.races ?? [];
   const isTeamPairs = category.format === 'TEAM_PAIRS';
+  const anyPanelOpen = showImport || showMadisonBuilder;
 
   return (
     <div className="page container">
@@ -195,18 +190,11 @@ export default function CategoryDetail() {
               {pendingScores.length} Fahrer mit Punkten erkannt. In welches Rennen sollen sie eingetragen werden?
             </p>
 
-            {/* Rennen auswählen */}
             {races.length > 1 && (
               <div className="form-group">
                 <label className="form-label">Rennen</label>
-                <select
-                  className="form-select"
-                  value={scoreRaceId}
-                  onChange={e => setScoreRaceId(e.target.value)}
-                >
-                  {races.map(r => (
-                    <option key={r.id} value={r.id}>{r.name}</option>
-                  ))}
+                <select className="form-select" value={scoreRaceId} onChange={e => setScoreRaceId(e.target.value)}>
+                  {races.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
                 </select>
               </div>
             )}
@@ -216,14 +204,11 @@ export default function CategoryDetail() {
               </div>
             )}
 
-            {/* Konfliktstrategie */}
             <div className="form-group" style={{ marginBottom: 20 }}>
               <label className="form-label">Bei vorhandenen Punkten</label>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
                 {STRATEGY_OPTIONS.map(opt => (
-                  <label
-                    key={opt.value}
-                    onClick={() => setScoreStrategy(opt.value)}
+                  <label key={opt.value} onClick={() => setScoreStrategy(opt.value)}
                     style={{
                       display: 'flex', gap: 12, alignItems: 'flex-start', cursor: 'pointer',
                       border: scoreStrategy === opt.value ? '2px solid var(--c-primary)' : '1px solid var(--c-border)',
@@ -232,12 +217,9 @@ export default function CategoryDetail() {
                       transition: 'all .15s',
                     }}
                   >
-                    <input
-                      type="radio" name="scoreStrategy" value={opt.value}
-                      checked={scoreStrategy === opt.value}
-                      onChange={() => setScoreStrategy(opt.value)}
-                      style={{ marginTop: 3, flexShrink: 0 }}
-                    />
+                    <input type="radio" name="scoreStrategy" value={opt.value}
+                      checked={scoreStrategy === opt.value} onChange={() => setScoreStrategy(opt.value)}
+                      style={{ marginTop: 3, flexShrink: 0 }} />
                     <div>
                       <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 1 }}>{opt.label}</div>
                       <div style={{ fontSize: 12, color: 'var(--c-text-muted)' }}>{opt.hint}</div>
@@ -248,15 +230,10 @@ export default function CategoryDetail() {
             </div>
 
             {scoreError && <div className="alert alert-error">{scoreError}</div>}
-
             <div className="flex-between">
-              <button className="btn btn-ghost" onClick={dismissScoreImport}>
-                Überspringen
-              </button>
+              <button className="btn btn-ghost" onClick={dismissScoreImport}>Überspringen</button>
               <button className="btn btn-primary" onClick={saveDetectedScores} disabled={savingScores}>
-                {savingScores
-                  ? 'Speichert…'
-                  : `${pendingScores.length} Punkte importieren`}
+                {savingScores ? 'Speichert…' : `${pendingScores.length} Punkte importieren`}
               </button>
             </div>
           </div>
@@ -277,13 +254,39 @@ export default function CategoryDetail() {
             {isTeamPairs ? 'Madison / Mannschaft' : 'Einzelrennen'} · {teams.length} Teilnehmer
           </p>
         </div>
-        {isAdmin && !showImport && (
-          <button className="btn btn-secondary btn-sm" onClick={() => setShowImport(true)}>
-            {teams.length === 0 ? '+ Startliste' : 'Startliste bearbeiten'}
-          </button>
+        {/* ── Header-Buttons ── */}
+        {isAdmin && !anyPanelOpen && (
+          <div style={{ display: 'flex', gap: 8 }}>
+            {/* Madison-Builder nur für TEAM_PAIRS sichtbar */}
+            {isTeamPairs && (
+              <button className="btn btn-secondary btn-sm" onClick={() => setShowMadisonBuilder(true)}>
+                🔀 Teams aufbauen
+              </button>
+            )}
+            <button className="btn btn-secondary btn-sm" onClick={() => setShowImport(true)}>
+              {teams.length === 0 ? '+ Startliste' : 'Startliste bearbeiten'}
+            </button>
+          </div>
         )}
       </div>
 
+      {/* ── Madison-Team-Builder ─────────────────────────────────────────── */}
+      {showMadisonBuilder && (
+        <div className="card mb-4">
+          <div className="flex-between mb-3">
+            <h2 style={{ margin: 0 }}>🔀 Madison-Teams aufbauen</h2>
+            <button className="btn btn-ghost btn-sm" onClick={() => setShowMadisonBuilder(false)}>✕ Schließen</button>
+          </div>
+          <MadisonTeamBuilder
+            categoryId={category.id}
+            existingTeams={teams}
+            onSuccess={() => { setShowMadisonBuilder(false); load(); }}
+            onCancel={() => setShowMadisonBuilder(false)}
+          />
+        </div>
+      )}
+
+      {/* ── Startliste bearbeiten (TeamBulkEntry) ────────────────────────── */}
       {showImport && (
         <div className="card mb-4">
           <div className="flex-between mb-3">
@@ -293,7 +296,6 @@ export default function CategoryDetail() {
             </button>
           </div>
 
-          {/* ── Vorhandene Fahrer inline bearbeiten ─────────────────────── */}
           {teams.length > 0 && (
             <>
               {editError && <div className="alert alert-error mb-3">{editError}</div>}
@@ -310,62 +312,47 @@ export default function CategoryDetail() {
                   </thead>
                   <tbody>
                     {teams.map(team => editingTeamId === team.id ? (
-                      /* ── Bearbeitungszeile ── */
                       <tr key={team.id} style={{ background: '#f0f7ff' }}>
                         <td>
-                          <input
-                            type="number" className="form-input" style={{ width: 56, padding: '4px 6px', fontSize: 13 }}
+                          <input type="number" className="form-input" style={{ width: 56, padding: '4px 6px', fontSize: 13 }}
                             value={editValues.number}
-                            onChange={e => setEditValues(v => ({ ...v, number: parseInt(e.target.value) || 0 }))}
-                          />
+                            onChange={e => setEditValues(v => ({ ...v, number: parseInt(e.target.value) || 0 }))} />
                         </td>
                         <td>
-                          <input
-                            type="text" className="form-input" style={{ padding: '4px 8px', fontSize: 13 }}
+                          <input type="text" className="form-input" style={{ padding: '4px 8px', fontSize: 13 }}
                             value={editValues.name}
                             onChange={e => setEditValues(v => ({ ...v, name: e.target.value }))}
                             onKeyDown={e => { if (e.key === 'Enter') saveEdit(team.id); if (e.key === 'Escape') cancelEdit(); }}
-                            autoFocus
-                          />
+                            autoFocus />
                         </td>
                         {(isTeamPairs || teams.some(t => t.club)) && (
                           <td>
-                            <input
-                              type="text" className="form-input" style={{ padding: '4px 8px', fontSize: 13 }}
+                            <input type="text" className="form-input" style={{ padding: '4px 8px', fontSize: 13 }}
                               value={editValues.club} placeholder="Verein"
-                              onChange={e => setEditValues(v => ({ ...v, club: e.target.value }))}
-                            />
+                              onChange={e => setEditValues(v => ({ ...v, club: e.target.value }))} />
                           </td>
                         )}
                         {isTeamPairs && (
                           <td>
                             <div style={{ display: 'flex', gap: 4 }}>
-                              <input
-                                type="text" className="form-input" style={{ padding: '4px 8px', fontSize: 12 }}
+                              <input type="text" className="form-input" style={{ padding: '4px 8px', fontSize: 12 }}
                                 value={editValues.rider1} placeholder="Fahrer 1"
-                                onChange={e => setEditValues(v => ({ ...v, rider1: e.target.value }))}
-                              />
-                              <input
-                                type="text" className="form-input" style={{ padding: '4px 8px', fontSize: 12 }}
+                                onChange={e => setEditValues(v => ({ ...v, rider1: e.target.value }))} />
+                              <input type="text" className="form-input" style={{ padding: '4px 8px', fontSize: 12 }}
                                 value={editValues.rider2} placeholder="Fahrer 2"
-                                onChange={e => setEditValues(v => ({ ...v, rider2: e.target.value }))}
-                              />
+                                onChange={e => setEditValues(v => ({ ...v, rider2: e.target.value }))} />
                             </div>
                           </td>
                         )}
                         <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                          <button
-                            className="btn btn-primary btn-sm" style={{ marginRight: 4 }}
-                            onClick={() => saveEdit(team.id)} disabled={savingEdit || !editValues.name}
-                            title="Speichern"
-                          >
+                          <button className="btn btn-primary btn-sm" style={{ marginRight: 4 }}
+                            onClick={() => saveEdit(team.id)} disabled={savingEdit || !editValues.name} title="Speichern">
                             {savingEdit ? '…' : '✓'}
                           </button>
                           <button className="btn btn-ghost btn-sm" onClick={cancelEdit} title="Abbrechen">✗</button>
                         </td>
                       </tr>
                     ) : (
-                      /* ── Anzeigezeile ── */
                       <tr key={team.id}>
                         <td className="num" style={{ fontWeight: 600 }}>{team.number}</td>
                         <td>{team.name}</td>
@@ -378,21 +365,16 @@ export default function CategoryDetail() {
                           </td>
                         )}
                         <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                          <button
-                            className="btn btn-ghost btn-sm" style={{ marginRight: 4 }}
-                            onClick={() => startEdit(team)} title="Bearbeiten"
-                          >✏</button>
-                          <button
-                            className="btn btn-ghost btn-sm" style={{ color: 'var(--c-danger)' }}
-                            onClick={() => deleteTeam(team.id, team.name)} title="Löschen"
-                          >🗑</button>
+                          <button className="btn btn-ghost btn-sm" style={{ marginRight: 4 }}
+                            onClick={() => startEdit(team)} title="Bearbeiten">✏</button>
+                          <button className="btn btn-ghost btn-sm" style={{ color: 'var(--c-danger)' }}
+                            onClick={() => deleteTeam(team.id, team.name)} title="Löschen">🗑</button>
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
-
               <div style={{ borderTop: '1px solid var(--c-border)', paddingTop: 16, marginBottom: 12 }}>
                 <h3 style={{ margin: '0 0 12px', color: 'var(--c-text-muted)', fontSize: 13, fontWeight: 500 }}>
                   Oder neue Startliste importieren
@@ -411,7 +393,8 @@ export default function CategoryDetail() {
         </div>
       )}
 
-      {!showImport && (
+      {/* ── Rennen & Startliste (Hauptinhalt) ────────────────────────────── */}
+      {!anyPanelOpen && (
         <>
           <div className="section-header" style={{ marginBottom: 10 }}>
             <h2 style={{ margin: 0 }}>Rennen</h2>
@@ -473,11 +456,8 @@ export default function CategoryDetail() {
                         {race.type === 'PUNKTEFAHREN' ? 'Punktefahren' : race.type === 'TEMPORUNDEN' ? 'Temporunden' : 'Verfolgung'}
                       </span>
                       {isAdmin && (
-                        <button
-                          className="btn btn-ghost btn-sm"
-                          style={{ color: 'var(--c-danger)', fontSize: 11 }}
-                          onClick={() => deleteRace(race.id, race.name)}
-                        >
+                        <button className="btn btn-ghost btn-sm" style={{ color: 'var(--c-danger)', fontSize: 11 }}
+                          onClick={() => deleteRace(race.id, race.name)}>
                           Löschen
                         </button>
                       )}
