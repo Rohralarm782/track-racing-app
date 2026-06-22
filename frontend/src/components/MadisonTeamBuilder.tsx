@@ -23,9 +23,9 @@ interface BuiltTeam {
 }
 
 interface Props {
-  categoryId:    string;   // Ziel-Kategorie (TEAM_PAIRS, hier werden Teams gespeichert)
-  eventId:       string;   // Quelle: Alle INDIVIDUAL-Kategorien dieses Events
-  existingTeams: Team[];   // schon vorhandene Teams (BIB-Konflikt vermeiden)
+  categoryId:    string;
+  eventId:       string;
+  existingTeams: Array<{ number: number }>;   // nur number nötig für BIB-Konfliktcheck
   onSuccess:     (teams: Team[]) => void;
   onCancel:      () => void;
 }
@@ -55,25 +55,25 @@ export default function MadisonTeamBuilder({
     async function fetchRiders() {
       setLoading(true); setLoadError('');
       try {
-        const event = await api.get<{
-          id: string;
-          categories: Array<{ id: string; name: string; format: string }>;
-        }>(`/api/events/${eventId}`);
+        type EventCat = { id: string; name: string; format: string };
+        type EventResp = { id: string; categories: EventCat[] };
+        type CatResult = { ak: string; teams: Team[] };
 
-        // Alle INDIVIDUAL-Kategorien (außer Zielkategorie) parallel laden
-        const catResults = await Promise.all(
+        const event = await api.get<EventResp>(`/api/events/${eventId}`);
+
+        const catResults: CatResult[] = await Promise.all(
           event.categories
-            .filter(c => c.format === 'INDIVIDUAL')
-            .map(async cat => ({
+            .filter((c: EventCat) => c.format === 'INDIVIDUAL')
+            .map(async (cat: EventCat): Promise<CatResult> => ({
               ak:    cat.name,
               teams: await api.get<Team[]>(`/api/teams?categoryId=${cat.id}`),
             }))
         );
 
-        const all: Rider[] = catResults.flatMap(({ ak, teams }) =>
-          teams.map(t => ({ id: t.id, number: t.number, name: t.name, ak }))
+        const all: Rider[] = catResults.flatMap(({ ak, teams }: CatResult) =>
+          teams.map((t: Team) => ({ id: t.id, number: t.number, name: t.name, ak }))
         );
-        setRiders(all.sort((a, b) => a.number - b.number));
+        setRiders(all.sort((a: Rider, b: Rider) => a.number - b.number));
       } catch (e: any) {
         setLoadError(e.message ?? 'Fehler beim Laden');
       } finally {
@@ -90,12 +90,6 @@ export default function MadisonTeamBuilder({
     const u = Array.from(new Set(riders.map(r => r.ak)));
     return u.length > 1 ? ['Alle', ...u] : u;
   }, [riders]);
-
-  const usedIds = useMemo(
-    () => new Set(builtTeams.flatMap(t => [t.rider1Id, t.rider2Id])),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [JSON.stringify(builtTeams.map(t => t.rider1Id + t.rider2Id))],
-  );
 
   // ── Aktuelles Team-Formular ───────────────────────────────────────────────
   const [teamName,   setTeamName]   = useState('');
