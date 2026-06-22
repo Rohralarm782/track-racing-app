@@ -64,6 +64,8 @@ model Team {
   isFavorite Boolean  @default(false)
   rider1     String?
   rider2     String?
+  color      String?
+  pattern    String?
 
   omniumScores  OmniumScore[]
   sprintResults SprintResult[]
