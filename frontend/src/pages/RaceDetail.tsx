@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAdmin } from '../components/Layout';
 import VerfolgungsplanungView, { PlanSaveData } from '../components/VerfolgungsplanungView';
+import MadisonTeamBuilder from '../components/MadisonTeamBuilder';
 
 interface Team { id: string; number: number; name: string; club?: string|null; rider1?: string|null; rider2?: string|null; isFavorite?: boolean; }
 interface SprintResult { id: string; position: number; team: Team; }
@@ -73,6 +74,9 @@ export default function RaceDetail() {
   const [editingRoundId, setEditingRoundId]     = useState<string|null>(null);
   const [editRoundWinnerId, setEditRoundWinnerId] = useState<string|null>(null);
   const [savingRoundEdit, setSavingRoundEdit]   = useState(false);
+
+  // ── Madison-Teambuilder ───────────────────────────────────────────────────
+  const [showTeamBuilder, setShowTeamBuilder] = useState(false);
 
   // ── Datenabruf ────────────────────────────────────────────────────────────
   const fetchRace = useCallback(async () => {
@@ -568,13 +572,35 @@ export default function RaceDetail() {
         </div>
         {isAdmin && (
           <div style={{display:'flex',gap:8}}>
+            {displayFormat==='TEAM_PAIRS' && !showTeamBuilder && (
+              <button className="btn btn-secondary btn-sm" onClick={()=>setShowTeamBuilder(true)}>
+                🔀 Teams aufbauen
+              </button>
+            )}
             <button className="btn btn-secondary btn-sm" onClick={openOmnium}>Omnium-Vorpunkte</button>
-            {!entryOpen && <button className="btn btn-primary" onClick={openNew}>+ Sprint {nextNum}</button>}
+            {!entryOpen && !showTeamBuilder && <button className="btn btn-primary" onClick={openNew}>+ Sprint {nextNum}</button>}
           </div>
         )}
       </div>
 
       {error && <div className="alert alert-error mb-3">{error}</div>}
+
+      {/* ── Madison-Teambuilder ── */}
+      {isAdmin && showTeamBuilder && (
+        <div className="card mb-4">
+          <div className="flex-between mb-3">
+            <h2 style={{margin:0}}>🔀 Madison-Teams aufbauen</h2>
+            <button className="btn btn-ghost btn-sm" onClick={()=>setShowTeamBuilder(false)}>✕ Schließen</button>
+          </div>
+          <MadisonTeamBuilder
+            categoryId={category.id}
+            eventId={category.event.id}
+            existingTeams={teams}
+            onSuccess={()=>{ setShowTeamBuilder(false); fetchRace(); }}
+            onCancel={()=>setShowTeamBuilder(false)}
+          />
+        </div>
+      )}
 
       {/* ── Sprint-Eingabepanel ── */}
       {isAdmin && entryOpen && (
