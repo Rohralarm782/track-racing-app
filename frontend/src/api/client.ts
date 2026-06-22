@@ -17,6 +17,8 @@ export interface Team {
   isFavorite?: boolean;
   rider1?: string | null;
   rider2?: string | null;
+  color?: string | null;
+  pattern?: string | null;
 }
 
 export interface Category {
