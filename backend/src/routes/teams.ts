@@ -19,12 +19,17 @@ router.get('/', async (req, res, next) => {
 });
 
 const TeamSchema = z.object({
-  number: z.number().int().positive(),
-  name: z.string().min(1),
-  club: z.string().optional().nullable(),
-  rider1: z.string().optional().nullable(),
-  rider2: z.string().optional().nullable(),
+  number:     z.number().int().positive(),
+  name:       z.string().min(1),
+  club:       z.string().optional().nullable(),
+  rider1:     z.string().optional().nullable(),
+  rider2:     z.string().optional().nullable(),
+  color:      z.string().optional().nullable(),
+  pattern:    z.string().optional().nullable(),
+  isFavorite: z.boolean().optional(),
 });
+
+const CreateTeamSchema = TeamSchema.extend({ categoryId: z.string() });
 
 router.post('/', requireAdmin, async (req, res, next) => {
   try {
@@ -38,12 +43,10 @@ router.post('/', requireAdmin, async (req, res, next) => {
   }
 });
 
-const CreateTeamSchema = TeamSchema.extend({ categoryId: z.string() });
-
 const BatchSchema = z.object({
   categoryId: z.string(),
-  teams: z.array(TeamSchema).min(1),
-  replace: z.boolean().default(false),
+  teams:      z.array(TeamSchema).min(1),
+  replace:    z.boolean().default(false),
 });
 
 router.post('/batch', requireAdmin, async (req, res, next) => {
@@ -63,19 +66,6 @@ router.post('/batch', requireAdmin, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// PATCH /api/teams/:id/favorite
-router.patch('/:id/favorite', requireAdmin, async (req, res, next) => {
-  try {
-    const team = await prisma.team.findUnique({ where: { id: req.params.id }, select: { isFavorite: true } });
-    if (!team) { res.status(404).json({ error: 'Nicht gefunden' }); return; }
-    const updated = await prisma.team.update({
-      where: { id: req.params.id },
-      data: { isFavorite: !team.isFavorite },
-    });
-    res.json(updated);
-  } catch (e) { next(e); }
-});
-
 // PATCH /api/teams/:id
 router.patch('/:id', requireAdmin, async (req, res, next) => {
   try {
@@ -89,26 +79,32 @@ router.patch('/:id', requireAdmin, async (req, res, next) => {
   }
 });
 
+// PATCH /api/teams/:id/favorite — togglet isFavorite
+router.patch('/:id/favorite', requireAdmin, async (req, res, next) => {
+  try {
+    const team = await prisma.team.findUnique({ where: { id: req.params.id }, select: { isFavorite: true } });
+    if (!team) { res.status(404).json({ error: 'Nicht gefunden' }); return; }
+    const updated = await prisma.team.update({
+      where: { id: req.params.id },
+      data: { isFavorite: !team.isFavorite },
+    });
+    res.json(updated);
+  } catch (e) { next(e); }
+});
+
 // DELETE /api/teams/:id
-// Löscht zuerst alle abhängigen Datensätze, dann den Fahrer selbst.
-// Nötig weil die FK-Relationen im Schema kein onDelete:Cascade haben.
 router.delete('/:id', requireAdmin, async (req, res, next) => {
   try {
     const teamId = req.params.id;
     await prisma.$transaction(async (tx) => {
-      // Ergebnisse & Ereignisse löschen
       await tx.sprintResult.deleteMany({ where: { teamId } });
       await tx.lapEvent.deleteMany({ where: { teamId } });
       await tx.omniumScore.deleteMany({ where: { teamId } });
       await tx.timeResult.deleteMany({ where: { teamId } });
       await tx.raceFlag.deleteMany({ where: { teamId } });
-
-      // PursuitRound: Felder nullen statt die Runde zu löschen
       await tx.pursuitRound.updateMany({ where: { team1Id: teamId },  data: { team1Id: null, time1Ms: null } });
       await tx.pursuitRound.updateMany({ where: { team2Id: teamId },  data: { team2Id: null, time2Ms: null } });
       await tx.pursuitRound.updateMany({ where: { winnerId: teamId }, data: { winnerId: null } });
-
-      // Fahrer löschen
       await tx.team.delete({ where: { id: teamId } });
     });
     res.status(204).send();
