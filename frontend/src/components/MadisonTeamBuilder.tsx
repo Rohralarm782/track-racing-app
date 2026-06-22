@@ -1,69 +1,103 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api, type Team } from '../api/client';
 
 // ── Typen ─────────────────────────────────────────────────────────────────────
 interface Rider {
-  localId: string;
-  number:  number;
-  name:    string;
-  ak?:     string;   // Altersklasse z.B. "Elite m", "U19 w"
+  id:     string;
+  number: number;
+  name:   string;
+  ak:     string;   // Kategoriename = Altersklasse
 }
 
 interface BuiltTeam {
-  localId:       string;
-  number:        number;
-  name:          string;
-  rider1Name:    string;
-  rider1LocalId: string;
-  rider2Name:    string;
-  rider2LocalId: string;
-  color?:        string;
-  pattern?:      string;
-  isFavorite:    boolean;
+  localId:    string;
+  number:     number;
+  name:       string;
+  rider1Name: string;
+  rider1Id:   string;
+  rider2Name: string;
+  rider2Id:   string;
+  color?:     string;
+  pattern?:   string;
+  isFavorite: boolean;
 }
 
 interface Props {
-  categoryId:    string;
-  existingTeams: Team[];
+  categoryId:    string;   // Ziel-Kategorie (TEAM_PAIRS, hier werden Teams gespeichert)
+  eventId:       string;   // Quelle: Alle INDIVIDUAL-Kategorien dieses Events
+  existingTeams: Team[];   // schon vorhandene Teams (BIB-Konflikt vermeiden)
   onSuccess:     (teams: Team[]) => void;
   onCancel:      () => void;
 }
 
 const PATTERNS = [
   { value: '',          label: '— kein Muster' },
-  { value: 'gestreift', label: 'Gestreift' },
-  { value: 'kariert',   label: 'Kariert' },
-  { value: 'gepunktet', label: 'Gepunktet' },
-  { value: 'gitter',    label: 'Gitter' },
+  { value: 'gestreift', label: 'Gestreift'     },
+  { value: 'kariert',   label: 'Kariert'       },
+  { value: 'gepunktet', label: 'Gepunktet'     },
+  { value: 'gitter',    label: 'Gitter'        },
 ];
 
 let _lid = 0;
 const lid = () => `l${++_lid}`;
 
-function parseRider(line: string): Rider | null {
-  const m = line.trim().match(/^(\d+)\s+(.+)$/);
-  if (!m) return null;
-  const number = parseInt(m[1], 10);
-  const parts  = m[2].split(',').map(p => p.trim()).filter(Boolean);
-  const name   = parts[0];
-  // Letztes Segment als AK erkennen wenn kurz genug (z.B. "Elite m", "U19 w")
-  const ak = parts.length >= 2 ? parts[parts.length - 1] : undefined;
-  return { localId: lid(), number, name, ak };
-}
-
 // ── Hauptkomponente ───────────────────────────────────────────────────────────
-export default function MadisonTeamBuilder({ categoryId, existingTeams, onSuccess, onCancel }: Props) {
+export default function MadisonTeamBuilder({
+  categoryId, eventId, existingTeams, onSuccess, onCancel,
+}: Props) {
 
-  // ── Schritt 1: Startliste einfügen ────────────────────────────────────────
-  const [step, setStep]           = useState<'input' | 'build'>('input');
-  const [listText, setListText]   = useState('');
-  const [parseError, setParseError] = useState('');
+  // ── Fahrerliste aus Event laden ───────────────────────────────────────────
+  const [riders, setRiders]           = useState<Rider[]>([]);
+  const [loadingRiders, setLoading]   = useState(true);
+  const [loadError, setLoadError]     = useState('');
 
-  // ── Schritt 2: Team-Builder ────────────────────────────────────────────────
-  const [riders, setRiders]         = useState<Rider[]>([]);
+  useEffect(() => {
+    async function fetchRiders() {
+      setLoading(true); setLoadError('');
+      try {
+        const event = await api.get<{
+          id: string;
+          categories: Array<{ id: string; name: string; format: string }>;
+        }>(`/api/events/${eventId}`);
+
+        // Alle INDIVIDUAL-Kategorien (außer Zielkategorie) parallel laden
+        const catResults = await Promise.all(
+          event.categories
+            .filter(c => c.format === 'INDIVIDUAL')
+            .map(async cat => ({
+              ak:    cat.name,
+              teams: await api.get<Team[]>(`/api/teams?categoryId=${cat.id}`),
+            }))
+        );
+
+        const all: Rider[] = catResults.flatMap(({ ak, teams }) =>
+          teams.map(t => ({ id: t.id, number: t.number, name: t.name, ak }))
+        );
+        setRiders(all.sort((a, b) => a.number - b.number));
+      } catch (e: any) {
+        setLoadError(e.message ?? 'Fehler beim Laden');
+      } finally {
+        setLoading(false);
+      }
+    }
+    if (eventId) fetchRiders();
+  }, [eventId, categoryId]);
+
+  // ── Filter & verfügbare Fahrer ────────────────────────────────────────────
   const [activeFilter, setActiveFilter] = useState('Alle');
 
-  // Aktuelles Team-Formular
+  const akValues = useMemo(() => {
+    const u = Array.from(new Set(riders.map(r => r.ak)));
+    return u.length > 1 ? ['Alle', ...u] : u;
+  }, [riders]);
+
+  const usedIds = useMemo(
+    () => new Set(builtTeams.flatMap(t => [t.rider1Id, t.rider2Id])),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [JSON.stringify(builtTeams.map(t => t.rider1Id + t.rider2Id))],
+  );
+
+  // ── Aktuelles Team-Formular ───────────────────────────────────────────────
   const [teamName,   setTeamName]   = useState('');
   const [teamNumber, setTeamNumber] = useState(1);
   const [slot1, setSlot1]           = useState<Rider | null>(null);
@@ -74,67 +108,40 @@ export default function MadisonTeamBuilder({ categoryId, existingTeams, onSucces
   const [color, setColor]           = useState('#3b82f6');
   const [pattern, setPattern]       = useState('');
 
-  // Fertige Teams
+  // ── Fertige Teams ─────────────────────────────────────────────────────────
   const [builtTeams, setBuiltTeams] = useState<BuiltTeam[]>([]);
 
-  // Speichern
-  const [saving, setSaving] = useState(false);
-  const [error,  setError]  = useState('');
-
-  // ── Abgeleitete Werte ─────────────────────────────────────────────────────
-  const permanentlyUsedIds = useMemo(() => {
+  // Hilfsfunktion hier definieren damit usedIds korrekt rechnet
+  const usedIdsCalc = useMemo(() => {
     const s = new Set<string>();
-    builtTeams.forEach(t => { s.add(t.rider1LocalId); s.add(t.rider2LocalId); });
+    builtTeams.forEach(t => { s.add(t.rider1Id); s.add(t.rider2Id); });
     return s;
   }, [builtTeams]);
 
-  const akValues = useMemo(() => {
-    const unique = Array.from(new Set(riders.map(r => r.ak).filter(Boolean) as string[]));
-    return unique.length > 0 ? ['Alle', ...unique] : [];
-  }, [riders]);
-
-  const filteredRiders = useMemo(() => {
-    const available = riders.filter(r => !permanentlyUsedIds.has(r.localId));
-    if (activeFilter === 'Alle') return available;
-    return available.filter(r => r.ak === activeFilter);
-  }, [riders, permanentlyUsedIds, activeFilter]);
-
-  function calcNextBib(alsoUsed: number[] = []) {
-    const used = new Set([
+  function calcNextBib(extra: number[] = []) {
+    const taken = new Set([
       ...existingTeams.map(t => t.number),
       ...builtTeams.map(t => t.number),
-      ...alsoUsed,
+      ...extra,
     ]);
-    let n = 1;
-    while (used.has(n)) n++;
+    let n = 1; while (taken.has(n)) n++;
     return n;
   }
 
-  // ── Schritt 1 → 2 ────────────────────────────────────────────────────────
-  function loadRiders() {
-    const parsed = listText
-      .split('\n')
-      .map(parseRider)
-      .filter((r): r is Rider => r !== null);
-    if (parsed.length === 0) { setParseError('Keine gültigen Zeilen gefunden.'); return; }
-    setParseError('');
-    setRiders(parsed.sort((a, b) => a.number - b.number));
-    setTeamNumber(calcNextBib());
-    setStep('build');
-  }
+  // Nächste BIB nach mount berechnen
+  useEffect(() => { setTeamNumber(calcNextBib()); }, [existingTeams.length, builtTeams.length]); // eslint-disable-line
 
   // ── Fahrer anklicken ──────────────────────────────────────────────────────
   function clickRider(rider: Rider) {
-    if (permanentlyUsedIds.has(rider.localId)) return;
-
+    if (usedIdsCalc.has(rider.id)) return;
     if (activeSlot === 1) {
-      if (slot1?.localId === rider.localId) { setSlot1(null); return; }
-      if (slot2?.localId === rider.localId) { setSlot2(null); }   // Aus Slot 2 entfernen wenn nötig
+      if (slot1?.id === rider.id) { setSlot1(null); return; }
+      if (slot2?.id === rider.id) { setSlot2(null); }
       setSlot1(rider);
       if (!slot2) setActiveSlot(2);
     } else {
-      if (slot2?.localId === rider.localId) { setSlot2(null); return; }
-      if (slot1?.localId === rider.localId) { setSlot1(null); }
+      if (slot2?.id === rider.id) { setSlot2(null); return; }
+      if (slot1?.id === rider.id) { setSlot1(null); }
       setSlot2(rider);
     }
   }
@@ -144,17 +151,14 @@ export default function MadisonTeamBuilder({ categoryId, existingTeams, onSucces
     if (!slot1 || !slot2) return;
     const name = teamName.trim() || `${slot1.name} / ${slot2.name}`;
     const bib  = teamNumber;
-
     setBuiltTeams(prev => [...prev, {
       localId: lid(), number: bib, name,
-      rider1Name: slot1.name, rider1LocalId: slot1.localId,
-      rider2Name: slot2.name, rider2LocalId: slot2.localId,
+      rider1Name: slot1.name, rider1Id: slot1.id,
+      rider2Name: slot2.name, rider2Id: slot2.id,
       color:   trikotOpen ? color   : undefined,
       pattern: trikotOpen && pattern ? pattern : undefined,
       isFavorite,
     }]);
-
-    // Formular zurücksetzen
     setTeamName(''); setSlot1(null); setSlot2(null);
     setActiveSlot(1); setIsFavorite(false); setTrikotOpen(false);
     setTeamNumber(calcNextBib([bib]));
@@ -165,20 +169,19 @@ export default function MadisonTeamBuilder({ categoryId, existingTeams, onSucces
   }
 
   // ── Speichern ─────────────────────────────────────────────────────────────
+  const [saving, setSaving] = useState(false);
+  const [error,  setError]  = useState('');
+
   async function handleSave() {
     if (builtTeams.length === 0) return;
     setSaving(true); setError('');
     try {
       const result = await api.post<Team[]>('/api/teams/batch', {
-        categoryId,
-        replace: false,
+        categoryId, replace: false,
         teams: builtTeams.map(t => ({
-          number:     t.number,
-          name:       t.name,
-          rider1:     t.rider1Name || null,
-          rider2:     t.rider2Name || null,
-          color:      t.color   || null,
-          pattern:    t.pattern || null,
+          number: t.number, name: t.name,
+          rider1: t.rider1Name || null, rider2: t.rider2Name || null,
+          color: t.color || null, pattern: t.pattern || null,
           isFavorite: t.isFavorite,
         })),
       });
@@ -190,58 +193,45 @@ export default function MadisonTeamBuilder({ categoryId, existingTeams, onSucces
     }
   }
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // Render: Schritt 1 – Startliste einfügen
-  // ══════════════════════════════════════════════════════════════════════════
-  if (step === 'input') {
+  // ── Gefilterte Fahrer ─────────────────────────────────────────────────────
+  const filteredRiders = useMemo(() => {
+    const avail = riders.filter(r => !usedIdsCalc.has(r.id));
+    if (activeFilter === 'Alle') return avail;
+    return avail.filter(r => r.ak === activeFilter);
+  }, [riders, usedIdsCalc, activeFilter]);
+
+  // ── Ladezustand ───────────────────────────────────────────────────────────
+  if (loadingRiders) {
     return (
-      <div>
-        <p className="text-sm text-muted" style={{ marginBottom: 10 }}>
-          Einzelstartliste einfügen — eine Zeile pro Fahrer:<br />
-          <code style={{ fontSize: 12 }}>1 Max Müller, Elite m</code> (AK optional, wird als Filter verwendet)
-        </p>
-        <textarea
-          className="form-input"
-          style={{ width: '100%', minHeight: 200, fontFamily: 'monospace', fontSize: 13, resize: 'vertical' }}
-          value={listText}
-          onChange={e => setListText(e.target.value)}
-          placeholder={'1 Max Müller, Elite m\n2 Peter Koch, Elite m\n21 Ben Richter, U19 m\n22 Lea Becker, U19 m'}
-          autoFocus
-        />
-        {parseError && <div className="alert alert-error mt-2">{parseError}</div>}
-        <div className="flex-between mt-3">
-          <button className="btn btn-ghost" onClick={onCancel}>Abbrechen</button>
-          <button className="btn btn-primary" onClick={loadRiders} disabled={!listText.trim()}>
-            Weiter → Teams aufbauen
-          </button>
-        </div>
+      <div style={{ padding: '24px', textAlign: 'center', color: 'var(--c-text-muted)' }}>
+        <span className="spinner" style={{ marginRight: 8 }} />Fahrer werden geladen…
       </div>
     );
   }
+  if (loadError) {
+    return <div className="alert alert-error">{loadError}</div>;
+  }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // Render: Schritt 2 – Team-Builder
+  // Render
   // ══════════════════════════════════════════════════════════════════════════
-
-  const slot1IsActive = activeSlot === 1;
-  const slot2IsActive = activeSlot === 2;
-
   return (
     <div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, alignItems: 'start' }}>
+      {/* ── Zwei-Spalten-Layout ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: 24, alignItems: 'start' }}>
 
-        {/* ── Linke Spalte: Fahrerliste ──────────────────────────────────── */}
+        {/* ── Linke Spalte: Fahrerliste ────────────────────────────────── */}
         <div>
           {/* AK-Filter-Tabs */}
-          {akValues.length > 0 && (
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+          {akValues.length > 1 && (
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 10 }}>
               {akValues.map(ak => (
                 <button key={ak} type="button" onClick={() => setActiveFilter(ak)}
                   style={{
-                    padding: '4px 14px', borderRadius: 20, fontSize: 13, cursor: 'pointer',
-                    border: activeFilter === ak ? 'none' : '1px solid var(--c-border)',
-                    background: activeFilter === ak ? '#111' : 'var(--c-white)',
-                    color: activeFilter === ak ? '#fff' : 'var(--c-text)',
+                    padding: '3px 12px', borderRadius: 20, fontSize: 12, cursor: 'pointer',
+                    border: 'none',
+                    background: activeFilter === ak ? '#111' : '#f3f4f6',
+                    color:      activeFilter === ak ? '#fff' : 'var(--c-text)',
                     fontWeight: activeFilter === ak ? 600 : 400,
                   }}>
                   {ak}
@@ -251,26 +241,26 @@ export default function MadisonTeamBuilder({ categoryId, existingTeams, onSucces
           )}
 
           {/* Fahrerliste */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 1, maxHeight: 400, overflowY: 'auto' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 0, maxHeight: 420, overflowY: 'auto' }}>
             {filteredRiders.map(rider => {
-              const isInSlot1 = slot1?.localId === rider.localId;
-              const isInSlot2 = slot2?.localId === rider.localId;
-              const isSelected = isInSlot1 || isInSlot2;
+              const inSlot1 = slot1?.id === rider.id;
+              const inSlot2 = slot2?.id === rider.id;
+              const isSelected = inSlot1 || inSlot2;
               return (
-                <button key={rider.localId} type="button" onClick={() => clickRider(rider)}
+                <button key={rider.id} type="button" onClick={() => clickRider(rider)}
                   style={{
-                    display: 'flex', alignItems: 'center', gap: 10,
-                    padding: '8px 10px', borderRadius: 6, textAlign: 'left',
+                    display: 'flex', alignItems: 'center', gap: 8,
+                    padding: '7px 8px', borderRadius: 6, textAlign: 'left',
                     cursor: 'pointer', border: 'none',
                     background: isSelected ? '#eff6ff' : 'transparent',
                   }}>
-                  <span style={{ fontWeight: 600, minWidth: 24, fontSize: 14, color: isSelected ? 'var(--c-primary)' : 'var(--c-text)' }}>
+                  <span style={{ fontWeight: 600, minWidth: 22, fontSize: 14, color: isSelected ? 'var(--c-primary)' : 'var(--c-text)' }}>
                     {rider.number}
                   </span>
-                  <span style={{ flex: 1, fontSize: 14, fontWeight: isSelected ? 500 : 400 }}>{rider.name}</span>
-                  {rider.ak && (
+                  <span style={{ flex: 1, fontSize: 13, fontWeight: isSelected ? 500 : 400 }}>{rider.name}</span>
+                  {akValues.length > 1 && rider.ak && (
                     <span style={{
-                      fontSize: 10, padding: '2px 7px', borderRadius: 10,
+                      fontSize: 10, padding: '1px 6px', borderRadius: 10, whiteSpace: 'nowrap',
                       background: isSelected ? '#dbeafe' : '#f3f4f6',
                       color: isSelected ? 'var(--c-primary)' : 'var(--c-text-muted)',
                     }}>
@@ -281,14 +271,14 @@ export default function MadisonTeamBuilder({ categoryId, existingTeams, onSucces
               );
             })}
             {filteredRiders.length === 0 && (
-              <p style={{ color: 'var(--c-text-muted)', fontSize: 13, fontStyle: 'italic', padding: '8px 10px' }}>
-                Alle Fahrer verteilt
+              <p style={{ color: 'var(--c-text-muted)', fontSize: 13, fontStyle: 'italic', padding: '8px 0' }}>
+                {riders.length === 0 ? 'Keine Einzelstarter im Event gefunden.' : 'Alle Fahrer verteilt.'}
               </p>
             )}
           </div>
         </div>
 
-        {/* ── Rechte Spalte: Team-Formular ───────────────────────────────── */}
+        {/* ── Rechte Spalte: Team-Formular ─────────────────────────────── */}
         <div>
           {/* TEAMNAME */}
           <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--c-text-muted)', marginBottom: 6 }}>TEAMNAME</div>
@@ -298,11 +288,7 @@ export default function MadisonTeamBuilder({ categoryId, existingTeams, onSucces
               placeholder="optional" />
             <button type="button" onClick={() => setIsFavorite(f => !f)}
               title={isFavorite ? 'Favorit entfernen' : 'Als Favorit markieren'}
-              style={{
-                background: 'none', border: '1px solid var(--c-border)', borderRadius: 8,
-                padding: '0 12px', cursor: 'pointer', fontSize: 18, lineHeight: 1,
-                color: isFavorite ? '#f59e0b' : 'var(--c-text-muted)',
-              }}>
+              style={{ background: 'none', border: '1px solid var(--c-border)', borderRadius: 8, padding: '0 12px', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}>
               {isFavorite ? '⭐' : '☆'}
             </button>
           </div>
@@ -319,42 +305,44 @@ export default function MadisonTeamBuilder({ categoryId, existingTeams, onSucces
           {/* Slot 1 */}
           <div onClick={() => setActiveSlot(1)}
             style={{
-              display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px',
+              display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px',
               borderRadius: 8, marginBottom: 6, cursor: 'pointer',
-              border: slot1IsActive ? '2px solid var(--c-primary)' : '1px solid var(--c-border)',
-              background: slot1IsActive ? '#f0f7ff' : 'var(--c-white)',
+              border: activeSlot === 1 && !slot1 ? '2px solid var(--c-primary)' : '1px solid var(--c-border)',
+              background: '#f9fafb',
             }}>
-            <span style={{ width: 14, height: 14, borderRadius: 3, background: '#1f2937', flexShrink: 0, display: 'inline-block' }} />
-            {slot1
-              ? <span style={{ fontWeight: 600, fontSize: 14 }}>{slot1.number} {slot1.name}</span>
-              : <span style={{ color: 'var(--c-text-muted)', fontSize: 13 }}>← Fahrer anklicken</span>
-            }
+            <span style={{ width: 14, height: 14, borderRadius: 3, background: '#1f2937', flexShrink: 0 }} />
+            {slot1 ? (
+              <span style={{ flex: 1, fontWeight: 600, fontSize: 14 }}>{slot1.number} {slot1.name}</span>
+            ) : (
+              <span style={{ flex: 1, fontSize: 13, color: 'var(--c-text-muted)' }}>
+                Schwarz <span style={{ fontStyle: 'italic' }}>← Fahrer anklicken</span>
+              </span>
+            )}
             {slot1 && (
               <button type="button" onClick={e => { e.stopPropagation(); setSlot1(null); setActiveSlot(1); }}
-                style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--c-text-muted)', fontSize: 18, lineHeight: 1, padding: '0 2px' }}>
-                ×
-              </button>
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--c-text-muted)', fontSize: 18, padding: 0 }}>×</button>
             )}
           </div>
 
           {/* Slot 2 */}
           <div onClick={() => setActiveSlot(2)}
             style={{
-              display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px',
+              display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px',
               borderRadius: 8, marginBottom: 16, cursor: 'pointer',
-              border: slot2IsActive ? '2px solid var(--c-primary)' : '1px solid var(--c-border)',
-              background: slot2IsActive ? '#f0f7ff' : 'var(--c-white)',
+              border: activeSlot === 2 && !slot2 ? '2px solid var(--c-primary)' : '1px solid var(--c-border)',
+              background: '#f9fafb',
             }}>
-            <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#ef4444', flexShrink: 0, display: 'inline-block' }} />
-            {slot2
-              ? <span style={{ fontWeight: 600, fontSize: 14 }}>{slot2.number} {slot2.name}</span>
-              : <span style={{ color: 'var(--c-text-muted)', fontSize: 13 }}>← Fahrer anklicken</span>
-            }
+            <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#ef4444', flexShrink: 0 }} />
+            {slot2 ? (
+              <span style={{ flex: 1, fontWeight: 600, fontSize: 14 }}>{slot2.number} {slot2.name}</span>
+            ) : (
+              <span style={{ flex: 1, fontSize: 13, color: 'var(--c-text-muted)' }}>
+                Rot <span style={{ fontStyle: 'italic' }}>← Fahrer anklicken</span>
+              </span>
+            )}
             {slot2 && (
               <button type="button" onClick={e => { e.stopPropagation(); setSlot2(null); setActiveSlot(2); }}
-                style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--c-text-muted)', fontSize: 18, lineHeight: 1, padding: '0 2px' }}>
-                ×
-              </button>
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--c-text-muted)', fontSize: 18, padding: 0 }}>×</button>
             )}
           </div>
 
@@ -362,28 +350,24 @@ export default function MadisonTeamBuilder({ categoryId, existingTeams, onSucces
           <button type="button" onClick={() => setTrikotOpen(o => !o)}
             style={{
               display: 'flex', alignItems: 'center', gap: 10, width: '100%',
-              padding: '10px 12px', borderRadius: trikotOpen ? '8px 8px 0 0' : 8,
-              border: '1px solid var(--c-border)', borderBottom: trikotOpen ? 'none' : '1px solid var(--c-border)',
+              padding: '10px 14px',
+              borderRadius: trikotOpen ? '8px 8px 0 0' : 8,
+              border: '1px solid var(--c-border)',
+              borderBottom: trikotOpen ? 'none' : '1px solid var(--c-border)',
               background: 'var(--c-white)', cursor: 'pointer', marginBottom: trikotOpen ? 0 : 16,
             }}>
             <span style={{ width: 20, height: 20, borderRadius: 4, background: color, display: 'inline-block', border: '1px solid rgba(0,0,0,.1)', flexShrink: 0 }} />
             <span style={{ flex: 1, fontSize: 13, color: 'var(--c-text-muted)' }}>Trikot · optional</span>
-            <span style={{ fontSize: 12, color: 'var(--c-text-muted)' }}>{trikotOpen ? '▲' : '▼'}</span>
+            <span style={{ fontSize: 11, color: 'var(--c-text-muted)' }}>{trikotOpen ? '▲' : '▼'}</span>
           </button>
-
           {trikotOpen && (
-            <div style={{
-              border: '1px solid var(--c-border)', borderTop: 'none',
-              borderRadius: '0 0 8px 8px', padding: '12px 14px', marginBottom: 16,
-            }}>
-              {/* Farbe */}
+            <div style={{ border: '1px solid var(--c-border)', borderTop: 'none', borderRadius: '0 0 8px 8px', padding: '12px 14px', marginBottom: 16 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
                 <span style={{ fontSize: 12, color: 'var(--c-text-muted)', minWidth: 40 }}>Farbe</span>
                 <input type="color" value={color} onChange={e => setColor(e.target.value)}
                   style={{ width: 36, height: 28, border: '1px solid var(--c-border)', borderRadius: 6, cursor: 'pointer', padding: 2 }} />
                 <span style={{ fontSize: 12, color: 'var(--c-text-muted)', fontFamily: 'monospace' }}>{color}</span>
               </div>
-              {/* Muster */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <span style={{ fontSize: 12, color: 'var(--c-text-muted)', minWidth: 40 }}>Muster</span>
                 {PATTERNS.map(p => (
@@ -403,11 +387,10 @@ export default function MadisonTeamBuilder({ categoryId, existingTeams, onSucces
           )}
 
           {/* + Team hinzufügen */}
-          <button type="button"
-            onClick={addTeam}
-            disabled={!slot1 || !slot2}
+          <button type="button" onClick={addTeam} disabled={!slot1 || !slot2}
             style={{
-              width: '100%', padding: '10px', borderRadius: 8, fontSize: 14, cursor: !slot1 || !slot2 ? 'not-allowed' : 'pointer',
+              width: '100%', padding: '10px', borderRadius: 8, fontSize: 14,
+              cursor: !slot1 || !slot2 ? 'not-allowed' : 'pointer',
               border: '1px solid var(--c-border)',
               background: !slot1 || !slot2 ? '#f3f4f6' : 'var(--c-white)',
               color: !slot1 || !slot2 ? 'var(--c-text-muted)' : 'var(--c-text)',
@@ -418,46 +401,32 @@ export default function MadisonTeamBuilder({ categoryId, existingTeams, onSucces
         </div>
       </div>
 
-      {/* ── Liste der fertigen Teams ────────────────────────────────────── */}
+      {/* ── Fertige Teams ─────────────────────────────────────────────────── */}
       {builtTeams.length > 0 && (
-        <div style={{ marginTop: 20, borderTop: '1px solid var(--c-border)', paddingTop: 14 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--c-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>
+        <div style={{ marginTop: 20, borderTop: '1px solid var(--c-border)', paddingTop: 12 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--c-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>
             Hinzugefügte Teams ({builtTeams.length})
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {builtTeams.map(team => (
-              <div key={team.localId}
-                style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 7, background: '#f9fafb', border: '1px solid var(--c-border)' }}>
-                {team.color && (
-                  <span style={{ width: 12, height: 12, borderRadius: 3, background: team.color, flexShrink: 0, border: '1px solid rgba(0,0,0,.1)' }} />
-                )}
-                {team.isFavorite && <span style={{ fontSize: 12 }}>⭐</span>}
-                <span style={{ fontWeight: 700, minWidth: 24, fontSize: 13 }}>{team.number}</span>
-                <span style={{ flex: 1, fontSize: 13, fontWeight: 500 }}>{team.name}</span>
-                <span style={{ fontSize: 11, color: 'var(--c-text-muted)' }}>
-                  {team.rider1Name} / {team.rider2Name}
-                </span>
-                <button type="button" onClick={() => removeBuiltTeam(team.localId)}
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--c-text-muted)', fontSize: 18, padding: '0 4px', lineHeight: 1 }}>
-                  ×
-                </button>
-              </div>
-            ))}
-          </div>
+          {builtTeams.map(team => (
+            <div key={team.localId}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 7, background: '#f9fafb', border: '1px solid var(--c-border)', marginBottom: 4 }}>
+              {team.color && <span style={{ width: 12, height: 12, borderRadius: 3, background: team.color, flexShrink: 0 }} />}
+              {team.isFavorite && <span style={{ fontSize: 12 }}>⭐</span>}
+              <span style={{ fontWeight: 700, minWidth: 24, fontSize: 13 }}>{team.number}</span>
+              <span style={{ flex: 1, fontSize: 13, fontWeight: 500 }}>{team.name}</span>
+              <span style={{ fontSize: 11, color: 'var(--c-text-muted)' }}>{team.rider1Name} / {team.rider2Name}</span>
+              <button type="button" onClick={() => removeBuiltTeam(team.localId)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--c-text-muted)', fontSize: 18, padding: '0 4px' }}>×</button>
+            </div>
+          ))}
         </div>
       )}
 
       {error && <div className="alert alert-error mt-3">{error}</div>}
 
-      {/* ── Aktionszeile ───────────────────────────────────────────────── */}
-      <div style={{ marginTop: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--c-border)', paddingTop: 14 }}>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-ghost" onClick={onCancel}>Abbrechen</button>
-          <button className="btn btn-secondary btn-sm"
-            onClick={() => { setStep('input'); setBuiltTeams([]); setSlot1(null); setSlot2(null); }}>
-            ← Startliste ändern
-          </button>
-        </div>
+      {/* ── Aktionszeile ──────────────────────────────────────────────────── */}
+      <div style={{ marginTop: 16, borderTop: '1px solid var(--c-border)', paddingTop: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <button className="btn btn-ghost" onClick={onCancel}>Abbrechen</button>
         <button className="btn btn-primary" onClick={handleSave} disabled={builtTeams.length === 0 || saving}>
           {saving ? 'Speichert…' : `${builtTeams.length} Team${builtTeams.length !== 1 ? 's' : ''} speichern`}
         </button>
