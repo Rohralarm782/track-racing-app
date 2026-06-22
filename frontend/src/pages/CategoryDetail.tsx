@@ -257,12 +257,9 @@ export default function CategoryDetail() {
         {/* ── Header-Buttons ── */}
         {isAdmin && !anyPanelOpen && (
           <div style={{ display: 'flex', gap: 8 }}>
-            {/* Madison-Builder nur für TEAM_PAIRS sichtbar */}
-            {isTeamPairs && (
-              <button className="btn btn-secondary btn-sm" onClick={() => setShowMadisonBuilder(true)}>
-                🔀 Teams aufbauen
-              </button>
-            )}
+            <button className="btn btn-secondary btn-sm" onClick={() => setShowMadisonBuilder(true)}>
+              🔀 Teams aufbauen
+            </button>
             <button className="btn btn-secondary btn-sm" onClick={() => setShowImport(true)}>
               {teams.length === 0 ? '+ Startliste' : 'Startliste bearbeiten'}
             </button>
