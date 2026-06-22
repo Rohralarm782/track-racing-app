@@ -276,6 +276,7 @@ export default function CategoryDetail() {
           </div>
           <MadisonTeamBuilder
             categoryId={category.id}
+            eventId={category.event?.id ?? ''}
             existingTeams={teams}
             onSuccess={() => { setShowMadisonBuilder(false); load(); }}
             onCancel={() => setShowMadisonBuilder(false)}
