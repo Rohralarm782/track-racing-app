@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { api, type Category, type Team } from '../api/client';
 import { useAdmin } from '../components/Layout';
 import TeamBulkEntry, { type DetectedScore } from '../components/TeamBulkEntry';
 import MadisonTeamBuilder from '../components/MadisonTeamBuilder';
@@ -276,9 +275,15 @@ export default function CategoryDetail() {
           </div>
           <MadisonTeamBuilder
             categoryId={category.id}
+            categoryName={category.name}
+            categoryFormat={category.format}
             eventId={category.event?.id ?? ''}
             existingTeams={teams}
-            onSuccess={() => { setShowMadisonBuilder(false); load(); }}
+            onSuccess={(_, targetCategoryId) => {
+              setShowMadisonBuilder(false);
+              if (targetCategoryId !== category.id) navigate(`/categories/${targetCategoryId}`);
+              else load();
+            }}
             onCancel={() => setShowMadisonBuilder(false)}
           />
         </div>
