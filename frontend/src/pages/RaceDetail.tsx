@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAdmin } from '../components/Layout';
 import VerfolgungsplanungView, { PlanSaveData } from '../components/VerfolgungsplanungView';
@@ -594,9 +594,11 @@ export default function RaceDetail() {
           </div>
           <MadisonTeamBuilder
             categoryId={category.id}
+            categoryName={category.name}
+            categoryFormat={category.format as 'INDIVIDUAL' | 'TEAM_PAIRS'}
             eventId={category.event.id}
             existingTeams={teams}
-            onSuccess={()=>{ setShowTeamBuilder(false); fetchRace(); }}
+            onSuccess={(_teams, _targetId)=>{ setShowTeamBuilder(false); fetchRace(); }}
             onCancel={()=>setShowTeamBuilder(false)}
           />
         </div>
