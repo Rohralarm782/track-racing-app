@@ -23,11 +23,13 @@ interface BuiltTeam {
 }
 
 interface Props {
-  categoryId:    string;
-  eventId:       string;
-  existingTeams: Array<{ number: number }>;   // nur number nötig für BIB-Konfliktcheck
-  onSuccess:     (teams: Team[]) => void;
-  onCancel:      () => void;
+  categoryId:     string;
+  categoryName:   string;                           // für auto-Benennung der neuen Kategorie
+  categoryFormat: 'INDIVIDUAL' | 'TEAM_PAIRS';      // INDIVIDUAL → neue TEAM_PAIRS-Kat erstellen
+  eventId:        string;
+  existingTeams:  Array<{ number: number }>;
+  onSuccess:      (teams: Team[], targetCategoryId: string) => void;
+  onCancel:       () => void;
 }
 
 const PATTERNS = [
@@ -43,7 +45,7 @@ const lid = () => `l${++_lid}`;
 
 // ── Hauptkomponente ───────────────────────────────────────────────────────────
 export default function MadisonTeamBuilder({
-  categoryId, eventId, existingTeams, onSuccess, onCancel,
+  categoryId, categoryName, categoryFormat, eventId, existingTeams, onSuccess, onCancel,
 }: Props) {
 
   // ── Fahrerliste aus Event laden ───────────────────────────────────────────
@@ -170,8 +172,20 @@ export default function MadisonTeamBuilder({
     if (builtTeams.length === 0) return;
     setSaving(true); setError('');
     try {
+      let targetCategoryId = categoryId;
+
+      // Bei INDIVIDUAL-Kategorie: neue TEAM_PAIRS-Kategorie anlegen
+      if (categoryFormat === 'INDIVIDUAL') {
+        const newCat = await api.post<{ id: string }>('/api/categories', {
+          eventId,
+          name: `${categoryName} Madison`,
+          format: 'TEAM_PAIRS',
+        });
+        targetCategoryId = newCat.id;
+      }
+
       const result = await api.post<Team[]>('/api/teams/batch', {
-        categoryId, replace: false,
+        categoryId: targetCategoryId, replace: false,
         teams: builtTeams.map(t => ({
           number: t.number, name: t.name,
           rider1: t.rider1Name || null, rider2: t.rider2Name || null,
@@ -179,7 +193,7 @@ export default function MadisonTeamBuilder({
           isFavorite: t.isFavorite,
         })),
       });
-      onSuccess(result);
+      onSuccess(result, targetCategoryId);
     } catch (e: any) {
       setError(e.message ?? 'Fehler beim Speichern');
     } finally {
@@ -211,6 +225,23 @@ export default function MadisonTeamBuilder({
   // ══════════════════════════════════════════════════════════════════════════
   return (
     <div>
+      {/* ── Hinweis wenn wir aus einer Einzelkategorie kommen ── */}
+      {categoryFormat === 'INDIVIDUAL' && (
+        <div style={{
+          display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 16,
+          padding: '10px 14px', borderRadius: 8,
+          background: '#eff6ff', border: '1px solid #bfdbfe',
+        }}>
+          <span style={{ fontSize: 18, flexShrink: 0 }}>ℹ️</span>
+          <div style={{ fontSize: 13 }}>
+            <strong>Startliste bleibt getrennt.</strong><br/>
+            Beim Speichern wird automatisch eine neue Kategorie{' '}
+            <strong>„{categoryName} Madison"</strong> angelegt.
+            Deine Einzelstartliste in <strong>„{categoryName}"</strong> bleibt unberührt.
+          </div>
+        </div>
+      )}
+
       {/* ── Zwei-Spalten-Layout ── */}
       <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: 24, alignItems: 'start' }}>
 
@@ -419,11 +450,26 @@ export default function MadisonTeamBuilder({
       {error && <div className="alert alert-error mt-3">{error}</div>}
 
       {/* ── Aktionszeile ──────────────────────────────────────────────────── */}
-      <div style={{ marginTop: 16, borderTop: '1px solid var(--c-border)', paddingTop: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <button className="btn btn-ghost" onClick={onCancel}>Abbrechen</button>
-        <button className="btn btn-primary" onClick={handleSave} disabled={builtTeams.length === 0 || saving}>
-          {saving ? 'Speichert…' : `${builtTeams.length} Team${builtTeams.length !== 1 ? 's' : ''} speichern`}
-        </button>
+      <div style={{ marginTop: 16, borderTop: '1px solid var(--c-border)', paddingTop: 14 }}>
+        {/* Info-Banner wenn Ziel eine INDIVIDUAL-Kategorie ist */}
+        {categoryFormat === 'INDIVIDUAL' && builtTeams.length > 0 && (
+          <div style={{ display:'flex', alignItems:'flex-start', gap:10, padding:'10px 14px', borderRadius:8, background:'#eff6ff', border:'1px solid #bfdbfe', marginBottom:14, fontSize:13 }}>
+            <span style={{fontSize:16,flexShrink:0}}>💡</span>
+            <div>
+              Teams werden in einer neuen Kategorie <strong>„{categoryName} Madison"</strong> (TEAM_PAIRS) gespeichert — die Einzelstartliste von <strong>{categoryName}</strong> bleibt unverändert.
+            </div>
+          </div>
+        )}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <button className="btn btn-ghost" onClick={onCancel}>Abbrechen</button>
+          <button className="btn btn-primary" onClick={handleSave} disabled={builtTeams.length === 0 || saving}>
+            {saving
+              ? 'Speichert…'
+              : categoryFormat === 'INDIVIDUAL'
+                ? `${builtTeams.length} Teams → neue Kategorie speichern`
+                : `${builtTeams.length} Team${builtTeams.length !== 1 ? 's' : ''} speichern`}
+          </button>
+        </div>
       </div>
     </div>
   );
