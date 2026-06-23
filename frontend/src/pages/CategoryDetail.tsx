@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { api, type Category, type Team } from '../api/client';
 import { useAdmin } from '../components/Layout';
 import TeamBulkEntry, { type DetectedScore } from '../components/TeamBulkEntry';
 import MadisonTeamBuilder from '../components/MadisonTeamBuilder';
