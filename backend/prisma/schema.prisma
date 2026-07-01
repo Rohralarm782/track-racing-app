@@ -35,6 +35,12 @@ enum FlagType {
   WARNING
 }
 
+enum DocType {
+  STARTLISTE
+  ERGEBNIS
+  SONSTIGES
+}
+
 model Event {
   id         String     @id @default(cuid())
   name       String
@@ -42,6 +48,8 @@ model Event {
   location   String?
   categories Category[]
   createdAt  DateTime   @default(now())
+
+  communiqueSource CommuniqueSource?
 }
 
 model Category {
@@ -196,4 +204,43 @@ model PursuitPlan {
   notes      String?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+}
+
+// ─── Kommuniqué-Notifier ────────────────────────────────────────────────────
+
+model CommuniqueSource {
+  id         String   @id @default(cuid())
+  eventId    String   @unique
+  event      Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  shareToken String   // Token aus der Nextcloud-Share-URL
+  label      String?  // optionaler Anzeigename, z.B. "LVM Bahn 2026"
+  lastPolledAt DateTime?
+  createdAt  DateTime @default(now())
+
+  documents     CommuniqueDocument[]
+  subscriptions PushSubscription[]
+}
+
+model CommuniqueDocument {
+  id           String           @id @default(cuid())
+  sourceId     String
+  source       CommuniqueSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  fileName     String
+  docType      DocType          @default(SONSTIGES)
+  ak           String           @default("Alle") // z.B. "U17m", "Elite w", "Alle"
+  remoteModifiedAt DateTime      // Änderungsdatum laut WebDAV
+  discoveredAt DateTime         @default(now())
+
+  @@unique([sourceId, fileName])
+}
+
+model PushSubscription {
+  id        String           @id @default(cuid())
+  sourceId  String
+  source    CommuniqueSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  endpoint  String           @unique
+  p256dh    String
+  auth      String
+  akFilter  String[]         @default(["Alle"]) // leer/["Alle"] = alle Klassen
+  createdAt DateTime         @default(now())
 }
