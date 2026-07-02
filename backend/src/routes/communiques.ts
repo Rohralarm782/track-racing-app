@@ -2,8 +2,9 @@ import { Router } from 'express';
 import { z } from 'zod';
 import prisma from '../prisma';
 import { requireAdmin } from '../middleware/auth';
-import { listShareFiles } from '../lib/webdav';
+import { listShareFiles, fetchShareFile } from '../lib/webdav';
 import { classifyFileName } from '../lib/classify';
+import { getCachedFile, setCachedFile } from '../lib/fileCache';
 import { notifyNewDocuments } from '../lib/push';
 
 const router = Router();
@@ -89,6 +90,46 @@ router.delete('/subscribe', async (req, res, next) => {
     if (!endpoint) { res.status(400).json({ error: 'endpoint fehlt' }); return; }
     await prisma.pushSubscription.deleteMany({ where: { endpoint } });
     res.status(204).send();
+  } catch (e) { next(e); }
+});
+
+// GET /api/communiques/:eventId/file/:documentId — PDF direkt anzeigen statt
+// herunterzuladen (Content-Disposition: inline), mit In-Memory-Cache für
+// häufig geöffnete Dokumente (z.B. der Zeitplan).
+router.get('/:eventId/file/:documentId', async (req, res, next) => {
+  try {
+    const doc = await prisma.communiqueDocument.findUnique({
+      where: { id: req.params.documentId },
+      include: { source: true },
+    });
+    if (!doc || doc.source.eventId !== req.params.eventId) {
+      res.status(404).json({ error: 'Dokument nicht gefunden' });
+      return;
+    }
+
+    const cacheKey = `${doc.id}:${doc.remoteModifiedAt.toISOString()}`;
+    let file = getCachedFile(cacheKey);
+    if (!file) {
+      file = await fetchShareFile(doc.source.shareToken, doc.fileName);
+      setCachedFile(cacheKey, file);
+    }
+
+    res.setHeader('Content-Type', file.contentType);
+    res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(doc.fileName)}`);
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    res.send(file.data);
+  } catch (e) { next(e); }
+});
+
+// PATCH /api/communiques/:eventId/documents/:documentId/pin — Anheften umschalten
+router.patch('/:eventId/documents/:documentId/pin', async (req, res, next) => {
+  try {
+    const { pinned } = req.body as { pinned?: boolean };
+    const doc = await prisma.communiqueDocument.update({
+      where: { id: req.params.documentId },
+      data: { isPinned: !!pinned },
+    });
+    res.json(doc);
   } catch (e) { next(e); }
 });
 
