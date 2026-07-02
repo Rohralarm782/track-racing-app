@@ -102,11 +102,16 @@ export default function EventDetail() {
             {event.date ? formatDate(event.date) : ''}
           </p>
         </div>
-        {isAdmin && (
-          <button className="btn btn-danger btn-sm" onClick={deleteEvent}>
-            Löschen
-          </button>
-        )}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Link to={`/events/${id}/communiques`} className="btn btn-secondary btn-sm">
+            🔔 Kommuniqués
+          </Link>
+          {isAdmin && (
+            <button className="btn btn-danger btn-sm" onClick={deleteEvent}>
+              Löschen
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="section-header">
