@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import PdfViewer from '../components/PdfViewer';
 import {
   api, communiquesApi,
   type CommuniqueSource, type CommuniqueDocument as CommuniqueDocumentT, type Event as EventT,
@@ -44,6 +45,16 @@ function persistReadIds(sourceId: string, ids: Set<string>) {
   localStorage.setItem(`communique_read_${sourceId}`, JSON.stringify([...ids]));
 }
 
+// Kommuniqués sind block-nummeriert (z.B. "K198", "K198B", "K231") — diese
+// Reihenfolge entspricht dem Ablaufprogramm, nicht zwingend der zeitlichen
+// Veröffentlichungsreihenfolge. Für die Nummer-Sortierung parsen wir Zahl +
+// optionales Buchstaben-Suffix (Korrekturen wie "K198B" landen direkt hinter "K198").
+function parseDocNumber(fileName: string): { num: number; suffix: string } {
+  const match = fileName.match(/^K?\s*(\d+)\s*([A-Za-z]*)/);
+  if (!match) return { num: Number.MAX_SAFE_INTEGER, suffix: fileName };
+  return { num: parseInt(match[1], 10), suffix: match[2] ?? '' };
+}
+
 // ── Komponente ─────────────────────────────────────────────────────────────
 export default function CommuniquesPage() {
   const { id: eventId } = useParams<{ id: string }>();
@@ -73,6 +84,26 @@ export default function CommuniquesPage() {
 
   const [lastChecked, setLastChecked] = useState<Date | null>(null);
   const [viewingDoc, setViewingDoc] = useState<CommuniqueDocumentT | null>(null);
+  const [sortMode, setSortMode] = useState<'chrono' | 'number'>(
+    () => (localStorage.getItem('communique_sort_mode') as 'chrono' | 'number') ?? 'chrono'
+  );
+  // Default: Aktualität = neueste zuerst (desc), Nummer = aufsteigend (asc) — jeweils die intuitivste Richtung
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>(
+    () => (localStorage.getItem('communique_sort_dir') as 'asc' | 'desc') ?? (
+      (localStorage.getItem('communique_sort_mode') ?? 'chrono') === 'number' ? 'asc' : 'desc'
+    )
+  );
+
+  function changeSortMode(mode: 'chrono' | 'number') {
+    setSortMode(mode);
+    localStorage.setItem('communique_sort_mode', mode);
+  }
+
+  function toggleSortDir() {
+    const next = sortDir === 'asc' ? 'desc' : 'asc';
+    setSortDir(next);
+    localStorage.setItem('communique_sort_dir', next);
+  }
   const [refreshing, setRefreshing]   = useState(false);
 
   const intervalRef = useRef<number | null>(null);
@@ -294,7 +325,20 @@ export default function CommuniquesPage() {
     .filter(d => catFilter === 'alle' || d.docType === catFilter)
     .filter(d => selectedAKs.has('Alle') || d.ak === 'Alle' || selectedAKs.has(d.ak))
     .filter(d => selectedDisciplines.has('Alle') || d.discipline === 'ALLGEMEIN' || selectedDisciplines.has(d.discipline))
-    .sort((a, b) => (b.isPinned ? 1 : 0) - (a.isPinned ? 1 : 0)); // Angeheftete zuerst, Reihenfolge sonst stabil
+    .sort((a, b) => {
+      const pinDiff = (b.isPinned ? 1 : 0) - (a.isPinned ? 1 : 0);
+      if (pinDiff !== 0) return pinDiff; // Angeheftete immer zuerst
+      const dir = sortDir === 'asc' ? 1 : -1;
+      if (sortMode === 'number') {
+        const pa = parseDocNumber(a.fileName);
+        const pb = parseDocNumber(b.fileName);
+        if (pa.num !== pb.num) return (pa.num - pb.num) * dir;
+        return pa.suffix.localeCompare(pb.suffix) * dir;
+      }
+      const ta = new Date(a.remoteModifiedAt).getTime();
+      const tb = new Date(b.remoteModifiedAt).getTime();
+      return (ta - tb) * dir;
+    });
 
   const counts: Record<string, number> = {
     alle: docs.length,
@@ -460,6 +504,47 @@ export default function CommuniquesPage() {
             </div>
           )}
 
+          {/* Sortierung */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '2px 2px 12px' }}>
+            <span className="text-xs text-muted" style={{ fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+              Sortierung
+            </span>
+            <div style={{ display: 'flex', gap: 4 }}>
+              <button
+                onClick={() => changeSortMode('chrono')}
+                style={{
+                  padding: '4px 10px', borderRadius: 20, fontSize: 12, cursor: 'pointer', fontWeight: 500,
+                  border: sortMode === 'chrono' ? '1px solid #111' : '1px solid var(--c-border)',
+                  background: sortMode === 'chrono' ? '#111' : 'var(--c-white)',
+                  color: sortMode === 'chrono' ? '#fff' : 'var(--c-text)',
+                }}
+              >
+                🕐 Aktualität
+              </button>
+              <button
+                onClick={() => changeSortMode('number')}
+                style={{
+                  padding: '4px 10px', borderRadius: 20, fontSize: 12, cursor: 'pointer', fontWeight: 500,
+                  border: sortMode === 'number' ? '1px solid #111' : '1px solid var(--c-border)',
+                  background: sortMode === 'number' ? '#111' : 'var(--c-white)',
+                  color: sortMode === 'number' ? '#fff' : 'var(--c-text)',
+                }}
+              >
+                # Nummer
+              </button>
+              <button
+                onClick={toggleSortDir}
+                title={sortDir === 'asc' ? 'Aufsteigend (zu absteigend wechseln)' : 'Absteigend (zu aufsteigend wechseln)'}
+                style={{
+                  padding: '4px 9px', borderRadius: 20, fontSize: 13, cursor: 'pointer', fontWeight: 600,
+                  border: '1px solid var(--c-border)', background: 'var(--c-white)', color: 'var(--c-text)',
+                }}
+              >
+                {sortDir === 'asc' ? '↑' : '↓'}
+              </button>
+            </div>
+          </div>
+
           {/* Dokumentenliste */}
           {filtered.length === 0 ? (
             <div className="empty">
@@ -555,11 +640,9 @@ export default function CommuniquesPage() {
               ✕
             </button>
           </div>
-          <iframe
-            src={communiquesApi.fileUrl(eventId, viewingDoc.id)}
-            title={viewingDoc.fileName}
-            style={{ flex: 1, width: '100%', border: 'none' }}
-          />
+          <div style={{ flex: 1, minHeight: 0 }}>
+            <PdfViewer url={communiquesApi.fileUrl(eventId, viewingDoc.id)} />
+          </div>
         </div>
       </div>
     )}
