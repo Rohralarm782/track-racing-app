@@ -48,6 +48,7 @@ export interface Event {
 }
 
 export type DocType = 'STARTLISTE' | 'ERGEBNIS' | 'SONSTIGES';
+export type Discipline = 'SPRINT' | 'AUSDAUER' | 'ALLGEMEIN';
 
 export interface CommuniqueDocument {
   id: string;
@@ -55,6 +56,7 @@ export interface CommuniqueDocument {
   fileName: string;
   docType: DocType;
   ak: string;
+  discipline: Discipline;
   remoteModifiedAt: string;
   discoveredAt: string;
 }
@@ -114,11 +116,12 @@ export const communiquesApi = {
   getVapidPublicKey: () =>
     api.get<{ key: string }>('/api/communiques/vapid-public-key'),
 
-  subscribe: (eventId: string, subscription: PushSubscriptionJSON, akFilter: string[]) =>
+  subscribe: (eventId: string, subscription: PushSubscriptionJSON, akFilter: string[], disciplineFilter: string[]) =>
     api.post(`/api/communiques/${eventId}/subscribe`, {
       endpoint: subscription.endpoint,
       keys: subscription.keys,
       akFilter,
+      disciplineFilter,
     }),
 
   unsubscribe: (endpoint: string) =>
