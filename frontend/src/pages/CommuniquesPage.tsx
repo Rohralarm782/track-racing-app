@@ -6,6 +6,7 @@ import {
 } from '../api/client';
 
 const AK_OPTIONS = ['U15m', 'U15w', 'U17m', 'U17w', 'U19m', 'U19w', 'Elite m', 'Elite w'];
+const DISCIPLINE_LABELS: Record<string, string> = { Alle: 'Alle', SPRINT: 'Sprint', AUSDAUER: 'Ausdauer' };
 const CAT_LABELS: Record<string, string> = { alle: 'Alle', STARTLISTE: 'Startlisten', ERGEBNIS: 'Ergebnisse', SONSTIGES: 'Sonstiges' };
 const CAT_ICON: Record<string, string> = { STARTLISTE: '📋', ERGEBNIS: '🏁', SONSTIGES: '📄' };
 
@@ -59,6 +60,7 @@ export default function CommuniquesPage() {
   // Filter
   const [catFilter, setCatFilter]     = useState('alle');
   const [selectedAKs, setSelectedAKs] = useState<Set<string>>(new Set(['Alle']));
+  const [selectedDisciplines, setSelectedDisciplines] = useState<Set<string>>(new Set(['Alle']));
 
   // Push
   const [pushSupported, setPushSupported]   = useState(true);
@@ -179,7 +181,7 @@ export default function CommuniquesPage() {
           applicationServerKey: urlBase64ToUint8Array(key) as BufferSource,
         });
       }
-      await communiquesApi.subscribe(eventId, sub.toJSON() as PushSubscriptionJSON, [...selectedAKs]);
+      await communiquesApi.subscribe(eventId, sub.toJSON() as PushSubscriptionJSON, [...selectedAKs], [...selectedDisciplines]);
       setPushEnabled(true);
       setBannerDismissed(true);
     } catch (e: any) {
@@ -204,13 +206,13 @@ export default function CommuniquesPage() {
     }
   }
 
-  async function updatePushScope(next: Set<string>) {
+  async function updatePushScope(nextAKs: Set<string>, nextDisciplines: Set<string>) {
     if (!eventId || !pushEnabled) return;
     try {
       const reg = await navigator.serviceWorker.getRegistration();
       const sub = await reg?.pushManager.getSubscription();
       if (!sub) return;
-      await communiquesApi.subscribe(eventId, sub.toJSON() as PushSubscriptionJSON, [...next]);
+      await communiquesApi.subscribe(eventId, sub.toJSON() as PushSubscriptionJSON, [...nextAKs], [...nextDisciplines]);
     } catch { /* nicht kritisch, nächste Änderung versucht es erneut */ }
   }
 
@@ -225,7 +227,23 @@ export default function CommuniquesPage() {
         if (next.has(ak)) next.delete(ak); else next.add(ak);
         if (next.size === 0) next = new Set(['Alle']);
       }
-      updatePushScope(next);
+      updatePushScope(next, selectedDisciplines);
+      return next;
+    });
+  }
+
+  function toggleDiscipline(disc: string) {
+    setSelectedDisciplines(prev => {
+      let next: Set<string>;
+      if (disc === 'Alle') {
+        next = new Set(['Alle']);
+      } else {
+        next = new Set(prev);
+        next.delete('Alle');
+        if (next.has(disc)) next.delete(disc); else next.add(disc);
+        if (next.size === 0) next = new Set(['Alle']);
+      }
+      updatePushScope(selectedAKs, next);
       return next;
     });
   }
@@ -255,7 +273,8 @@ export default function CommuniquesPage() {
   const docs = source?.documents ?? [];
   const filtered = docs
     .filter(d => catFilter === 'alle' || d.docType === catFilter)
-    .filter(d => selectedAKs.has('Alle') || d.ak === 'Alle' || selectedAKs.has(d.ak));
+    .filter(d => selectedAKs.has('Alle') || d.ak === 'Alle' || selectedAKs.has(d.ak))
+    .filter(d => selectedDisciplines.has('Alle') || d.discipline === 'ALLGEMEIN' || selectedDisciplines.has(d.discipline));
 
   const counts: Record<string, number> = {
     alle: docs.length,
@@ -381,11 +400,39 @@ export default function CommuniquesPage() {
             })}
           </div>
 
+          {/* Disziplin-Filter */}
+          <div className="text-xs text-muted" style={{ margin: '0 2px 6px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+            Disziplin
+          </div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
+            {Object.entries(DISCIPLINE_LABELS).map(([key, label]) => {
+              const active = key === 'Alle' ? selectedDisciplines.has('Alle') : !selectedDisciplines.has('Alle') && selectedDisciplines.has(key);
+              return (
+                <button
+                  key={key}
+                  onClick={() => toggleDiscipline(key)}
+                  style={{
+                    padding: '5px 12px', borderRadius: 20, fontSize: 12.5, cursor: 'pointer', fontWeight: 500,
+                    border: key === 'Alle'
+                      ? (active ? '1px solid #111' : '1px solid var(--c-border)')
+                      : (active ? '1px solid var(--c-primary)' : '1px solid var(--c-border)'),
+                    background: key === 'Alle' ? (active ? '#111' : 'var(--c-white)') : (active ? '#eff6ff' : 'var(--c-white)'),
+                    color: key === 'Alle' ? (active ? '#fff' : 'var(--c-text)') : (active ? 'var(--c-primary-hover)' : 'var(--c-text)'),
+                  }}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+
           {pushEnabled && (
             <div className="flex-between text-xs text-muted" style={{ padding: '6px 2px 14px' }}>
               <span>
                 🔔 Benachrichtigungen für{' '}
                 <strong>{selectedAKs.has('Alle') ? 'alle Klassen' : [...selectedAKs].join(', ')}</strong>
+                {' · '}
+                <strong>{selectedDisciplines.has('Alle') ? 'Sprint + Ausdauer' : [...selectedDisciplines].map(d => DISCIPLINE_LABELS[d]).join(', ')}</strong>
                 {' '}(+ allgemeine Dokumente)
               </span>
               <button className="btn btn-ghost btn-sm" onClick={disablePush}>Deaktivieren</button>
@@ -430,7 +477,7 @@ export default function CommuniquesPage() {
                         {unread && <span className="badge badge-blue">NEU</span>}
                       </div>
                       <div className="text-xs text-muted">
-                        {relativeTime(d.remoteModifiedAt)} · {d.ak}
+                        {relativeTime(d.remoteModifiedAt)} · {d.ak}{d.discipline !== 'ALLGEMEIN' ? ` · ${DISCIPLINE_LABELS[d.discipline]}` : ''}
                       </div>
                     </div>
                   </div>
