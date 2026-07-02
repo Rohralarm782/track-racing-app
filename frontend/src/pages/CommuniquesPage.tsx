@@ -72,6 +72,7 @@ export default function CommuniquesPage() {
   const [readIdsState, setReadIdsState] = useState<Set<string>>(new Set());
 
   const [lastChecked, setLastChecked] = useState<Date | null>(null);
+  const [viewingDoc, setViewingDoc] = useState<CommuniqueDocumentT | null>(null);
   const [refreshing, setRefreshing]   = useState(false);
 
   const intervalRef = useRef<number | null>(null);
@@ -258,11 +259,9 @@ export default function CommuniquesPage() {
     });
   }
 
-  function openDoc(docId: string) {
-    markRead(docId);
-    if (!eventId) return;
-    const url = communiquesApi.fileUrl(eventId, docId);
-    window.open(url, '_blank', 'noopener');
+  function openDoc(doc: CommuniqueDocumentT) {
+    markRead(doc.id);
+    setViewingDoc(doc);
   }
 
   async function togglePin(doc: CommuniqueDocumentT, e: React.MouseEvent) {
@@ -305,6 +304,7 @@ export default function CommuniquesPage() {
   };
 
   return (
+    <>
     <div className="page container" style={{ maxWidth: 480 }}>
       <div className="breadcrumb">
         <Link to="/">Veranstaltungen</Link><span>›</span>
@@ -473,7 +473,7 @@ export default function CommuniquesPage() {
                   <div
                     key={d.id}
                     className="card card-link"
-                    onClick={() => openDoc(d.id)}
+                    onClick={() => openDoc(d)}
                     style={{
                       display: 'flex', alignItems: 'flex-start', gap: 12, padding: '13px 14px',
                       background: d.isPinned ? '#fffbeb' : unread ? '#f8fafd' : 'var(--c-white)',
@@ -520,5 +520,49 @@ export default function CommuniquesPage() {
         </>
       )}
     </div>
+
+    {viewingDoc && eventId && (
+      <div
+        onClick={() => setViewingDoc(null)}
+        style={{
+          position: 'fixed', inset: 0, background: 'rgba(17,17,17,0.75)',
+          zIndex: 1000, display: 'flex', flexDirection: 'column',
+        }}
+      >
+        <div
+          onClick={e => e.stopPropagation()}
+          style={{
+            display: 'flex', flexDirection: 'column',
+            height: '100%', width: '100%',
+            background: 'var(--c-white)',
+          }}
+        >
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            padding: '10px 14px', borderBottom: '1px solid var(--c-border)', flexShrink: 0,
+          }}>
+            <span style={{
+              fontSize: 13.5, fontWeight: 600, overflow: 'hidden',
+              textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginRight: 10,
+            }}>
+              {viewingDoc.fileName}
+            </span>
+            <button
+              onClick={() => setViewingDoc(null)}
+              className="btn btn-ghost btn-sm"
+              style={{ flexShrink: 0, fontSize: 18, padding: '4px 10px' }}
+            >
+              ✕
+            </button>
+          </div>
+          <iframe
+            src={communiquesApi.fileUrl(eventId, viewingDoc.id)}
+            title={viewingDoc.fileName}
+            style={{ flex: 1, width: '100%', border: 'none' }}
+          />
+        </div>
+      </div>
+    )}
+    </>
   );
 }
