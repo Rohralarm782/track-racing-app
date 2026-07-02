@@ -36,6 +36,11 @@ export default function PdfViewer({ url }: PdfViewerProps) {
 
         containerRef.current.innerHTML = '';
         const containerWidth = containerRef.current.clientWidth || 800;
+        // Pixeldichte des Geräts berücksichtigen (Handys haben oft 2-3x),
+        // sonst wird das Canvas niedrig aufgelöst gerendert und dann vom
+        // Browser hochskaliert -> unscharf. Cap bei 3, damit sehr hochauflösende
+        // Geräte nicht unnötig riesige Canvases erzeugen.
+        const outputScale = Math.min(window.devicePixelRatio || 1, 3);
 
         for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
           if (cancelled) return;
@@ -46,8 +51,10 @@ export default function PdfViewer({ url }: PdfViewerProps) {
           const viewport = page.getViewport({ scale });
 
           const canvas = document.createElement('canvas');
-          canvas.width = viewport.width;
-          canvas.height = viewport.height;
+          // Canvas-Auflösung (Backing Store) = CSS-Größe * Pixeldichte
+          canvas.width = Math.floor(viewport.width * outputScale);
+          canvas.height = Math.floor(viewport.height * outputScale);
+          // Angezeigte Größe bleibt unverändert (nur die Auflösung steigt)
           canvas.style.width = '100%';
           canvas.style.height = 'auto';
           canvas.style.display = 'block';
@@ -61,7 +68,8 @@ export default function PdfViewer({ url }: PdfViewerProps) {
             containerRef.current.appendChild(canvas);
           }
 
-          await page.render({ canvasContext: context, viewport }).promise;
+          const transform = outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : undefined;
+          await page.render({ canvasContext: context, viewport, transform }).promise;
         }
 
         if (!cancelled) setStatus('ready');
