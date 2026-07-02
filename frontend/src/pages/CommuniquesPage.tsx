@@ -1,136 +1,524 @@
-const API_URL = import.meta.env.VITE_API_URL ?? '';
+import { useEffect, useRef, useState } from 'react';
+import { Link, useParams } from 'react-router-dom';
+import {
+  api, communiquesApi,
+  type CommuniqueSource, type CommuniqueDocument as CommuniqueDocumentT, type Event as EventT,
+} from '../api/client';
 
-export function getToken(): string | null { return localStorage.getItem('admin_token'); }
-export function setToken(token: string) { localStorage.setItem('admin_token', token); }
-export function clearToken() { localStorage.removeItem('admin_token'); }
+const AK_OPTIONS = ['U15m', 'U15w', 'U17m', 'U17w', 'U19m', 'U19w', 'Elite m', 'Elite w'];
+const DISCIPLINE_LABELS: Record<string, string> = { Alle: 'Alle', SPRINT: 'Sprint', AUSDAUER: 'Ausdauer' };
+const CAT_LABELS: Record<string, string> = { alle: 'Alle', STARTLISTE: 'Startlisten', ERGEBNIS: 'Ergebnisse', SONSTIGES: 'Sonstiges' };
+const CAT_ICON: Record<string, string> = { STARTLISTE: '📋', ERGEBNIS: '🏁', SONSTIGES: '📄' };
 
-export type CategoryFormat = 'INDIVIDUAL' | 'TEAM_PAIRS';
-export type RaceType = 'PUNKTEFAHREN' | 'TEMPORUNDEN' | 'VERFOLGUNGSRENNEN';
-export type RaceStatus = 'SETUP' | 'ACTIVE' | 'FINISHED';
-
-export interface Team {
-  id: string;
-  categoryId: string;
-  number: number;
-  name: string;
-  club?: string | null;
-  isFavorite?: boolean;
-  rider1?: string | null;
-  rider2?: string | null;
-  color?: string | null;
-  pattern?: string | null;
+// ── Helpers ────────────────────────────────────────────────────────────────
+function urlBase64ToUint8Array(base64String: string): Uint8Array {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = atob(base64);
+  return Uint8Array.from([...rawData].map(c => c.charCodeAt(0)));
 }
 
-export interface Category {
-  id: string;
-  eventId: string;
-  name: string;
-  format: CategoryFormat;
-  event?: { id: string; name: string; date: string };
-  teams?: Team[];
-  races?: Race[];
-  _count?: { teams: number };
+function extractShareToken(input: string): string | null {
+  const match = input.match(/\/s\/([A-Za-z0-9]+)/);
+  if (match) return match[1];
+  if (/^[A-Za-z0-9]{8,}$/.test(input)) return input;
+  return null;
 }
 
-export interface Race {
-  id: string;
-  name: string;
-  type: RaceType;
-  status: RaceStatus;
-  order: number;
+function relativeTime(iso: string): string {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const min = Math.floor(diffMs / 60000);
+  if (min < 1) return 'gerade eben';
+  if (min < 60) return `vor ${min} Min.`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `vor ${h} Std.`;
+  return `vor ${Math.floor(h / 24)} Tg.`;
 }
 
-export interface Event {
-  id: string;
-  name: string;
-  date?: string | null;
-  categories: Array<Category & { _count: { teams: number }; races: Race[] }>;
+function readIds(sourceId: string): Set<string> {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(`communique_read_${sourceId}`) ?? '[]'));
+  } catch { return new Set(); }
+}
+function persistReadIds(sourceId: string, ids: Set<string>) {
+  localStorage.setItem(`communique_read_${sourceId}`, JSON.stringify([...ids]));
 }
 
-export type DocType = 'STARTLISTE' | 'ERGEBNIS' | 'SONSTIGES';
-export type Discipline = 'SPRINT' | 'AUSDAUER' | 'ALLGEMEIN';
+// ── Komponente ─────────────────────────────────────────────────────────────
+export default function CommuniquesPage() {
+  const { id: eventId } = useParams<{ id: string }>();
 
-export interface CommuniqueDocument {
-  id: string;
-  sourceId: string;
-  fileName: string;
-  docType: DocType;
-  ak: string;
-  discipline: Discipline;
-  isPinned: boolean;
-  remoteModifiedAt: string;
-  discoveredAt: string;
-}
+  const [event, setEvent]   = useState<EventT | null>(null);
+  const [source, setSource] = useState<CommuniqueSource | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError]     = useState('');
 
-export interface CommuniqueSource {
-  id: string;
-  eventId: string;
-  shareToken: string;
-  label: string | null;
-  lastPolledAt: string | null;
-  documents: CommuniqueDocument[];
-}
+  // Setup
+  const [shareInput, setShareInput] = useState('');
+  const [saving, setSaving]         = useState(false);
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const token = getToken();
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(options.headers as Record<string, string>),
-  };
-  if (token) headers['Authorization'] = `Bearer ${token}`;
-  const res = await fetch(`${API_URL}${path}`, { ...options, headers });
-  if (!res.ok) {
-    let msg = `HTTP ${res.status}`;
-    try { const body = await res.json(); msg = body.error ?? JSON.stringify(body); } catch { }
-    throw new Error(msg);
-  }
-  if (res.status === 204) return undefined as T;
-  return res.json() as T;
-}
+  // Filter
+  const [catFilter, setCatFilter]     = useState('alle');
+  const [selectedAKs, setSelectedAKs] = useState<Set<string>>(new Set(['Alle']));
+  const [selectedDisciplines, setSelectedDisciplines] = useState<Set<string>>(new Set(['Alle']));
 
-export const api = {
-  get:    <T>(path: string)                => request<T>(path),
-  post:   <T>(path: string, body: unknown) => request<T>(path, { method: 'POST',   body: JSON.stringify(body) }),
-  patch:  <T>(path: string, body: unknown) => request<T>(path, { method: 'PATCH',  body: JSON.stringify(body) }),
-  put:    <T>(path: string, body: unknown) => request<T>(path, { method: 'PUT',    body: JSON.stringify(body) }),
-  delete: <T>(path: string)               => request<T>(path, { method: 'DELETE' }),
+  // Push
+  const [pushSupported, setPushSupported]   = useState(true);
+  const [pushEnabled, setPushEnabled]       = useState(false);
+  const [pushBusy, setPushBusy]             = useState(false);
+  const [bannerDismissed, setBannerDismissed] = useState(false);
 
-  async verifyAdmin(password: string): Promise<boolean> {
+  // Gelesen-Status (lokal pro Browser)
+  const [readIdsState, setReadIdsState] = useState<Set<string>>(new Set());
+
+  const [lastChecked, setLastChecked] = useState<Date | null>(null);
+  const [refreshing, setRefreshing]   = useState(false);
+
+  const intervalRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!eventId) return;
+    setPushSupported('serviceWorker' in navigator && 'PushManager' in window);
+    load();
+    intervalRef.current = window.setInterval(refreshSilently, 60_000);
+    return () => { if (intervalRef.current) window.clearInterval(intervalRef.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventId]);
+
+  async function load() {
+    if (!eventId) return;
+    setLoading(true); setError('');
     try {
-      const res = await fetch(`${API_URL}/api/admin/verify`, {
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${password}` },
-      });
-      return res.ok;
-    } catch { return false; }
-  },
-};
+      const [ev, src] = await Promise.all([
+        api.get<EventT>(`/api/events/${eventId}`),
+        communiquesApi.get(eventId),
+      ]);
+      setEvent(ev);
+      setSource(src);
+      if (src) {
+        setReadIdsState(readIds(src.id));
+        checkPushSubscription();
+      }
+      setLastChecked(new Date());
+    } catch (e: any) {
+      setError(e.message ?? 'Fehler beim Laden');
+    } finally {
+      setLoading(false);
+    }
+  }
 
-export const communiquesApi = {
-  get: (eventId: string) => api.get<CommuniqueSource | null>(`/api/communiques/${eventId}`),
+  async function refreshSilently() {
+    if (!eventId) return;
+    try {
+      const src = await communiquesApi.get(eventId);
+      setSource(src);
+      setLastChecked(new Date());
+    } catch { /* nächstes Intervall versucht es erneut */ }
+  }
 
-  setSource: (eventId: string, shareToken: string, label?: string) =>
-    api.post<CommuniqueSource>(`/api/communiques/${eventId}`, { shareToken, label }),
+  async function handleManualRefresh() {
+    if (!eventId) return;
+    setRefreshing(true); setError('');
+    try {
+      await communiquesApi.poll(eventId);
+      const src = await communiquesApi.get(eventId);
+      setSource(src);
+      setLastChecked(new Date());
+    } catch (e: any) {
+      setError(e.message ?? 'Aktualisierung fehlgeschlagen');
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
-  poll: (eventId: string) =>
-    api.post<{ newCount: number; newDocs: CommuniqueDocument[] }>(`/api/communiques/${eventId}/poll`, {}),
+  async function handleSetupSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!eventId || !shareInput.trim()) return;
+    const token = extractShareToken(shareInput.trim());
+    if (!token) { setError('Konnte keinen Share-Token aus dem Link erkennen.'); return; }
+    setSaving(true); setError('');
+    try {
+      const src = await communiquesApi.setSource(eventId, token);
+      setSource({ ...src, documents: [] });
+      await handleManualRefresh();
+    } catch (e: any) {
+      setError(e.message ?? 'Fehler beim Speichern');
+    } finally {
+      setSaving(false);
+    }
+  }
 
-  fileUrl: (eventId: string, documentId: string) =>
-    `${API_URL}/api/communiques/${eventId}/file/${documentId}`,
+  async function checkPushSubscription() {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) { setPushSupported(false); return; }
+    try {
+      const reg = await navigator.serviceWorker.getRegistration();
+      const sub = await reg?.pushManager.getSubscription();
+      setPushEnabled(!!sub);
+    } catch { /* ignore */ }
+  }
 
-  togglePin: (eventId: string, documentId: string, pinned: boolean) =>
-    api.patch<CommuniqueDocument>(`/api/communiques/${eventId}/documents/${documentId}/pin`, { pinned }),
+  async function enablePush() {
+    if (!eventId) return;
+    setPushBusy(true); setError('');
+    try {
+      const reg = await navigator.serviceWorker.register('/sw.js');
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') {
+        setError('Benachrichtigungen wurden nicht erlaubt.');
+        setPushBusy(false);
+        return;
+      }
+      const { key } = await communiquesApi.getVapidPublicKey();
+      if (!key) {
+        setError('Push ist serverseitig noch nicht konfiguriert (VAPID-Keys fehlen).');
+        setPushBusy(false);
+        return;
+      }
+      let sub = await reg.pushManager.getSubscription();
+      if (!sub) {
+        sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(key) as BufferSource,
+        });
+      }
+      await communiquesApi.subscribe(eventId, sub.toJSON() as PushSubscriptionJSON, [...selectedAKs], [...selectedDisciplines]);
+      setPushEnabled(true);
+      setBannerDismissed(true);
+    } catch (e: any) {
+      setError(e.message ?? 'Push-Aktivierung fehlgeschlagen');
+    } finally {
+      setPushBusy(false);
+    }
+  }
 
-  getVapidPublicKey: () =>
-    api.get<{ key: string }>('/api/communiques/vapid-public-key'),
+  async function disablePush() {
+    setError('');
+    try {
+      const reg = await navigator.serviceWorker.getRegistration();
+      const sub = await reg?.pushManager.getSubscription();
+      if (sub) {
+        await communiquesApi.unsubscribe(sub.endpoint);
+        await sub.unsubscribe();
+      }
+      setPushEnabled(false);
+    } catch (e: any) {
+      setError(e.message ?? 'Deaktivieren fehlgeschlagen');
+    }
+  }
 
-  subscribe: (eventId: string, subscription: PushSubscriptionJSON, akFilter: string[], disciplineFilter: string[]) =>
-    api.post(`/api/communiques/${eventId}/subscribe`, {
-      endpoint: subscription.endpoint,
-      keys: subscription.keys,
-      akFilter,
-      disciplineFilter,
-    }),
+  async function updatePushScope(nextAKs: Set<string>, nextDisciplines: Set<string>) {
+    if (!eventId || !pushEnabled) return;
+    try {
+      const reg = await navigator.serviceWorker.getRegistration();
+      const sub = await reg?.pushManager.getSubscription();
+      if (!sub) return;
+      await communiquesApi.subscribe(eventId, sub.toJSON() as PushSubscriptionJSON, [...nextAKs], [...nextDisciplines]);
+    } catch { /* nicht kritisch, nächste Änderung versucht es erneut */ }
+  }
 
-  unsubscribe: (endpoint: string) =>
-    api.delete(`/api/communiques/subscribe?endpoint=${encodeURIComponent(endpoint)}`),
-};
+  function toggleAK(ak: string) {
+    setSelectedAKs(prev => {
+      let next: Set<string>;
+      if (ak === 'Alle') {
+        next = new Set(['Alle']);
+      } else {
+        next = new Set(prev);
+        next.delete('Alle');
+        if (next.has(ak)) next.delete(ak); else next.add(ak);
+        if (next.size === 0) next = new Set(['Alle']);
+      }
+      updatePushScope(next, selectedDisciplines);
+      return next;
+    });
+  }
+
+  function toggleDiscipline(disc: string) {
+    setSelectedDisciplines(prev => {
+      let next: Set<string>;
+      if (disc === 'Alle') {
+        next = new Set(['Alle']);
+      } else {
+        next = new Set(prev);
+        next.delete('Alle');
+        if (next.has(disc)) next.delete(disc); else next.add(disc);
+        if (next.size === 0) next = new Set(['Alle']);
+      }
+      updatePushScope(selectedAKs, next);
+      return next;
+    });
+  }
+
+  function markRead(docId: string) {
+    if (!source) return;
+    setReadIdsState(prev => {
+      const next = new Set(prev);
+      next.add(docId);
+      persistReadIds(source.id, next);
+      return next;
+    });
+  }
+
+  function openDoc(docId: string) {
+    markRead(docId);
+    if (!eventId) return;
+    const url = communiquesApi.fileUrl(eventId, docId);
+    window.open(url, '_blank', 'noopener');
+  }
+
+  async function togglePin(doc: CommuniqueDocumentT, e: React.MouseEvent) {
+    e.stopPropagation(); // nicht gleichzeitig die Karte öffnen
+    if (!eventId || !source) return;
+    const nextPinned = !doc.isPinned;
+    // optimistisch aktualisieren
+    setSource({
+      ...source,
+      documents: source.documents.map(d => d.id === doc.id ? { ...d, isPinned: nextPinned } : d),
+    });
+    try {
+      await communiquesApi.togglePin(eventId, doc.id, nextPinned);
+    } catch {
+      // bei Fehler zurücksetzen
+      setSource(prev => prev ? {
+        ...prev,
+        documents: prev.documents.map(d => d.id === doc.id ? { ...d, isPinned: !nextPinned } : d),
+      } : prev);
+    }
+  }
+
+  // ── Render ─────────────────────────────────────────────────────────────
+  if (loading) {
+    return <div className="loading"><span className="spinner" />Wird geladen…</div>;
+  }
+
+  const docs = source?.documents ?? [];
+  const filtered = docs
+    .filter(d => catFilter === 'alle' || d.docType === catFilter)
+    .filter(d => selectedAKs.has('Alle') || d.ak === 'Alle' || selectedAKs.has(d.ak))
+    .filter(d => selectedDisciplines.has('Alle') || d.discipline === 'ALLGEMEIN' || selectedDisciplines.has(d.discipline))
+    .sort((a, b) => (b.isPinned ? 1 : 0) - (a.isPinned ? 1 : 0)); // Angeheftete zuerst, Reihenfolge sonst stabil
+
+  const counts: Record<string, number> = {
+    alle: docs.length,
+    STARTLISTE: docs.filter(d => d.docType === 'STARTLISTE').length,
+    ERGEBNIS: docs.filter(d => d.docType === 'ERGEBNIS').length,
+    SONSTIGES: docs.filter(d => d.docType === 'SONSTIGES').length,
+  };
+
+  return (
+    <div className="page container" style={{ maxWidth: 480 }}>
+      <div className="breadcrumb">
+        <Link to="/">Veranstaltungen</Link><span>›</span>
+        <Link to={`/events/${eventId}`}>{event?.name ?? '…'}</Link><span>›</span>Kommuniqués
+      </div>
+      <h1 className="mb-4">Kommuniqués</h1>
+
+      {error && <div className="alert alert-error">{error}</div>}
+
+      {!source ? (
+        <div className="card">
+          <h3 style={{ marginBottom: 8 }}>Nextcloud-Link hinterlegen</h3>
+          <p className="text-sm text-muted" style={{ marginTop: 0, marginBottom: 14 }}>
+            Fügt den öffentlichen Share-Link ein, unter dem Startlisten und Ergebnisse
+            für dieses Event veröffentlicht werden.
+          </p>
+          <form onSubmit={handleSetupSubmit}>
+            <div className="form-group" style={{ marginBottom: 10 }}>
+              <input
+                className="form-input"
+                type="text"
+                placeholder="https://share.spurtlinie.de/index.php/s/…"
+                value={shareInput}
+                onChange={e => setShareInput(e.target.value)}
+              />
+            </div>
+            <button className="btn btn-primary" type="submit" disabled={saving || !shareInput.trim()}>
+              {saving ? 'Speichert…' : 'Verbinden'}
+            </button>
+          </form>
+        </div>
+      ) : (
+        <>
+          {/* Status-Leiste */}
+          <div className="flex-between" style={{ fontSize: 12, color: 'var(--c-text-muted)', padding: '2px 2px 10px' }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--c-success)', flexShrink: 0 }} />
+              {lastChecked ? `Zuletzt geprüft ${relativeTime(lastChecked.toISOString())}` : '—'}
+            </span>
+            <button className="btn btn-ghost btn-sm" onClick={handleManualRefresh} disabled={refreshing}>
+              {refreshing ? 'Prüft…' : '↻ Aktualisieren'}
+            </button>
+          </div>
+
+          {/* Push-Banner */}
+          {pushSupported && !pushEnabled && !bannerDismissed && (
+            <div className="alert alert-info flex-between" style={{ gap: 10 }}>
+              <span>🔔 Benachrichtigungen aktivieren, um neue Dokumente sofort zu sehen.</span>
+              <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                <button className="btn btn-primary btn-sm" onClick={enablePush} disabled={pushBusy}>
+                  {pushBusy ? '…' : 'Aktivieren'}
+                </button>
+                <button className="btn btn-ghost btn-sm" onClick={() => setBannerDismissed(true)}>Später</button>
+              </div>
+            </div>
+          )}
+          {!pushSupported && (
+            <div className="alert alert-info">Push wird von diesem Browser nicht unterstützt.</div>
+          )}
+
+          {/* Dokumenttyp-Filter */}
+          <div className="text-xs text-muted" style={{ margin: '0 2px 6px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+            Anzeigen
+          </div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14 }}>
+            {Object.entries(CAT_LABELS).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setCatFilter(key)}
+                style={{
+                  padding: '5px 13px', borderRadius: 20, fontSize: 12.5, cursor: 'pointer',
+                  border: 'none', fontWeight: 500,
+                  background: catFilter === key ? '#111' : '#f3f4f6',
+                  color: catFilter === key ? '#fff' : 'var(--c-text)',
+                }}
+              >
+                {label} <span style={{ opacity: 0.6 }}>{counts[key]}</span>
+              </button>
+            ))}
+          </div>
+
+          {/* AK-Filter */}
+          <div className="text-xs text-muted" style={{ margin: '0 2px 6px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+            Altersklasse
+          </div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
+            <button
+              onClick={() => toggleAK('Alle')}
+              style={{
+                padding: '5px 12px', borderRadius: 20, fontSize: 12.5, cursor: 'pointer', fontWeight: 500,
+                border: selectedAKs.has('Alle') ? '1px solid #111' : '1px solid var(--c-border)',
+                background: selectedAKs.has('Alle') ? '#111' : 'var(--c-white)',
+                color: selectedAKs.has('Alle') ? '#fff' : 'var(--c-text)',
+              }}
+            >
+              Alle
+            </button>
+            {AK_OPTIONS.map(ak => {
+              const active = !selectedAKs.has('Alle') && selectedAKs.has(ak);
+              return (
+                <button
+                  key={ak}
+                  onClick={() => toggleAK(ak)}
+                  style={{
+                    padding: '5px 12px', borderRadius: 20, fontSize: 12.5, cursor: 'pointer', fontWeight: 500,
+                    border: active ? '1px solid var(--c-primary)' : '1px solid var(--c-border)',
+                    background: active ? '#eff6ff' : 'var(--c-white)',
+                    color: active ? 'var(--c-primary-hover)' : 'var(--c-text)',
+                  }}
+                >
+                  {ak}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Disziplin-Filter */}
+          <div className="text-xs text-muted" style={{ margin: '0 2px 6px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+            Disziplin
+          </div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
+            {Object.entries(DISCIPLINE_LABELS).map(([key, label]) => {
+              const active = key === 'Alle' ? selectedDisciplines.has('Alle') : !selectedDisciplines.has('Alle') && selectedDisciplines.has(key);
+              return (
+                <button
+                  key={key}
+                  onClick={() => toggleDiscipline(key)}
+                  style={{
+                    padding: '5px 12px', borderRadius: 20, fontSize: 12.5, cursor: 'pointer', fontWeight: 500,
+                    border: key === 'Alle'
+                      ? (active ? '1px solid #111' : '1px solid var(--c-border)')
+                      : (active ? '1px solid var(--c-primary)' : '1px solid var(--c-border)'),
+                    background: key === 'Alle' ? (active ? '#111' : 'var(--c-white)') : (active ? '#eff6ff' : 'var(--c-white)'),
+                    color: key === 'Alle' ? (active ? '#fff' : 'var(--c-text)') : (active ? 'var(--c-primary-hover)' : 'var(--c-text)'),
+                  }}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+
+          {pushEnabled && (
+            <div className="flex-between text-xs text-muted" style={{ padding: '6px 2px 14px' }}>
+              <span>
+                🔔 Benachrichtigungen für{' '}
+                <strong>{selectedAKs.has('Alle') ? 'alle Klassen' : [...selectedAKs].join(', ')}</strong>
+                {' · '}
+                <strong>{selectedDisciplines.has('Alle') ? 'Sprint + Ausdauer' : [...selectedDisciplines].map(d => DISCIPLINE_LABELS[d]).join(', ')}</strong>
+                {' '}(+ allgemeine Dokumente)
+              </span>
+              <button className="btn btn-ghost btn-sm" onClick={disablePush}>Deaktivieren</button>
+            </div>
+          )}
+
+          {/* Dokumentenliste */}
+          {filtered.length === 0 ? (
+            <div className="empty">
+              <p>{docs.length === 0 ? 'Noch keine Dokumente veröffentlicht.' : 'Keine Dokumente für diese Auswahl.'}</p>
+            </div>
+          ) : (
+            <div>
+              {filtered.map(d => {
+                const unread = !readIdsState.has(d.id);
+                return (
+                  <div
+                    key={d.id}
+                    className="card card-link"
+                    onClick={() => openDoc(d.id)}
+                    style={{
+                      display: 'flex', alignItems: 'flex-start', gap: 12, padding: '13px 14px',
+                      background: d.isPinned ? '#fffbeb' : unread ? '#f8fafd' : 'var(--c-white)',
+                      borderColor: d.isPinned ? '#fde68a' : unread ? '#bfdbfe' : 'var(--c-border)',
+                    }}
+                  >
+                    <div style={{
+                      width: 34, height: 34, borderRadius: 8, display: 'flex',
+                      alignItems: 'center', justifyContent: 'center', fontSize: 16, flexShrink: 0,
+                      background: d.docType === 'STARTLISTE' ? '#dbeafe' : d.docType === 'ERGEBNIS' ? '#dcfce7' : '#f3f4f6',
+                    }}>
+                      {CAT_ICON[d.docType]}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 2 }}>
+                        <span style={{
+                          fontSize: 13.5, fontWeight: 600, overflow: 'hidden',
+                          textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        }}>
+                          {d.fileName}
+                        </span>
+                        {unread && <span className="badge badge-blue">NEU</span>}
+                      </div>
+                      <div className="text-xs text-muted">
+                        {relativeTime(d.remoteModifiedAt)} · {d.ak}{d.discipline !== 'ALLGEMEIN' ? ` · ${DISCIPLINE_LABELS[d.discipline]}` : ''}
+                      </div>
+                    </div>
+                    <button
+                      onClick={e => togglePin(d, e)}
+                      title={d.isPinned ? 'Von oben lösen' : 'Oben anheften'}
+                      style={{
+                        border: 'none', background: 'transparent', cursor: 'pointer',
+                        fontSize: 16, padding: 4, flexShrink: 0, opacity: d.isPinned ? 1 : 0.35,
+                        lineHeight: 1,
+                      }}
+                    >
+                      📌
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
