@@ -8,6 +8,8 @@ import racesRouter from './routes/races';
 import { sprintsRouter, lapsRouter, raceFlagsRouter } from './routes/resources';
 import { requireAdmin } from './middleware/auth';
 import pursuitPlansRouter from './routes/pursuit-plans';  // ← geändert
+import communiquesRouter, { pollSource } from './routes/communiques';
+import prisma from './prisma';
 
 dotenv.config();
 const app = express();
@@ -31,6 +33,7 @@ app.use('/api/sprints',        sprintsRouter);
 app.use('/api/laps',           lapsRouter);
 app.use('/api/race-flags',     raceFlagsRouter);
 app.use('/api/pursuit-plans',  pursuitPlansRouter);  // ← geändert
+app.use('/api/communiques',    communiquesRouter);
 
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);
@@ -38,3 +41,25 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 });
 
 app.listen(PORT, () => console.log(`Server läuft auf Port ${PORT}`));
+
+// ── Kommuniqué-Polling im Hintergrund ────────────────────────────────────────
+// Alle 90 Sek. jede hinterlegte Quelle prüfen. Fehler einer Quelle (z.B. Share
+// abgelaufen) dürfen die anderen nicht blockieren.
+const POLL_INTERVAL_MS = 90_000;
+
+async function pollAllSources() {
+  try {
+    const sources = await prisma.communiqueSource.findMany();
+    for (const source of sources) {
+      try {
+        await pollSource(source.id, source.shareToken);
+      } catch (err) {
+        console.error(`Polling fehlgeschlagen für Quelle ${source.id}:`, err);
+      }
+    }
+  } catch (err) {
+    console.error('Kommuniqué-Polling-Zyklus fehlgeschlagen:', err);
+  }
+}
+
+setInterval(pollAllSources, POLL_INTERVAL_MS);
