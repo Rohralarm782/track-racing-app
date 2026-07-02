@@ -235,6 +235,7 @@ model CommuniqueDocument {
   docType      DocType          @default(SONSTIGES)
   ak           String           @default("Alle") // z.B. "U17m", "Elite w", "Alle"
   discipline   Discipline       @default(ALLGEMEIN)
+  isPinned     Boolean          @default(false)
   remoteModifiedAt DateTime      // Änderungsdatum laut WebDAV
   discoveredAt DateTime         @default(now())
 
