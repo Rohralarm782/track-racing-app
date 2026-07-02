@@ -57,6 +57,7 @@ export interface CommuniqueDocument {
   docType: DocType;
   ak: string;
   discipline: Discipline;
+  isPinned: boolean;
   remoteModifiedAt: string;
   discoveredAt: string;
 }
@@ -112,6 +113,12 @@ export const communiquesApi = {
 
   poll: (eventId: string) =>
     api.post<{ newCount: number; newDocs: CommuniqueDocument[] }>(`/api/communiques/${eventId}/poll`, {}),
+
+  fileUrl: (eventId: string, documentId: string) =>
+    `${API_URL}/api/communiques/${eventId}/file/${documentId}`,
+
+  togglePin: (eventId: string, documentId: string, pinned: boolean) =>
+    api.patch<CommuniqueDocument>(`/api/communiques/${eventId}/documents/${documentId}/pin`, { pinned }),
 
   getVapidPublicKey: () =>
     api.get<{ key: string }>('/api/communiques/vapid-public-key'),
