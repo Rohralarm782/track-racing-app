@@ -61,6 +61,7 @@ const SubscribeSchema = z.object({
   endpoint: z.string(),
   keys: z.object({ p256dh: z.string(), auth: z.string() }),
   akFilter: z.array(z.string()).default(['Alle']),
+  disciplineFilter: z.array(z.string()).default(['Alle']),
 });
 
 router.post('/:eventId/subscribe', async (req, res, next) => {
@@ -71,11 +72,11 @@ router.post('/:eventId/subscribe', async (req, res, next) => {
     const source = await prisma.communiqueSource.findUnique({ where: { eventId: req.params.eventId } });
     if (!source) { res.status(404).json({ error: 'Keine Quelle hinterlegt' }); return; }
 
-    const { endpoint, keys, akFilter } = parsed.data;
+    const { endpoint, keys, akFilter, disciplineFilter } = parsed.data;
     const sub = await prisma.pushSubscription.upsert({
       where: { endpoint },
-      create: { sourceId: source.id, endpoint, p256dh: keys.p256dh, auth: keys.auth, akFilter },
-      update: { akFilter },
+      create: { sourceId: source.id, endpoint, p256dh: keys.p256dh, auth: keys.auth, akFilter, disciplineFilter },
+      update: { akFilter, disciplineFilter },
     });
     res.status(201).json(sub);
   } catch (e) { next(e); }
@@ -106,6 +107,25 @@ export async function pollSource(sourceId: string, shareToken: string) {
     return !existing || existing.remoteModifiedAt.getTime() !== f.modifiedAt.getTime();
   });
 
+  // Bereits bekannte, unveränderte Dateien: Klassifizierung nachträglich korrigieren
+  // (z.B. nach einem Update der Erkennungslogik), aber ohne erneuten Push-Trigger.
+  const remoteByName = new Map(remoteFiles.map(f => [f.fileName, f]));
+  const toReclassify = known.filter(d => {
+    const remote = remoteByName.get(d.fileName);
+    if (!remote || remote.modifiedAt.getTime() !== d.remoteModifiedAt.getTime()) return false; // steckt schon in toCreate
+    const fresh = classifyFileName(d.fileName);
+    return fresh.docType !== d.docType || fresh.ak !== d.ak || fresh.discipline !== d.discipline;
+  });
+
+  if (toReclassify.length > 0) {
+    await prisma.$transaction(
+      toReclassify.map(d => {
+        const fresh = classifyFileName(d.fileName);
+        return prisma.communiqueDocument.update({ where: { id: d.id }, data: fresh });
+      })
+    );
+  }
+
   if (toCreate.length === 0) {
     await prisma.communiqueSource.update({ where: { id: sourceId }, data: { lastPolledAt: new Date() } });
     return [];
@@ -113,11 +133,11 @@ export async function pollSource(sourceId: string, shareToken: string) {
 
   const created = await prisma.$transaction(
     toCreate.map(f => {
-      const { docType, ak } = classifyFileName(f.fileName);
+      const { docType, ak, discipline } = classifyFileName(f.fileName);
       return prisma.communiqueDocument.upsert({
         where: { sourceId_fileName: { sourceId, fileName: f.fileName } },
-        create: { sourceId, fileName: f.fileName, docType, ak, remoteModifiedAt: f.modifiedAt },
-        update: { remoteModifiedAt: f.modifiedAt, docType, ak },
+        create: { sourceId, fileName: f.fileName, docType, ak, discipline, remoteModifiedAt: f.modifiedAt },
+        update: { remoteModifiedAt: f.modifiedAt, docType, ak, discipline },
       });
     })
   );
