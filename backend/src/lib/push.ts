@@ -22,9 +22,13 @@ export async function notifyNewDocuments(sourceId: string, docs: CommuniqueDocum
   if (subs.length === 0) return;
 
   for (const sub of subs) {
-    const relevant = docs.filter(d =>
-      d.ak === 'Alle' || sub.akFilter.includes('Alle') || sub.akFilter.includes(d.ak)
-    );
+    const relevant = docs.filter(d => {
+      const akMatch = d.ak === 'Alle' || sub.akFilter.includes('Alle') || sub.akFilter.includes(d.ak);
+      const discMatch = d.discipline === 'ALLGEMEIN'
+        || sub.disciplineFilter.includes('Alle')
+        || sub.disciplineFilter.includes(d.discipline);
+      return akMatch && discMatch;
+    });
     if (relevant.length === 0) continue;
 
     const title = relevant.length === 1
