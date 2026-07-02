@@ -47,6 +47,27 @@ export interface Event {
   categories: Array<Category & { _count: { teams: number }; races: Race[] }>;
 }
 
+export type DocType = 'STARTLISTE' | 'ERGEBNIS' | 'SONSTIGES';
+
+export interface CommuniqueDocument {
+  id: string;
+  sourceId: string;
+  fileName: string;
+  docType: DocType;
+  ak: string;
+  remoteModifiedAt: string;
+  discoveredAt: string;
+}
+
+export interface CommuniqueSource {
+  id: string;
+  eventId: string;
+  shareToken: string;
+  label: string | null;
+  lastPolledAt: string | null;
+  documents: CommuniqueDocument[];
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = getToken();
   const headers: Record<string, string> = {
@@ -79,4 +100,27 @@ export const api = {
       return res.ok;
     } catch { return false; }
   },
+};
+
+export const communiquesApi = {
+  get: (eventId: string) => api.get<CommuniqueSource | null>(`/api/communiques/${eventId}`),
+
+  setSource: (eventId: string, shareToken: string, label?: string) =>
+    api.post<CommuniqueSource>(`/api/communiques/${eventId}`, { shareToken, label }),
+
+  poll: (eventId: string) =>
+    api.post<{ newCount: number; newDocs: CommuniqueDocument[] }>(`/api/communiques/${eventId}/poll`, {}),
+
+  getVapidPublicKey: () =>
+    api.get<{ key: string }>('/api/communiques/vapid-public-key'),
+
+  subscribe: (eventId: string, subscription: PushSubscriptionJSON, akFilter: string[]) =>
+    api.post(`/api/communiques/${eventId}/subscribe`, {
+      endpoint: subscription.endpoint,
+      keys: subscription.keys,
+      akFilter,
+    }),
+
+  unsubscribe: (endpoint: string) =>
+    api.delete(`/api/communiques/subscribe?endpoint=${encodeURIComponent(endpoint)}`),
 };
