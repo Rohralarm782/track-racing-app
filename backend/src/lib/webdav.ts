@@ -84,6 +84,12 @@ export async function fetchShareFile(shareToken: string, fileName: string): Prom
   }
 
   const arrayBuffer = await res.arrayBuffer();
-  const contentType = res.headers.get('content-type') ?? 'application/pdf';
+  // Nextclouds WebDAV-Antwort liefert oft "application/octet-stream" statt
+  // "application/pdf", was Browser (v.a. mobil) zum Download statt Anzeigen
+  // verleitet. Da wir ohnehin nur .pdf-Dateien tracken, setzen wir den
+  // Content-Type anhand der Endung selbst statt der Nextcloud-Angabe zu trauen.
+  const contentType = fileName.toLowerCase().endsWith('.pdf')
+    ? 'application/pdf'
+    : (res.headers.get('content-type') ?? 'application/octet-stream');
   return { data: Buffer.from(arrayBuffer), contentType };
 }
