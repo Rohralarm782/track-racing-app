@@ -61,7 +61,7 @@ export default function PdfViewer({ url }: PdfViewerProps) {
             containerRef.current.appendChild(canvas);
           }
 
-          await page.render({ canvasContext: context, viewport, canvas }).promise;
+          await page.render({ canvasContext: context, viewport }).promise;
         }
 
         if (!cancelled) setStatus('ready');
