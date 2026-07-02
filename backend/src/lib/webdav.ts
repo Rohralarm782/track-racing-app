@@ -64,3 +64,26 @@ export async function listShareFiles(shareToken: string): Promise<RemoteFile[]> 
 
   return files;
 }
+
+/**
+ * Lädt den tatsächlichen Dateiinhalt einer Datei aus dem Share-Ordner
+ * (im Gegensatz zu listShareFiles, das nur die Metadaten per PROPFIND holt).
+ * Genutzt fürs Direkt-Anzeigen im Browser statt über den Nextcloud-
+ * Download-Link, der immer einen Datei-Download erzwingt.
+ */
+export async function fetchShareFile(shareToken: string, fileName: string): Promise<{ data: Buffer; contentType: string }> {
+  const url = `https://share.spurtlinie.de/public.php/webdav/${encodeURIComponent(fileName)}`;
+  const auth = Buffer.from(`${shareToken}:`).toString('base64');
+
+  const res = await fetch(url, {
+    headers: { Authorization: `Basic ${auth}` },
+  });
+
+  if (!res.ok) {
+    throw new Error(`WebDAV GET fehlgeschlagen: HTTP ${res.status}`);
+  }
+
+  const arrayBuffer = await res.arrayBuffer();
+  const contentType = res.headers.get('content-type') ?? 'application/pdf';
+  return { data: Buffer.from(arrayBuffer), contentType };
+}
