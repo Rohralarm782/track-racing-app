@@ -118,7 +118,7 @@ model RaceFlag {
   raceId    String
   race      Race     @relation(fields: [raceId], references: [id], onDelete: Cascade)
   teamId    String
-  team      Team     @relation(fields: [teamId], references: [id])
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
   type      FlagType
   createdAt DateTime @default(now())
 
@@ -130,7 +130,7 @@ model OmniumScore {
   raceId String
   race   Race   @relation(fields: [raceId], references: [id], onDelete: Cascade)
   teamId String
-  team   Team   @relation(fields: [teamId], references: [id])
+  team   Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
   points Int    @default(0)
 
   @@unique([raceId, teamId])
@@ -152,7 +152,7 @@ model SprintResult {
   sprintId String
   sprint   Sprint @relation(fields: [sprintId], references: [id], onDelete: Cascade)
   teamId   String
-  team     Team   @relation(fields: [teamId], references: [id])
+  team     Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
   position Int
 
   @@unique([sprintId, position])
@@ -164,7 +164,7 @@ model LapEvent {
   raceId    String
   race      Race     @relation(fields: [raceId], references: [id], onDelete: Cascade)
   teamId    String
-  team      Team     @relation(fields: [teamId], references: [id])
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
   delta     Int
   note      String?
   createdAt DateTime @default(now())
@@ -175,7 +175,7 @@ model TimeResult {
   raceId String
   race   Race       @relation(fields: [raceId], references: [id], onDelete: Cascade)
   teamId String
-  team   Team       @relation(fields: [teamId], references: [id])
+  team   Team       @relation(fields: [teamId], references: [id], onDelete: Cascade)
   timeMs Int?
   status TimeStatus @default(OK)
 
