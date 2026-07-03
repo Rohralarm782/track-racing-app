@@ -342,7 +342,10 @@ router.post('/:id/flags', requireAdmin, async (req, res, next) => {
 router.post('/:id/apply-ansetzung', requireAdmin, async (req, res, next) => {
   try {
     const { teams } = req.body as {
-      teams: Array<{ number: number; name: string; club?: string | null; lv?: string | null }>;
+      teams: Array<{
+        number: number; name: string; club?: string | null; lv?: string | null;
+        rider2?: string | null; rider2Club?: string | null; rider2Lv?: string | null;
+      }>;
     };
     if (!Array.isArray(teams)) { res.status(400).json({ error: 'teams fehlt' }); return; }
 
@@ -380,16 +383,21 @@ router.post('/:id/apply-ansetzung', requireAdmin, async (req, res, next) => {
 
     // ── Neues Modell: Teams direkt am Rennen anlegen/aktualisieren ──
     const upserted = await prisma.$transaction(
-      teams.map(t => prisma.team.upsert({
-        where: { raceId_number: { raceId: race.id, number: t.number } },
-        create: {
-          raceId: race.id, number: t.number, name: t.name,
-          club: t.club ?? null, isFavorite: t.lv === 'MEV',
-        },
-        update: {
-          name: t.name, club: t.club ?? null, isFavorite: t.lv === 'MEV',
-        },
-      }))
+      teams.map(t => {
+        const isPair = !!t.rider2;
+        const data = {
+          name: isPair ? `${t.name} / ${t.rider2}` : t.name,
+          club: t.club ?? null,
+          rider1: isPair ? t.name : null,
+          rider2: t.rider2 ?? null,
+          isFavorite: t.lv === 'MEV' || t.rider2Lv === 'MEV',
+        };
+        return prisma.team.upsert({
+          where: { raceId_number: { raceId: race.id, number: t.number } },
+          create: { raceId: race.id, number: t.number, ...data },
+          update: data,
+        });
+      })
     );
 
     // Teams, die vorher am Rennen hingen, aber jetzt nicht mehr in der
