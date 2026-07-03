@@ -38,6 +38,8 @@ export interface Race {
   type: RaceType;
   status: RaceStatus;
   order: number;
+  ak?: string | null; // nur bei Rennen ohne Kategorie (neues Modell)
+  _count?: { teams: number };
 }
 
 export interface Event {
@@ -45,6 +47,7 @@ export interface Event {
   name: string;
   date?: string | null;
   categories: Array<Category & { _count: { teams: number }; races: Race[] }>;
+  races: Race[]; // neue, direkt am Event hängende Rennen ohne Kategorie
 }
 
 export type DocType = 'STARTLISTE' | 'ERGEBNIS' | 'SONSTIGES';
