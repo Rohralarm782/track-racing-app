@@ -10,7 +10,10 @@ interface Props {
   onClose: () => void;
 }
 
-interface DetectedTeam { number: number; name: string; club?: string | null; lv?: string | null }
+interface DetectedTeam {
+  number: number; name: string; club?: string | null; lv?: string | null;
+  rider2?: string | null; rider2Club?: string | null; rider2Lv?: string | null;
+}
 interface DetectedAK { name: string; shortName: string; teams: DetectedTeam[] }
 
 type Step = 'analyzing' | 'pick-race' | 'applying' | 'done';
