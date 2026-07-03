@@ -109,9 +109,9 @@ export default function EventDetail() {
 
       {tab === 'uebersicht' && (
         <>
-          {event.categories.length === 0 ? (
+          {event.categories.length === 0 && (event.races ?? []).length === 0 ? (
             <div className="empty">
-              <p>Noch keine Kategorien angelegt.</p>
+              <p>Noch keine Kategorien oder Rennen angelegt.</p>
               {isAdmin && (
                 <button className="btn btn-primary" onClick={() => setTab('einstellungen')}>
                   ⚙️ Zu den Einstellungen
@@ -147,6 +147,31 @@ export default function EventDetail() {
                         <span className="badge badge-gray">Keine Rennen</span>
                       )}
                     </div>
+                  </div>
+                </Link>
+              ))}
+
+              {/* Rennen ohne Kategorie — direkt an der Veranstaltung, nur mit AK-Tag */}
+              {(event.races ?? []).map(race => (
+                <Link
+                  key={race.id}
+                  to={`/races/${race.id}`}
+                  className="card card-link"
+                  style={{ display: 'block' }}
+                >
+                  <div className="flex-between">
+                    <div>
+                      <h3 style={{ marginBottom: 3 }}>
+                        {race.ak && <span className="badge badge-blue" style={{ marginRight: 6, fontSize: 10 }}>{race.ak}</span>}
+                        {race.name}
+                      </h3>
+                      <p className="text-sm text-muted" style={{ margin: 0 }}>
+                        {race._count?.teams ?? 0} Teilnehmer
+                      </p>
+                    </div>
+                    <span className={`badge ${STATUS_BADGE[race.status] ?? 'badge-gray'}`}>
+                      {race.status === 'FINISHED' ? 'Fertig' : race.status === 'ACTIVE' ? 'Läuft' : 'Setup'}
+                    </span>
                   </div>
                 </Link>
               ))}
