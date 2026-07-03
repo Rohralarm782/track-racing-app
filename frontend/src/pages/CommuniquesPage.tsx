@@ -695,6 +695,7 @@ export default function CommuniquesPage() {
         eventId={eventId}
         event={event}
         initialBase64={ansetzungBase64}
+        suggestedAk={viewingDoc?.ak}
         onDone={() => { setAnsetzungBase64(null); setViewingDoc(null); load(); }}
         onClose={() => setAnsetzungBase64(null)}
       />
