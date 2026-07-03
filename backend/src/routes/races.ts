@@ -39,13 +39,23 @@ router.get('/:id', async (req, res, next) => {
     });
     if (!race) { res.status(404).json({ error: 'Nicht gefunden' }); return; }
 
+    // Teams mit DNS-Flag ("startet nicht") aus diesem einen Rennen ausblenden —
+    // bleiben aber ganz normal Teil der Kategorie für alle anderen Rennen.
+    const dnsIds = new Set(race.flags.filter(f => f.type === 'DNS').map(f => f.teamId));
+    const activeTeams = race.category.teams.filter(t => !dnsIds.has(t.id));
+
     const scoreboard = race.type === 'PUNKTEFAHREN'
-      ? computePunktefahren(race.category.teams, race.sprints, race.lapEvents, race.omniumScores, race.flags)
+      ? computePunktefahren(activeTeams, race.sprints, race.lapEvents, race.omniumScores, race.flags)
       : race.type === 'TEMPORUNDEN'
-      ? computeTemporennen(race.category.teams, race.sprints, race.lapEvents, race.flags)
+      ? computeTemporennen(activeTeams, race.sprints, race.lapEvents, race.flags)
       : null;
 
-    res.json({ ...race, scoreboard });
+    res.json({
+      ...race,
+      category: { ...race.category, teams: activeTeams },
+      dnsTeams: race.category.teams.filter(t => dnsIds.has(t.id)),
+      scoreboard,
+    });
   } catch (e) { next(e); }
 });
 
@@ -285,13 +295,52 @@ router.post('/:id/laps', requireAdmin, async (req, res, next) => {
 router.post('/:id/flags', requireAdmin, async (req, res, next) => {
   try {
     const { teamId, type } = req.body;
-    if (!['DSQ', 'WARNING'].includes(type)) { res.status(400).json({ error: 'Ungültiger Typ' }); return; }
+    if (!['DSQ', 'WARNING', 'DNS'].includes(type)) { res.status(400).json({ error: 'Ungültiger Typ' }); return; }
     await prisma.raceFlag.upsert({
       where: { raceId_teamId_type: { raceId: req.params.id, teamId, type } },
       create: { raceId: req.params.id, teamId, type },
       update: {},
     });
     res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// POST /api/races/:id/apply-ansetzung — setzt anhand einer per KI erkannten
+// Renn-Ansetzung (Communiqué), welche Teams (per Startnummer) in DIESEM Rennen
+// starten. Teams der Kategorie, die nicht in der Liste stehen, bekommen ein
+// DNS-Flag für dieses Rennen; zuvor gesetzte DNS-Flags von Teams, die jetzt
+// wieder in der Liste stehen, werden entfernt (z.B. bei Korrektur-Ansetzung).
+router.post('/:id/apply-ansetzung', requireAdmin, async (req, res, next) => {
+  try {
+    const { teamNumbers } = req.body as { teamNumbers: number[] };
+    if (!Array.isArray(teamNumbers)) { res.status(400).json({ error: 'teamNumbers fehlt' }); return; }
+
+    const race = await prisma.race.findUnique({
+      where: { id: req.params.id },
+      include: { category: { include: { teams: true } } },
+    });
+    if (!race) { res.status(404).json({ error: 'Rennen nicht gefunden' }); return; }
+
+    const startingNumbers = new Set(teamNumbers);
+    const toExclude = race.category.teams.filter(t => !startingNumbers.has(t.number));
+    const toInclude = race.category.teams.filter(t => startingNumbers.has(t.number));
+
+    await prisma.$transaction([
+      ...toExclude.map(t => prisma.raceFlag.upsert({
+        where: { raceId_teamId_type: { raceId: race.id, teamId: t.id, type: 'DNS' } },
+        create: { raceId: race.id, teamId: t.id, type: 'DNS' },
+        update: {},
+      })),
+      ...toInclude.map(t => prisma.raceFlag.deleteMany({
+        where: { raceId: race.id, teamId: t.id, type: 'DNS' },
+      })),
+    ]);
+
+    res.json({
+      excluded: toExclude.length,
+      included: toInclude.length,
+      unmatched: teamNumbers.length - toInclude.length,
+    });
   } catch (e) { next(e); }
 });
 
