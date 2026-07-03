@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import PdfViewer from '../components/PdfViewer';
 import EventTabBar from '../components/EventTabBar';
+import AnsetzungImport from '../components/AnsetzungImport';
+import { useAdmin } from '../components/Layout';
 import {
   api, communiquesApi,
   type CommuniqueSource, type CommuniqueDocument as CommuniqueDocumentT, type Event as EventT,
@@ -59,10 +61,13 @@ function parseDocNumber(fileName: string): { num: number; suffix: string } {
 // ── Komponente ─────────────────────────────────────────────────────────────
 export default function CommuniquesPage() {
   const { id: eventId } = useParams<{ id: string }>();
+  const { isAdmin } = useAdmin();
 
   const [event, setEvent]   = useState<EventT | null>(null);
   const [source, setSource] = useState<CommuniqueSource | null>(null);
   const [loading, setLoading] = useState(true);
+  const [ansetzungBase64, setAnsetzungBase64] = useState<string | null>(null);
+  const [ansetzungBusy, setAnsetzungBusy] = useState(false);
   const [error, setError]     = useState('');
 
   // Setup
@@ -313,6 +318,29 @@ export default function CommuniquesPage() {
         ...prev,
         documents: prev.documents.map(d => d.id === doc.id ? { ...d, isPinned: !nextPinned } : d),
       } : prev);
+    }
+  }
+
+  // Lädt die PDF-Bytes über unseren eigenen Proxy und wandelt sie in Base64 um,
+  // damit sie in dieselbe KI-Analyse geht wie beim manuellen Datei-Upload.
+  async function startAnsetzungImport(doc: CommuniqueDocumentT) {
+    if (!eventId) return;
+    setAnsetzungBusy(true); setError('');
+    try {
+      const res = await fetch(communiquesApi.fileUrl(eventId, doc.id));
+      if (!res.ok) throw new Error('PDF konnte nicht geladen werden');
+      const blob = await res.blob();
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const r = new FileReader();
+        r.onload  = () => resolve((r.result as string).split(',')[1]);
+        r.onerror = () => reject(new Error('Lesen fehlgeschlagen'));
+        r.readAsDataURL(blob);
+      });
+      setAnsetzungBase64(base64);
+    } catch (e: any) {
+      setError(e.message ?? 'Import fehlgeschlagen');
+    } finally {
+      setAnsetzungBusy(false);
     }
   }
 
@@ -635,19 +663,41 @@ export default function CommuniquesPage() {
             }}>
               {viewingDoc.fileName}
             </span>
-            <button
-              onClick={() => setViewingDoc(null)}
-              className="btn btn-ghost btn-sm"
-              style={{ flexShrink: 0, fontSize: 18, padding: '4px 10px' }}
-            >
-              ✕
-            </button>
+            <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+              {isAdmin && viewingDoc.docType === 'STARTLISTE' && (
+                <button
+                  onClick={() => startAnsetzungImport(viewingDoc)}
+                  className="btn btn-primary btn-sm"
+                  disabled={ansetzungBusy}
+                  style={{ fontSize: 12 }}
+                >
+                  {ansetzungBusy ? 'Lädt…' : '🏁 Ansetzung importieren'}
+                </button>
+              )}
+              <button
+                onClick={() => setViewingDoc(null)}
+                className="btn btn-ghost btn-sm"
+                style={{ fontSize: 18, padding: '4px 10px' }}
+              >
+                ✕
+              </button>
+            </div>
           </div>
           <div style={{ flex: 1, minHeight: 0 }}>
             <PdfViewer url={communiquesApi.fileUrl(eventId, viewingDoc.id)} />
           </div>
         </div>
       </div>
+    )}
+
+    {ansetzungBase64 && eventId && event && (
+      <AnsetzungImport
+        eventId={eventId}
+        event={event}
+        initialBase64={ansetzungBase64}
+        onDone={() => { setAnsetzungBase64(null); setViewingDoc(null); load(); }}
+        onClose={() => setAnsetzungBase64(null)}
+      />
     )}
     </>
   );
