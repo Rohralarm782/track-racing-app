@@ -175,7 +175,7 @@ router.post('/:id/omnium-pdf', requireAdmin, async (req, res, next) => {
 
     const race = await prisma.race.findUnique({
       where: { id: req.params.id },
-      include: { category: { include: { teams: true } } },
+      include: { category: { include: { teams: true } }, teams: true },
     });
     if (!race) { res.status(404).json({ error: 'Nicht gefunden' }); return; }
 
@@ -203,7 +203,8 @@ Extrahiere Startnummern und Gesamtpunkte. Gib NUR JSON zurück:
     const clean = text.replace(/```json\n?|```/g, '').trim();
     const { scores } = JSON.parse(clean);
 
-    const teamMap = new Map(race.category.teams.map(t => [t.number, t.id]));
+    const relevantTeams = race.category ? race.category.teams : race.teams;
+    const teamMap = new Map(relevantTeams.map(t => [t.number, t.id]));
     const raceId = req.params.id;
     const matched = scores.filter((s: any) => teamMap.has(s.number));
 
