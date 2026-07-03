@@ -54,6 +54,7 @@ model Event {
   date       DateTime?
   location   String?
   categories Category[]
+  races      Race[]     // neu: Rennen, die direkt an der Veranstaltung hängen (ohne Kategorie)
   createdAt  DateTime   @default(now())
 
   communiqueSource CommuniqueSource?
@@ -70,9 +71,11 @@ model Category {
 }
 
 model Team {
-  id         String   @id @default(cuid())
-  categoryId String
-  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  id         String    @id @default(cuid())
+  categoryId String?
+  category   Category? @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  raceId     String?   // neu: direkte Zugehörigkeit für Rennen ohne Kategorie
+  race       Race?     @relation(fields: [raceId], references: [id], onDelete: Cascade)
   number     Int
   name       String
   club       String?
@@ -92,12 +95,17 @@ model Team {
   pursuitWinner PursuitRound[] @relation("winner")
 
   @@unique([categoryId, number])
+  @@unique([raceId, number])
 }
 
 model Race {
   id           String          @id @default(cuid())
-  categoryId   String
-  category     Category        @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  categoryId   String?
+  category     Category?       @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  eventId      String?         // neu: direkte Zugehörigkeit ohne Kategorie
+  event        Event?          @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  ak           String?         // neu: Altersklassen-Tag nur zum Anzeigen/Suchen (z.B. "U17m"), keine echte Beziehung
+  teams        Team[]          // neu: eigene Teams für Rennen ohne Kategorie
   type         RaceType
   format       CategoryFormat?
   name         String
