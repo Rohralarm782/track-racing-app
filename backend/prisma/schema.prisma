@@ -33,6 +33,7 @@ enum TimeStatus {
 enum FlagType {
   DSQ
   WARNING
+  DNS
 }
 
 enum DocType {
