@@ -65,8 +65,13 @@ export default function EventDetail() {
 
   async function deleteEvent() {
     if (!confirm('Veranstaltung wirklich löschen? Alle Kategorien und Teams werden ebenfalls gelöscht.')) return;
-    await api.delete(`/api/events/${id}`);
-    navigate('/');
+    setError('');
+    try {
+      await api.delete(`/api/events/${id}`);
+      navigate('/');
+    } catch (e: any) {
+      setError(e.message ?? 'Löschen fehlgeschlagen');
+    }
   }
 
   if (loading) return (
@@ -210,6 +215,7 @@ export default function EventDetail() {
               )}
 
               <div style={{ borderTop: '1px solid var(--c-border)', paddingTop: 16 }}>
+                {error && !showNewCat && <div className="alert alert-error mb-3">{error}</div>}
                 <button className="btn btn-danger btn-sm" onClick={deleteEvent}>
                   Veranstaltung löschen
                 </button>
