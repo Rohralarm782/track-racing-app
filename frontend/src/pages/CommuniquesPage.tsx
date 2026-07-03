@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import PdfViewer from '../components/PdfViewer';
+import EventTabBar from '../components/EventTabBar';
 import {
   api, communiquesApi,
   type CommuniqueSource, type CommuniqueDocument as CommuniqueDocumentT, type Event as EventT,
@@ -354,7 +355,9 @@ export default function CommuniquesPage() {
         <Link to="/">Veranstaltungen</Link><span>›</span>
         <Link to={`/events/${eventId}`}>{event?.name ?? '…'}</Link><span>›</span>Kommuniqués
       </div>
-      <h1 className="mb-4">Kommuniqués</h1>
+      <h1 className="mb-4">{event?.name ?? 'Kommuniqués'}</h1>
+
+      {eventId && <EventTabBar eventId={eventId} active="kommuniques" />}
 
       {error && <div className="alert alert-error">{error}</div>}
 
