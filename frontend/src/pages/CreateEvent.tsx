@@ -1,29 +1,22 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { api } from '../api/client';
+import { api, communiquesApi } from '../api/client';
 
-const AGE_CLASSES = ['U15', 'U17', 'U19', 'Elite'] as const;
-type AgeClass = typeof AGE_CLASSES[number];
-type Selection = Record<AgeClass, { m: boolean; w: boolean }>;
-
-const EMPTY: Selection = {
-  U15:   { m: false, w: false },
-  U17:   { m: false, w: false },
-  U19:   { m: false, w: false },
-  Elite: { m: false, w: false },
-};
+// Akzeptiert entweder den vollen Nextcloud-Share-Link oder direkt den Token.
+function extractShareToken(input: string): string | null {
+  const match = input.match(/\/s\/([A-Za-z0-9]+)/);
+  if (match) return match[1];
+  if (/^[A-Za-z0-9]{8,}$/.test(input)) return input;
+  return null;
+}
 
 export default function CreateEvent() {
   const navigate = useNavigate();
-  const [name, setName]         = useState('');
-  const [date, setDate]         = useState('');
-  const [selected, setSelected] = useState<Selection>(EMPTY);
-  const [saving, setSaving]     = useState(false);
-  const [error, setError]       = useState('');
-
-  function toggle(age: AgeClass, g: 'm' | 'w') {
-    setSelected(prev => ({ ...prev, [age]: { ...prev[age], [g]: !prev[age][g] } }));
-  }
+  const [name, setName]             = useState('');
+  const [date, setDate]             = useState('');
+  const [shareLink, setShareLink]   = useState('');
+  const [saving, setSaving]         = useState(false);
+  const [error, setError]           = useState('');
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -35,29 +28,22 @@ export default function CreateEvent() {
         name,
         date: date ? new Date(date).toISOString() : undefined,
       });
-      await Promise.all(
-        AGE_CLASSES.flatMap(age =>
-          (['m', 'w'] as const).flatMap(g =>
-            selected[age][g]
-              ? [api.post('/api/categories', { eventId: ev.id, name: `${age} ${g}`, format: 'INDIVIDUAL' })]
-              : []
-          )
-        )
-      );
+
+      // Kommuniqué-Link optional gleich mit verknüpfen. Schlägt das fehl
+      // (z.B. Token nicht erkennbar), soll das die Veranstaltung selbst
+      // nicht blockieren — einfach still überspringen, lässt sich später
+      // im Kommuniqués-Tab nachtragen.
+      const token = shareLink.trim() ? extractShareToken(shareLink.trim()) : null;
+      if (token) {
+        try { await communiquesApi.setSource(ev.id, token); } catch { /* still, im Kommuniqués-Tab nachtragbar */ }
+      }
+
       navigate(`/events/${ev.id}`);
     } catch (e: any) {
       setError(e.message ?? 'Fehler');
       setSaving(false);
     }
   }
-
-  const btn = (active: boolean): React.CSSProperties => ({
-    width: 38, height: 28, borderRadius: 6, cursor: 'pointer',
-    border: active ? '2px solid var(--c-primary)' : '1px solid var(--c-border)',
-    background: active ? '#dbeafe' : 'var(--c-white)',
-    color: active ? 'var(--c-primary)' : 'var(--c-text-muted)',
-    fontWeight: 600, fontSize: 12, padding: 0,
-  });
 
   return (
     <div className="page container" style={{ maxWidth: 480 }}>
@@ -73,39 +59,26 @@ export default function CreateEvent() {
             <label className="form-label">Name *</label>
             <input className="form-input" type="text" value={name}
               onChange={e => setName(e.target.value)}
-              placeholder="z.B. Frankfurter Frühjahrsomnium 2025"
+              placeholder="z.B. LVM Bahn 2026"
               required autoFocus />
           </div>
-          <div className="form-group" style={{ marginBottom: 0 }}>
+          <div className="form-group">
             <label className="form-label">
               Datum <span className="text-muted text-sm">(optional)</span>
             </label>
             <input className="form-input" type="date" value={date}
               onChange={e => setDate(e.target.value)} />
           </div>
-        </div>
-
-        <div className="card mt-3">
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-            <h3>Altersklassen <span className="text-muted text-sm">(optional)</span></h3>
-            <div style={{ display: 'flex', gap: 16 }}>
-              <span style={{ width: 38, textAlign: 'center', fontSize: 11, color: 'var(--c-text-muted)', fontWeight: 500 }}>m</span>
-              <span style={{ width: 38, textAlign: 'center', fontSize: 11, color: 'var(--c-text-muted)', fontWeight: 500 }}>w</span>
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {AGE_CLASSES.map(age => (
-              <div key={age} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <span style={{ fontSize: 13, fontWeight: 500 }}>{age}</span>
-                <div style={{ display: 'flex', gap: 16 }}>
-                  {(['m', 'w'] as const).map(g => (
-                    <button key={g} type="button" style={btn(selected[age][g])}
-                      onClick={() => toggle(age, g)}>{g}</button>
-                  ))}
-                </div>
-              </div>
-            ))}
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label className="form-label">
+              Kommuniqué-Link <span className="text-muted text-sm">(optional)</span>
+            </label>
+            <input className="form-input" type="text" value={shareLink}
+              onChange={e => setShareLink(e.target.value)}
+              placeholder="https://share.spurtlinie.de/index.php/s/…" />
+            <p className="text-xs text-muted" style={{ marginTop: 5 }}>
+              Aktiviert Benachrichtigungen für neue Startlisten & Ergebnisse. Lässt sich auch später im Kommuniqués-Tab eintragen.
+            </p>
           </div>
         </div>
 
