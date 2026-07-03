@@ -715,7 +715,7 @@ export default function CommuniquesPage() {
               {viewingDoc.fileName}
             </span>
             <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-              {isAdmin && viewingDoc.docType === 'STARTLISTE' && (
+              {isAdmin && (
                 <button
                   onClick={() => startAnsetzungImport(viewingDoc)}
                   className="btn btn-primary btn-sm"
