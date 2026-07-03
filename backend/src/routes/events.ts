@@ -109,11 +109,11 @@ router.post('/:id/analyze-startlist', requireAdmin, async (req, res, next) => {
           } as any,
           {
             type: 'text',
-            text: `Analysiere diese vollständige Meldeliste/Startliste für eine Bahnradveranstaltung.
+            text: `Analysiere diese vollständige Meldeliste/Startliste/Startaufstellung für eine Bahnradveranstaltung.
 Erkenne alle Altersklassen und liste die Teilnehmer je Altersklasse auf.
 Gib NUR JSON zurück (kein Markdown, kein Text davor/danach):
 
-{"ageClasses":[{"name":"U17 männlich","shortName":"U17m","teams":[{"number":1,"name":"Vorname Nachname","club":"Vereinsname"}]}]}
+{"ageClasses":[{"name":"U17 männlich","shortName":"U17m","teams":[{"number":1,"name":"Vorname Nachname","club":"Vereinsname","lv":"MEV"}]}]}
 
 Regeln:
 - Erkenne AK-Abschnitte an Überschriften (z.B. "U17 männlich", "Juniorinnen U19", "Elite Frauen")
@@ -121,8 +121,24 @@ Regeln:
 - number: Startnummer als Ganzzahl
 - name: "Vorname Nachname" (NICHT "Nachname, Vorname" — kein Komma!)
 - club: Vereinsname aus der Vereinsspalte, null wenn nicht vorhanden
+- lv: Landesverband-Kürzel aus der "LV"-Spalte (z.B. "MEV", "BRA", "NRW"), null wenn nicht vorhanden
+
+WICHTIG — Team-Paare (z.B. Madison/Zweier-Mannschaftsfahren):
+Manche Startlisten haben eine Team-Nummer-Spalte (oft "Nr."), die über GENAU ZWEI Zeilen
+zusammengefasst/verschmolzen ist — das bedeutet, diese zwei Fahrer bilden EIN Team.
+Erkennst du dieses Muster (z.B. weil der Titel "Madison" oder "Zweier-Mannschaftsfahren"
+enthält, oder weil die Nummern-Spalte sichtbar über zwei Zeilen zusammengefasst ist):
+- Fasse die zwei Zeilen zu EINEM Team-Eintrag zusammen
+- number: die gemeinsame Team-Nummer (aus der zusammengefassten Spalte, NICHT die individuelle Start-Nr.)
+- name: Name des ERSTEN Fahrers
+- club, lv: Verein/Landesverband des ERSTEN Fahrers
+- rider2: Name des ZWEITEN Fahrers ("Vorname Nachname")
+- rider2Club: Verein des zweiten Fahrers, null wenn nicht vorhanden
+- rider2Lv: Landesverband des zweiten Fahrers, null wenn nicht vorhanden
+Bei normalen Einzel-Startlisten (kein Team-Paar-Muster) NIE rider2/rider2Club/rider2Lv angeben.
+
 - Überspringe durchgestrichene Einträge und Kopfzeilen
-- Dedupliziere nach Startnummer innerhalb einer AK
+- Dedupliziere nach Startnummer/Team-Nummer innerhalb einer AK
 - Nur reines JSON, sonst nichts`,
           },
         ],
@@ -137,12 +153,21 @@ Regeln:
 
 // ── POST /api/events/:id/apply-startlist ─────────────────────────────────────
 // Legt Kategorien und Teams anhand der bestätigten Gruppen an.
-// Body: { groups: [{ name: string, teams: [{number, name, club}] }] }
+// Teams mit lv === "MEV" werden automatisch als Favorit markiert. Enthält eine
+// Gruppe Team-Paare (rider2 gesetzt, z.B. Madison), wird die Kategorie als
+// TEAM_PAIRS angelegt und Name/rider1/rider2 entsprechend gesetzt.
+// Body: { groups: [{ name: string, teams: [{number, name, club, lv, rider2, rider2Club, rider2Lv}] }] }
 router.post('/:id/apply-startlist', requireAdmin, async (req, res, next) => {
   try {
     const eventId = req.params.id;
     const { groups } = req.body as {
-      groups: Array<{ name: string; teams: Array<{ number: number; name: string; club: string | null }> }>;
+      groups: Array<{
+        name: string;
+        teams: Array<{
+          number: number; name: string; club: string | null; lv?: string | null;
+          rider2?: string | null; rider2Club?: string | null; rider2Lv?: string | null;
+        }>;
+      }>;
     };
 
     if (!Array.isArray(groups) || groups.length === 0) {
@@ -152,16 +177,20 @@ router.post('/:id/apply-startlist', requireAdmin, async (req, res, next) => {
     const created = await prisma.$transaction(async (tx) => {
       const results = [];
       for (const group of groups) {
+        const isPairs = group.teams.some(t => !!t.rider2);
         const category = await tx.category.create({
-          data: { eventId, name: group.name, format: 'INDIVIDUAL' },
+          data: { eventId, name: group.name, format: isPairs ? 'TEAM_PAIRS' : 'INDIVIDUAL' },
         });
         if (group.teams.length > 0) {
           await tx.team.createMany({
             data: group.teams.map(t => ({
               categoryId: category.id,
               number: t.number,
-              name: t.name,
+              name: t.rider2 ? `${t.name} / ${t.rider2}` : t.name,
               club: t.club ?? null,
+              rider1: t.rider2 ? t.name : null,
+              rider2: t.rider2 ?? null,
+              isFavorite: t.lv === 'MEV' || t.rider2Lv === 'MEV',
             })),
           });
         }
