@@ -37,6 +37,11 @@ router.get('/:id', async (req, res, next) => {
           },
           orderBy: { name: 'asc' },
         },
+        races: {
+          // neue, direkte Rennen ohne Kategorie
+          include: { _count: { select: { teams: true } } },
+          orderBy: { order: 'asc' },
+        },
       },
     });
     if (!event) { res.status(404).json({ error: 'Nicht gefunden' }); return; }
