@@ -22,7 +22,7 @@ interface TeamStanding {
 interface Race {
   id: string; name: string; type: string; status: string; finaleActive: boolean;
   format?: string|null;
-  category: { id: string; name: string; format: string; teams: Team[]; event: { id: string; name: string } };
+  category: { id: string | null; name: string; format: string; teams: Team[]; event: { id: string; name: string } };
   sprints: Sprint[]; lapEvents: LapEvent[]; omniumScores: OmniumScore[];
   flags: RaceFlag[]; scoreboard: TeamStanding[]|null;
 }
@@ -238,7 +238,7 @@ export default function RaceDetail() {
         <div className="breadcrumb">
           <Link to="/">Veranstaltungen</Link><span>›</span>
           <Link to={`/events/${category.event.id}`}>{category.event.name}</Link><span>›</span>
-          <Link to={`/categories/${category.id}`}>{category.name}</Link><span>›</span>
+          {category.id ? <><Link to={`/categories/${category.id}`}>{category.name}</Link><span>›</span></> : <><span>{category.name}</span><span>›</span></>}
           {race.name}
         </div>
         <div className="flex-between mb-4">
@@ -274,7 +274,7 @@ export default function RaceDetail() {
         <div className="breadcrumb">
           <Link to="/">Veranstaltungen</Link><span>›</span>
           <Link to={`/events/${category.event.id}`}>{category.event.name}</Link><span>›</span>
-          <Link to={`/categories/${category.id}`}>{category.name}</Link><span>›</span>
+          {category.id ? <><Link to={`/categories/${category.id}`}>{category.name}</Link><span>›</span></> : <><span>{category.name}</span><span>›</span></>}
           {race.name}
         </div>
 
@@ -561,7 +561,7 @@ export default function RaceDetail() {
       <div className="breadcrumb">
         <Link to="/">Veranstaltungen</Link><span>›</span>
         <Link to={`/events/${category.event.id}`}>{category.event.name}</Link><span>›</span>
-        <Link to={`/categories/${category.id}`}>{category.name}</Link><span>›</span>
+        {category.id ? <><Link to={`/categories/${category.id}`}>{category.name}</Link><span>›</span></> : <><span>{category.name}</span><span>›</span></>}
         {race.name}
       </div>
 
@@ -586,7 +586,10 @@ export default function RaceDetail() {
       {error && <div className="alert alert-error mb-3">{error}</div>}
 
       {/* ── Madison-Teambuilder ── */}
-      {isAdmin && showTeamBuilder && (
+      {/* Nur für Rennen mit echter Kategorie — bei neuen, direkt am Event
+          hängenden Rennen kommt die Startliste bereits fertig aus der
+          Ansetzung, kein manuelles Team-Pairing nötig. */}
+      {isAdmin && showTeamBuilder && category.id && (
         <div className="card mb-4">
           <div className="flex-between mb-3">
             <h2 style={{margin:0}}>🔀 Madison-Teams aufbauen</h2>
