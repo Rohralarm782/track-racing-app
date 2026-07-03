@@ -5,14 +5,21 @@ interface Props {
   eventId: string;
   event: Event;
   initialBase64: string;
+  suggestedAk?: string; // z.B. aus dem Kommuniqué-Dokument selbst erkannt
   onDone: () => void;
   onClose: () => void;
 }
 
-interface DetectedTeam { number: number; name: string; club?: string }
+interface DetectedTeam { number: number; name: string; club?: string | null; lv?: string | null }
 interface DetectedAK { name: string; shortName: string; teams: DetectedTeam[] }
 
 type Step = 'analyzing' | 'pick-race' | 'applying' | 'done';
+
+const RACE_KIND_OPTIONS: Array<{ key: string; label: string; type: RaceType; format: 'INDIVIDUAL' | 'TEAM_PAIRS' }> = [
+  { key: 'punktefahren', label: 'Punktefahren', type: 'PUNKTEFAHREN', format: 'INDIVIDUAL' },
+  { key: 'temporunden',  label: 'Temporunden',  type: 'TEMPORUNDEN',  format: 'INDIVIDUAL' },
+  { key: 'madison',      label: 'Madison',      type: 'PUNKTEFAHREN', format: 'TEAM_PAIRS' },
+];
 
 const RACE_TYPE_LABEL: Record<RaceType, string> = {
   PUNKTEFAHREN: 'Punktefahren',
@@ -20,13 +27,19 @@ const RACE_TYPE_LABEL: Record<RaceType, string> = {
   VERFOLGUNGSRENNEN: 'Verfolgungsrennen',
 };
 
+interface PickableRace {
+  id: string;
+  label: string; // "U17m · Punktefahren" o.ä.
+  type: RaceType;
+}
+
 /**
  * Importiert eine Renn-Ansetzung (Communiqué-PDF) und legt fest, wer in EINEM
  * bestimmten Rennen startet. Falls das Rennen noch nicht existiert, wird es
- * bei Bedarf gleich mit angelegt ("halbautomatisch") — es muss also nicht
- * vorher manuell jedes Rennen erstellt werden.
+ * gleich mit angelegt ("halbautomatisch") — die Ansetzung *ist* dann direkt
+ * die Startliste, es muss also nichts vorher manuell vorbereitet werden.
  */
-export default function AnsetzungImport({ eventId, event, initialBase64, onDone, onClose }: Props) {
+export default function AnsetzungImport({ eventId, event, initialBase64, suggestedAk, onDone, onClose }: Props) {
   const [step, setStep] = useState<Step>('analyzing');
   const [error, setError] = useState('');
   const [detectedTeams, setDetectedTeams] = useState<DetectedTeam[]>([]);
@@ -34,14 +47,30 @@ export default function AnsetzungImport({ eventId, event, initialBase64, onDone,
   // Auswahl: bestehendes Rennen ODER neues Rennen anlegen
   const [selectedRaceId, setSelectedRaceId] = useState('');
   const [creatingNew, setCreatingNew] = useState(false);
-  const [newCategoryId, setNewCategoryId] = useState('');
-  const [newRaceType, setNewRaceType] = useState<RaceType>('PUNKTEFAHREN');
+  const [newAk, setNewAk] = useState(suggestedAk ?? '');
+  const [newKind, setNewKind] = useState(RACE_KIND_OPTIONS[0].key);
   const [newRaceName, setNewRaceName] = useState('');
 
-  const [result, setResult] = useState<{ excluded: number; included: number; unmatched: number } | null>(null);
+  const [result, setResult] = useState<
+    | { mode: 'legacy'; excluded: number; included: number; unmatched: number }
+    | { mode: 'direct'; created: number; removed: number }
+    | null
+  >(null);
+
+  // Alle wählbaren Rennen: alte (mit Kategorie) + neue (direkt am Event) zusammen
+  const pickableRaces: PickableRace[] = [
+    ...event.categories.flatMap(cat =>
+      (cat.races ?? []).map(r => ({ id: r.id, label: `${cat.name} · ${r.name}`, type: r.type }))
+    ),
+    ...(event.races ?? []).map(r => ({ id: r.id, label: `${r.ak ? r.ak + ' · ' : ''}${r.name}`, type: r.type })),
+  ];
 
   useEffect(() => {
     analyze();
+    if (!newRaceName) {
+      const kind = RACE_KIND_OPTIONS.find(k => k.key === newKind);
+      if (kind) setNewRaceName(kind.label);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -54,10 +83,6 @@ export default function AnsetzungImport({ eventId, event, initialBase64, onDone,
       );
       const teams = res.ageClasses.flatMap(ak => ak.teams);
       setDetectedTeams(teams);
-      if (event.categories.length > 0 && !creatingNew) {
-        // sinnvolle Vorbelegung fürs "neues Rennen"-Formular
-        setNewCategoryId(event.categories[0].id);
-      }
       setStep('pick-race');
     } catch (e: any) {
       setError(e.message ?? 'Analyse fehlgeschlagen');
@@ -70,18 +95,19 @@ export default function AnsetzungImport({ eventId, event, initialBase64, onDone,
       let raceId = selectedRaceId;
 
       if (creatingNew) {
-        if (!newCategoryId || !newRaceName.trim()) {
-          setError('Kategorie und Name für das neue Rennen angeben.');
+        if (!newRaceName.trim()) {
+          setError('Bitte einen Namen für das neue Rennen angeben.');
           setStep('pick-race');
           return;
         }
-        const category = event.categories.find(c => c.id === newCategoryId);
+        const kind = RACE_KIND_OPTIONS.find(k => k.key === newKind)!;
         const race = await api.post<{ id: string }>('/api/races', {
-          categoryId: newCategoryId,
-          type: newRaceType,
-          format: category?.format ?? 'INDIVIDUAL',
+          eventId,
+          ak: newAk.trim() || undefined,
+          type: kind.type,
+          format: kind.format,
           name: newRaceName.trim(),
-          order: category?.races?.length ?? 0,
+          order: (event.races ?? []).length,
         });
         raceId = race.id;
       }
@@ -92,11 +118,10 @@ export default function AnsetzungImport({ eventId, event, initialBase64, onDone,
         return;
       }
 
-      const numbers = detectedTeams.map(t => t.number);
-      const res = await api.post<{ excluded: number; included: number; unmatched: number }>(
-        `/api/races/${raceId}/apply-ansetzung`,
-        { teamNumbers: numbers },
-      );
+      const res = await api.post<
+        | { mode: 'legacy'; excluded: number; included: number; unmatched: number }
+        | { mode: 'direct'; created: number; removed: number }
+      >(`/api/races/${raceId}/apply-ansetzung`, { teams: detectedTeams });
       setResult(res);
       setStep('done');
     } catch (e: any) {
@@ -133,97 +158,89 @@ export default function AnsetzungImport({ eventId, event, initialBase64, onDone,
               {detectedTeams.length} Team(s) erkannt. Für welches Rennen gilt diese Ansetzung?
             </p>
 
-            {event.categories.length === 0 ? (
-              <div className="alert alert-error">
-                Noch keine Kategorien vorhanden — importiert zuerst die Meldeliste, bevor ihr Ansetzungen zuordnen könnt.
+            {!creatingNew && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
+                {pickableRaces.map(race => (
+                  <label
+                    key={race.id}
+                    className="card"
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', cursor: 'pointer',
+                      borderColor: selectedRaceId === race.id ? 'var(--c-primary)' : 'var(--c-border)',
+                      background: selectedRaceId === race.id ? '#eff6ff' : 'var(--c-white)',
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="race-pick"
+                      checked={selectedRaceId === race.id}
+                      onChange={() => setSelectedRaceId(race.id)}
+                    />
+                    <span style={{ fontSize: 13 }}>
+                      <strong>{race.label}</strong> <span className="text-muted">({RACE_TYPE_LABEL[race.type]})</span>
+                    </span>
+                  </label>
+                ))}
+                {pickableRaces.length === 0 && (
+                  <p className="text-sm text-muted">Noch keine Rennen angelegt.</p>
+                )}
               </div>
-            ) : (
-              <>
-                {!creatingNew && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
-                    {event.categories.flatMap(cat =>
-                      (cat.races ?? []).map(race => (
-                        <label
-                          key={race.id}
-                          className="card"
-                          style={{
-                            display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', cursor: 'pointer',
-                            borderColor: selectedRaceId === race.id ? 'var(--c-primary)' : 'var(--c-border)',
-                            background: selectedRaceId === race.id ? '#eff6ff' : 'var(--c-white)',
-                          }}
-                        >
-                          <input
-                            type="radio"
-                            name="race-pick"
-                            checked={selectedRaceId === race.id}
-                            onChange={() => setSelectedRaceId(race.id)}
-                          />
-                          <span style={{ fontSize: 13 }}>
-                            <strong>{cat.name}</strong> · {race.name} ({RACE_TYPE_LABEL[race.type]})
-                          </span>
-                        </label>
-                      ))
-                    )}
-                    {event.categories.every(c => (c.races ?? []).length === 0) && (
-                      <p className="text-sm text-muted">Noch keine Rennen angelegt.</p>
-                    )}
-                  </div>
-                )}
-
-                <button
-                  className="btn btn-ghost btn-sm"
-                  style={{ paddingLeft: 0 }}
-                  onClick={() => { setCreatingNew(!creatingNew); setSelectedRaceId(''); }}
-                >
-                  {creatingNew ? '← Bestehendes Rennen wählen' : '+ Neues Rennen anlegen'}
-                </button>
-
-                {creatingNew && (
-                  <div className="card mt-2" style={{ borderColor: '#bfdbfe', background: '#f0f7ff' }}>
-                    <div className="form-group">
-                      <label className="form-label">Kategorie</label>
-                      <select
-                        className="form-select"
-                        value={newCategoryId}
-                        onChange={e => setNewCategoryId(e.target.value)}
-                      >
-                        {event.categories.map(c => (
-                          <option key={c.id} value={c.id}>{c.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="form-group">
-                      <label className="form-label">Renntyp</label>
-                      <select
-                        className="form-select"
-                        value={newRaceType}
-                        onChange={e => setNewRaceType(e.target.value as RaceType)}
-                      >
-                        <option value="PUNKTEFAHREN">Punktefahren</option>
-                        <option value="TEMPORUNDEN">Temporunden</option>
-                      </select>
-                    </div>
-                    <div className="form-group" style={{ marginBottom: 0 }}>
-                      <label className="form-label">Name</label>
-                      <input
-                        className="form-input"
-                        value={newRaceName}
-                        onChange={e => setNewRaceName(e.target.value)}
-                        placeholder="z.B. Punktefahren Finale"
-                      />
-                    </div>
-                  </div>
-                )}
-
-                <button
-                  className="btn btn-primary btn-block mt-3"
-                  onClick={apply}
-                  disabled={step === 'applying' || (!creatingNew && !selectedRaceId) || (creatingNew && !newRaceName.trim())}
-                >
-                  {step === 'applying' ? 'Wende an…' : 'Ansetzung anwenden'}
-                </button>
-              </>
             )}
+
+            <button
+              className="btn btn-ghost btn-sm"
+              style={{ paddingLeft: 0 }}
+              onClick={() => { setCreatingNew(!creatingNew); setSelectedRaceId(''); }}
+            >
+              {creatingNew ? '← Bestehendes Rennen wählen' : '+ Neues Rennen anlegen'}
+            </button>
+
+            {creatingNew && (
+              <div className="card mt-2" style={{ borderColor: '#bfdbfe', background: '#f0f7ff' }}>
+                <div className="form-group">
+                  <label className="form-label">Altersklasse <span className="text-muted text-sm">(nur Tag, zum Suchen/Filtern)</span></label>
+                  <input
+                    className="form-input"
+                    value={newAk}
+                    onChange={e => setNewAk(e.target.value)}
+                    placeholder="z.B. U17m"
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Renntyp</label>
+                  <select
+                    className="form-select"
+                    value={newKind}
+                    onChange={e => {
+                      setNewKind(e.target.value);
+                      const kind = RACE_KIND_OPTIONS.find(k => k.key === e.target.value);
+                      if (kind) setNewRaceName(kind.label);
+                    }}
+                  >
+                    {RACE_KIND_OPTIONS.map(k => (
+                      <option key={k.key} value={k.key}>{k.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label">Name</label>
+                  <input
+                    className="form-input"
+                    value={newRaceName}
+                    onChange={e => setNewRaceName(e.target.value)}
+                    placeholder="z.B. Punktefahren Finale"
+                  />
+                </div>
+              </div>
+            )}
+
+            <button
+              className="btn btn-primary btn-block mt-3"
+              onClick={apply}
+              disabled={step === 'applying' || (!creatingNew && !selectedRaceId) || (creatingNew && !newRaceName.trim())}
+            >
+              {step === 'applying' ? 'Wende an…' : 'Ansetzung anwenden'}
+            </button>
           </>
         )}
 
@@ -231,8 +248,11 @@ export default function AnsetzungImport({ eventId, event, initialBase64, onDone,
           <div style={{ textAlign: 'center', padding: '20px 0' }}>
             <p style={{ fontSize: 15, fontWeight: 600, marginBottom: 6 }}>✅ Ansetzung angewendet</p>
             <p className="text-sm text-muted" style={{ marginBottom: 20 }}>
-              {result.included} Team(s) starten · {result.excluded} für dieses Rennen ausgeblendet
-              {result.unmatched > 0 && ` · ${result.unmatched} Startnummer(n) nicht zugeordnet`}
+              {result.mode === 'legacy'
+                ? <>{result.included} Team(s) starten · {result.excluded} für dieses Rennen ausgeblendet
+                    {result.unmatched > 0 && ` · ${result.unmatched} Startnummer(n) nicht zugeordnet`}</>
+                : <>{result.created} Team(s) in der Startliste{result.removed > 0 && ` · ${result.removed} entfernt (Korrektur)`}</>
+              }
             </p>
             <button className="btn btn-primary btn-block" onClick={onDone}>Fertig</button>
           </div>
