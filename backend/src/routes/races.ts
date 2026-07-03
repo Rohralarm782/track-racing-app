@@ -28,6 +28,8 @@ router.get('/:id', async (req, res, next) => {
             event: { select: { id: true, name: true } },
           },
         },
+        event: { select: { id: true, name: true } },
+        teams: { orderBy: { number: 'asc' } },
         sprints: {
           orderBy: { number: 'asc' },
           include: { results: { orderBy: { position: 'asc' }, include: { team: true } } },
@@ -39,10 +41,28 @@ router.get('/:id', async (req, res, next) => {
     });
     if (!race) { res.status(404).json({ error: 'Nicht gefunden' }); return; }
 
-    // Teams mit DNS-Flag ("startet nicht") aus diesem einen Rennen ausblenden —
-    // bleiben aber ganz normal Teil der Kategorie für alle anderen Rennen.
-    const dnsIds = new Set(race.flags.filter(f => f.type === 'DNS').map(f => f.teamId));
-    const activeTeams = race.category.teams.filter(t => !dnsIds.has(t.id));
+    const isLegacy = race.categoryId !== null;
+
+    let activeTeams;
+    let dnsTeams: typeof race.teams = [];
+    let categoryPayload: any;
+
+    if (isLegacy) {
+      // Alt: Teams gehören der Kategorie, DNS-Flag blendet einzelne Teams für
+      // dieses eine Rennen aus (bleiben Teil der Kategorie für andere Rennen).
+      const dnsIds = new Set(race.flags.filter(f => f.type === 'DNS').map(f => f.teamId));
+      activeTeams = race.category!.teams.filter(t => !dnsIds.has(t.id));
+      dnsTeams = race.category!.teams.filter(t => dnsIds.has(t.id));
+      categoryPayload = { ...race.category, teams: activeTeams };
+    } else {
+      // Neu: Teams gehören direkt zum Rennen — keine Kategorie, kein DNS nötig,
+      // die Ansetzung *ist* schon die Startliste.
+      activeTeams = race.teams;
+      categoryPayload = {
+        id: null, name: race.ak ?? race.name, format: race.format ?? 'INDIVIDUAL',
+        teams: activeTeams, event: race.event,
+      };
+    }
 
     const scoreboard = race.type === 'PUNKTEFAHREN'
       ? computePunktefahren(activeTeams, race.sprints, race.lapEvents, race.omniumScores, race.flags)
@@ -52,19 +72,23 @@ router.get('/:id', async (req, res, next) => {
 
     res.json({
       ...race,
-      category: { ...race.category, teams: activeTeams },
-      dnsTeams: race.category.teams.filter(t => dnsIds.has(t.id)),
+      category: categoryPayload,
+      dnsTeams,
       scoreboard,
     });
   } catch (e) { next(e); }
 });
 
 const CreateRaceSchema = z.object({
-  categoryId: z.string(),
+  categoryId: z.string().optional(),
+  eventId: z.string().optional(),
+  ak: z.string().optional(),
   type: z.enum(['PUNKTEFAHREN', 'TEMPORUNDEN', 'VERFOLGUNGSRENNEN']),
   format: z.enum(['INDIVIDUAL', 'TEAM_PAIRS']).optional(),
   name: z.string().min(1),
   order: z.number().int().default(0),
+}).refine(d => !!d.categoryId || !!d.eventId, {
+  message: 'categoryId oder eventId muss angegeben sein',
 });
 
 router.post('/', requireAdmin, async (req, res, next) => {
@@ -306,41 +330,76 @@ router.post('/:id/flags', requireAdmin, async (req, res, next) => {
 });
 
 // POST /api/races/:id/apply-ansetzung — setzt anhand einer per KI erkannten
-// Renn-Ansetzung (Communiqué), welche Teams (per Startnummer) in DIESEM Rennen
-// starten. Teams der Kategorie, die nicht in der Liste stehen, bekommen ein
-// DNS-Flag für dieses Rennen; zuvor gesetzte DNS-Flags von Teams, die jetzt
-// wieder in der Liste stehen, werden entfernt (z.B. bei Korrektur-Ansetzung).
+// Renn-Ansetzung (Communiqué), wer in DIESEM Rennen startet.
+// - Altes Modell (Rennen hat Kategorie): Teams der Kategorie, die nicht in
+//   der Liste stehen, bekommen ein DNS-Flag für dieses Rennen (bleiben Teil
+//   der Kategorie für andere Rennen). Bereits gesetzte DNS-Flags von Teams,
+//   die jetzt wieder in der Liste stehen, werden entfernt.
+// - Neues Modell (Rennen ohne Kategorie): Die Ansetzung *ist* die Startliste —
+//   Teams werden direkt am Rennen angelegt (upsert per Startnummer), MEV
+//   automatisch als Favorit markiert. Kein DNS nötig.
 router.post('/:id/apply-ansetzung', requireAdmin, async (req, res, next) => {
   try {
-    const { teamNumbers } = req.body as { teamNumbers: number[] };
-    if (!Array.isArray(teamNumbers)) { res.status(400).json({ error: 'teamNumbers fehlt' }); return; }
+    const { teams } = req.body as {
+      teams: Array<{ number: number; name: string; club?: string | null; lv?: string | null }>;
+    };
+    if (!Array.isArray(teams)) { res.status(400).json({ error: 'teams fehlt' }); return; }
 
     const race = await prisma.race.findUnique({
       where: { id: req.params.id },
-      include: { category: { include: { teams: true } } },
+      include: { category: { include: { teams: true } }, teams: true },
     });
     if (!race) { res.status(404).json({ error: 'Rennen nicht gefunden' }); return; }
 
-    const startingNumbers = new Set(teamNumbers);
-    const toExclude = race.category.teams.filter(t => !startingNumbers.has(t.number));
-    const toInclude = race.category.teams.filter(t => startingNumbers.has(t.number));
+    if (race.categoryId) {
+      // ── Altes Modell: DNS-Flags gegen die bestehende Kategorie-Startliste ──
+      const startingNumbers = new Set(teams.map(t => t.number));
+      const toExclude = race.category!.teams.filter(t => !startingNumbers.has(t.number));
+      const toInclude = race.category!.teams.filter(t => startingNumbers.has(t.number));
 
-    await prisma.$transaction([
-      ...toExclude.map(t => prisma.raceFlag.upsert({
-        where: { raceId_teamId_type: { raceId: race.id, teamId: t.id, type: 'DNS' } },
-        create: { raceId: race.id, teamId: t.id, type: 'DNS' },
-        update: {},
-      })),
-      ...toInclude.map(t => prisma.raceFlag.deleteMany({
-        where: { raceId: race.id, teamId: t.id, type: 'DNS' },
-      })),
-    ]);
+      await prisma.$transaction([
+        ...toExclude.map(t => prisma.raceFlag.upsert({
+          where: { raceId_teamId_type: { raceId: race.id, teamId: t.id, type: 'DNS' } },
+          create: { raceId: race.id, teamId: t.id, type: 'DNS' },
+          update: {},
+        })),
+        ...toInclude.map(t => prisma.raceFlag.deleteMany({
+          where: { raceId: race.id, teamId: t.id, type: 'DNS' },
+        })),
+      ]);
 
-    res.json({
-      excluded: toExclude.length,
-      included: toInclude.length,
-      unmatched: teamNumbers.length - toInclude.length,
-    });
+      res.json({
+        mode: 'legacy',
+        excluded: toExclude.length,
+        included: toInclude.length,
+        unmatched: teams.length - toInclude.length,
+      });
+      return;
+    }
+
+    // ── Neues Modell: Teams direkt am Rennen anlegen/aktualisieren ──
+    const upserted = await prisma.$transaction(
+      teams.map(t => prisma.team.upsert({
+        where: { raceId_number: { raceId: race.id, number: t.number } },
+        create: {
+          raceId: race.id, number: t.number, name: t.name,
+          club: t.club ?? null, isFavorite: t.lv === 'MEV',
+        },
+        update: {
+          name: t.name, club: t.club ?? null, isFavorite: t.lv === 'MEV',
+        },
+      }))
+    );
+
+    // Teams, die vorher am Rennen hingen, aber jetzt nicht mehr in der
+    // Ansetzung stehen, entfernen (Korrektur-Ansetzung).
+    const keepIds = new Set(upserted.map(t => t.id));
+    const toRemove = race.teams.filter(t => !keepIds.has(t.id));
+    if (toRemove.length > 0) {
+      await prisma.team.deleteMany({ where: { id: { in: toRemove.map(t => t.id) } } });
+    }
+
+    res.json({ mode: 'direct', created: upserted.length, removed: toRemove.length });
   } catch (e) { next(e); }
 });
 
