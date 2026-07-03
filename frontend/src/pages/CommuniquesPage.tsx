@@ -78,6 +78,7 @@ export default function CommuniquesPage() {
   const [catFilter, setCatFilter]     = useState('alle');
   const [selectedAKs, setSelectedAKs] = useState<Set<string>>(new Set(['Alle']));
   const [selectedDisciplines, setSelectedDisciplines] = useState<Set<string>>(new Set(['Alle']));
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Push
   const [pushSupported, setPushSupported]   = useState(true);
@@ -354,6 +355,7 @@ export default function CommuniquesPage() {
     .filter(d => catFilter === 'alle' || d.docType === catFilter)
     .filter(d => selectedAKs.has('Alle') || d.ak === 'Alle' || selectedAKs.has(d.ak))
     .filter(d => selectedDisciplines.has('Alle') || d.discipline === 'ALLGEMEIN' || selectedDisciplines.has(d.discipline))
+    .filter(d => !searchQuery.trim() || d.fileName.toLowerCase().includes(searchQuery.trim().toLowerCase()))
     .sort((a, b) => {
       const pinDiff = (b.isPinned ? 1 : 0) - (a.isPinned ? 1 : 0);
       if (pinDiff !== 0) return pinDiff; // Angeheftete immer zuerst
@@ -439,6 +441,31 @@ export default function CommuniquesPage() {
           {!pushSupported && (
             <div className="alert alert-info">Push wird von diesem Browser nicht unterstützt.</div>
           )}
+
+          {/* Suche */}
+          <div style={{ position: 'relative', marginBottom: 14 }}>
+            <input
+              type="text"
+              className="form-input"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder="🔍 Dateiname durchsuchen…"
+              style={{ paddingRight: searchQuery ? 34 : 12 }}
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                title="Suche löschen"
+                style={{
+                  position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)',
+                  border: 'none', background: 'transparent', cursor: 'pointer',
+                  color: 'var(--c-text-muted)', fontSize: 15, padding: 4, lineHeight: 1,
+                }}
+              >
+                ✕
+              </button>
+            )}
+          </div>
 
           {/* Dokumenttyp-Filter */}
           <div className="text-xs text-muted" style={{ margin: '0 2px 6px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
