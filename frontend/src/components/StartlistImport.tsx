@@ -2,7 +2,10 @@ import { useRef, useState } from 'react';
 import { api } from '../api/client';
 
 // ── Typen ──────────────────────────────────────────────────────────────────────
-interface AKTeam { number: number; name: string; club: string | null; }
+interface AKTeam {
+  number: number; name: string; club: string | null; lv?: string | null;
+  rider2?: string | null; rider2Club?: string | null; rider2Lv?: string | null;
+}
 interface DetectedAK { name: string; shortName: string; teams: AKTeam[]; }
 
 interface Group {
@@ -296,8 +299,16 @@ export default function StartlistImport({ eventId, onDone, onClose }: Props) {
                           </span>
                         )}
                         <span className="text-xs text-muted">
-                          {g.teams.length} Starter
+                          {g.teams.length} {g.teams.some(t => t.rider2) ? 'Team(s)' : 'Starter'}
                         </span>
+                        {g.teams.some(t => t.rider2) && (
+                          <span className="badge badge-blue" style={{ fontSize: 10 }}>👥 Paare</span>
+                        )}
+                        {g.teams.some(t => t.lv === 'MEV' || t.rider2Lv === 'MEV') && (
+                          <span className="badge badge-green" style={{ fontSize: 10 }}>
+                            ⭐ {g.teams.filter(t => t.lv === 'MEV' || t.rider2Lv === 'MEV').length} MEV
+                          </span>
+                        )}
                       </div>
                       <input
                         className="form-input"
