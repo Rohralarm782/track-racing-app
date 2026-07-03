@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import PdfViewer from '../components/PdfViewer';
 import EventTabBar from '../components/EventTabBar';
 import AnsetzungImport from '../components/AnsetzungImport';
+import OmniumImport from '../components/OmniumImport';
 import { useAdmin } from '../components/Layout';
 import {
   api, communiquesApi,
@@ -68,6 +69,8 @@ export default function CommuniquesPage() {
   const [loading, setLoading] = useState(true);
   const [ansetzungBase64, setAnsetzungBase64] = useState<string | null>(null);
   const [ansetzungBusy, setAnsetzungBusy] = useState(false);
+  const [omniumBase64, setOmniumBase64] = useState<string | null>(null);
+  const [omniumBusy, setOmniumBusy] = useState(false);
   const [error, setError]     = useState('');
 
   // Setup
@@ -342,6 +345,27 @@ export default function CommuniquesPage() {
       setError(e.message ?? 'Import fehlgeschlagen');
     } finally {
       setAnsetzungBusy(false);
+    }
+  }
+
+  async function startOmniumImport(doc: CommuniqueDocumentT) {
+    if (!eventId) return;
+    setOmniumBusy(true); setError('');
+    try {
+      const res = await fetch(communiquesApi.fileUrl(eventId, doc.id));
+      if (!res.ok) throw new Error('PDF konnte nicht geladen werden');
+      const blob = await res.blob();
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const r = new FileReader();
+        r.onload  = () => resolve((r.result as string).split(',')[1]);
+        r.onerror = () => reject(new Error('Lesen fehlgeschlagen'));
+        r.readAsDataURL(blob);
+      });
+      setOmniumBase64(base64);
+    } catch (e: any) {
+      setError(e.message ?? 'Import fehlgeschlagen');
+    } finally {
+      setOmniumBusy(false);
     }
   }
 
@@ -701,6 +725,16 @@ export default function CommuniquesPage() {
                   {ansetzungBusy ? 'Lädt…' : '🏁 Ansetzung importieren'}
                 </button>
               )}
+              {isAdmin && (
+                <button
+                  onClick={() => startOmniumImport(viewingDoc)}
+                  className="btn btn-secondary btn-sm"
+                  disabled={omniumBusy}
+                  style={{ fontSize: 12 }}
+                >
+                  {omniumBusy ? 'Lädt…' : '📊 Vorpunkte importieren'}
+                </button>
+              )}
               <button
                 onClick={() => setViewingDoc(null)}
                 className="btn btn-ghost btn-sm"
@@ -725,6 +759,16 @@ export default function CommuniquesPage() {
         suggestedAk={viewingDoc?.ak}
         onDone={() => { setAnsetzungBase64(null); setViewingDoc(null); load(); }}
         onClose={() => setAnsetzungBase64(null)}
+      />
+    )}
+
+    {omniumBase64 && eventId && event && (
+      <OmniumImport
+        eventId={eventId}
+        event={event}
+        initialBase64={omniumBase64}
+        onDone={() => { setOmniumBase64(null); setViewingDoc(null); load(); }}
+        onClose={() => setOmniumBase64(null)}
       />
     )}
     </>
