@@ -5,7 +5,7 @@ import { useAdmin } from '../components/Layout';
 import VerfolgungsplanungView, { PlanSaveData } from '../components/VerfolgungsplanungView';
 import MadisonTeamBuilder from '../components/MadisonTeamBuilder';
 
-interface Team { id: string; number: number; name: string; club?: string|null; lv?: string|null; rider2Lv?: string|null; rider1?: string|null; rider2?: string|null; isFavorite?: boolean; }
+interface Team { id: string; number: number; name: string; club?: string|null; lv?: string|null; rider2Lv?: string|null; rider1?: string|null; rider2?: string|null; color?: string|null; isFavorite?: boolean; }
 interface SprintResult { id: string; position: number; team: Team; }
 interface Sprint { id: string; number: number; isFinale: boolean; results: SprintResult[]; }
 interface LapEvent { id: string; delta: number; createdAt: string; team: Team; }
@@ -74,6 +74,15 @@ export default function RaceDetail() {
     try {
       await api.patch(`/api/teams/${editingTeamId}`, { name: editName.trim(), color: editColor });
       setEditingTeamId(null);
+      await fetchRace();
+    } catch (e: any) {
+      setError(e.message ?? 'Speichern fehlgeschlagen');
+    }
+  }
+
+  async function toggleFavorite(teamId: string) {
+    try {
+      await api.patch(`/api/teams/${teamId}/favorite`, {});
       await fetchRace();
     } catch (e: any) {
       setError(e.message ?? 'Speichern fehlgeschlagen');
@@ -404,7 +413,7 @@ export default function RaceDetail() {
                 {teams.map(team=>{
                   const used=usedIds.has(team.id)&&slots[activeSlot]?.teamId!==team.id;
                   const sel=slots[activeSlot]?.teamId===team.id;
-                  return(<button key={team.id} type="button" onClick={()=>!used&&selectTeam(team)} style={{padding:'8px 4px',borderRadius:7,cursor:used?'not-allowed':'pointer',textAlign:'center',border:sel?'2px solid var(--c-primary)':'1px solid var(--c-border)',background:used?'#f3f4f6':sel?'#dbeafe':'var(--c-white)',opacity:used?0.4:1}}>
+                  return(<button key={team.id} type="button" onClick={()=>!used&&selectTeam(team)} style={{padding:'8px 4px',borderRadius:7,cursor:used?'not-allowed':'pointer',textAlign:'center',border:sel?'2px solid var(--c-primary)':'1px solid var(--c-border)',borderTop:team.color?`3px solid ${team.color}`:undefined,background:used?'#f3f4f6':sel?'#dbeafe':'var(--c-white)',opacity:used?0.4:1}}>
                     <div style={{fontWeight:700,fontSize:16}}>{team.number}</div>
                     <div style={{fontSize:10,color:'var(--c-text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{team.name}</div>
                   </button>);
@@ -475,7 +484,10 @@ export default function RaceDetail() {
                         <td className="num" style={{fontWeight:600}}>{s.teamNumber}</td>
                         <td>
                           <div style={{display:'flex',alignItems:'center',gap:4}}>
-                            {s.isFavorite&&<span>⭐</span>}
+                            {isAdmin
+                            ? <button type="button" onClick={e=>{e.stopPropagation();toggleFavorite(s.teamId);}} title={s.isFavorite?'Nicht mehr markieren':'Als interessant markieren'} style={{background:'none',border:'none',cursor:'pointer',padding:0,fontSize:14,opacity:s.isFavorite?1:0.25}}>⭐</button>
+                            : s.isFavorite&&<span>⭐</span>
+                          }
                             {s.isWarned&&<span title="Verwarnung" style={{color:'var(--c-warning)'}}>⚠</span>}
                             {s.isDsq&&<span title="Disqualifiziert" style={{color:'var(--c-danger)'}}>⛔</span>}
                             <span style={{fontWeight:500}}>{s.teamName}</span>
@@ -728,7 +740,7 @@ export default function RaceDetail() {
                 {teams.map(team=>{
                   const used=usedIds.has(team.id)&&slots[activeSlot]?.teamId!==team.id;
                   const sel=slots[activeSlot]?.teamId===team.id;
-                  return(<button key={team.id} type="button" onClick={()=>!used&&selectTeam(team)} style={{padding:'8px 4px',borderRadius:7,cursor:used?'not-allowed':'pointer',textAlign:'center',border:sel?'2px solid var(--c-primary)':'1px solid var(--c-border)',background:used?'#f3f4f6':sel?'#dbeafe':'var(--c-white)',opacity:used?0.4:1}}>
+                  return(<button key={team.id} type="button" onClick={()=>!used&&selectTeam(team)} style={{padding:'8px 4px',borderRadius:7,cursor:used?'not-allowed':'pointer',textAlign:'center',border:sel?'2px solid var(--c-primary)':'1px solid var(--c-border)',borderTop:team.color?`3px solid ${team.color}`:undefined,background:used?'#f3f4f6':sel?'#dbeafe':'var(--c-white)',opacity:used?0.4:1}}>
                     <div style={{fontWeight:700,fontSize:16}}>{team.number}</div>
                     <div style={{fontSize:10,color:'var(--c-text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{team.name}</div>
                   </button>);
@@ -865,7 +877,10 @@ export default function RaceDetail() {
                         ) : (
                           <>
                             <div style={{display:'flex',alignItems:'center',gap:4}}>
-                              {s.isFavorite&&<span>⭐</span>}
+                              {isAdmin
+                            ? <button type="button" onClick={e=>{e.stopPropagation();toggleFavorite(s.teamId);}} title={s.isFavorite?'Nicht mehr markieren':'Als interessant markieren'} style={{background:'none',border:'none',cursor:'pointer',padding:0,fontSize:14,opacity:s.isFavorite?1:0.25}}>⭐</button>
+                            : s.isFavorite&&<span>⭐</span>
+                          }
                               {s.isWarned&&<span title="Verwarnung" style={{color:'var(--c-warning)'}}>⚠</span>}
                               {s.isDsq&&<span title="Disqualifiziert" style={{color:'var(--c-danger)'}}>⛔</span>}
                               {s.color&&<span style={{width:11,height:11,borderRadius:3,background:s.color,flexShrink:0}} />}
