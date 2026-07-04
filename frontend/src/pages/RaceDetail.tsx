@@ -413,7 +413,7 @@ export default function RaceDetail() {
                 {teams.map(team=>{
                   const used=usedIds.has(team.id)&&slots[activeSlot]?.teamId!==team.id;
                   const sel=slots[activeSlot]?.teamId===team.id;
-                  return(<button key={team.id} type="button" onClick={()=>!used&&selectTeam(team)} style={{padding:'8px 4px',borderRadius:7,cursor:used?'not-allowed':'pointer',textAlign:'center',border:sel?'2px solid var(--c-primary)':'1px solid var(--c-border)',borderTop:team.color?`3px solid ${team.color}`:undefined,background:used?'#f3f4f6':sel?'#dbeafe':'var(--c-white)',opacity:used?0.4:1}}>
+                  return(<button key={team.id} type="button" onClick={()=>!used&&selectTeam(team)} style={{padding:'8px 4px',borderRadius:7,cursor:used?'not-allowed':'pointer',textAlign:'center',border:sel?'2px solid var(--c-primary)':team.color?`1px solid ${team.color}80`:'1px solid var(--c-border)',background:used?'#f3f4f6':sel?'#dbeafe':team.color?`${team.color}20`:'var(--c-white)',opacity:used?0.4:1}}>
                     <div style={{fontWeight:700,fontSize:16}}>{team.number}</div>
                     <div style={{fontSize:10,color:'var(--c-text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{team.name}</div>
                   </button>);
@@ -477,7 +477,7 @@ export default function RaceDetail() {
                 </thead>
                 <tbody>
                   {race.scoreboard.map((s,idx)=>{
-                    const rowStyle: React.CSSProperties = s.isDsq?{opacity:0.5,textDecoration:'line-through'}:s.isFavorite?{background:'#fffbeb'}:{};
+                    const rowStyle: React.CSSProperties = s.isDsq?{opacity:0.5,textDecoration:'line-through'}:s.color?{background:`${s.color}18`}:s.isFavorite?{background:'#fffbeb'}:{};
                     return(
                       <tr key={s.teamId} style={rowStyle}>
                         <td style={{color:'var(--c-text-muted)',fontSize:12}}>{s.isDsq?'':idx+1}</td>
@@ -740,7 +740,7 @@ export default function RaceDetail() {
                 {teams.map(team=>{
                   const used=usedIds.has(team.id)&&slots[activeSlot]?.teamId!==team.id;
                   const sel=slots[activeSlot]?.teamId===team.id;
-                  return(<button key={team.id} type="button" onClick={()=>!used&&selectTeam(team)} style={{padding:'8px 4px',borderRadius:7,cursor:used?'not-allowed':'pointer',textAlign:'center',border:sel?'2px solid var(--c-primary)':'1px solid var(--c-border)',borderTop:team.color?`3px solid ${team.color}`:undefined,background:used?'#f3f4f6':sel?'#dbeafe':'var(--c-white)',opacity:used?0.4:1}}>
+                  return(<button key={team.id} type="button" onClick={()=>!used&&selectTeam(team)} style={{padding:'8px 4px',borderRadius:7,cursor:used?'not-allowed':'pointer',textAlign:'center',border:sel?'2px solid var(--c-primary)':team.color?`1px solid ${team.color}80`:'1px solid var(--c-border)',background:used?'#f3f4f6':sel?'#dbeafe':team.color?`${team.color}20`:'var(--c-white)',opacity:used?0.4:1}}>
                     <div style={{fontWeight:700,fontSize:16}}>{team.number}</div>
                     <div style={{fontSize:10,color:'var(--c-text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{team.name}</div>
                   </button>);
@@ -857,7 +857,7 @@ export default function RaceDetail() {
               </thead>
               <tbody>
                 {race.scoreboard.map((s,idx)=>{
-                  const rowStyle: React.CSSProperties = s.isDsq?{opacity:0.5,textDecoration:'line-through'}:s.isFavorite?{background:'#fffbeb'}:{};
+                  const rowStyle: React.CSSProperties = s.isDsq?{opacity:0.5,textDecoration:'line-through'}:s.color?{background:`${s.color}18`}:s.isFavorite?{background:'#fffbeb'}:{};
                   return(
                     <tr key={s.teamId} style={rowStyle}>
                       <td style={{color:'var(--c-text-muted)',fontSize:12}}>{s.isDsq?'':idx+1}</td>
