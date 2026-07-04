@@ -122,6 +122,9 @@ Regeln:
 - name: "Vorname Nachname" (NICHT "Nachname, Vorname" — kein Komma!)
 - club: Vereinsname aus der Vereinsspalte, null wenn nicht vorhanden
 - lv: Landesverband-Kürzel aus der "LV"-Spalte (z.B. "MEV", "BRA", "NRW"), null wenn nicht vorhanden
+- points: Falls das Dokument eine Punkte-/Wertungsspalte enthält (z.B. Omnium-Zwischenstand,
+  Gesamtpunkte, Punktestand vor einem Rennen), die Gesamtpunktzahl als Ganzzahl angeben.
+  Sonst points weglassen (nicht 0 raten, wenn keine Spalte vorhanden ist).
 
 WICHTIG — Team-Paare (z.B. Madison/Zweier-Mannschaftsfahren):
 Manche Startlisten haben eine Team-Nummer-Spalte (oft "Nr."), die über GENAU ZWEI Zeilen
