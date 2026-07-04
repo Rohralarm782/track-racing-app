@@ -3,7 +3,8 @@ const LAP_POINTS = 20;
 
 export interface TeamStanding {
   teamId: string; teamNumber: number; teamName: string;
-  club?: string | null; rider1?: string | null; rider2?: string | null;
+  club?: string | null; lv?: string | null; rider2Lv?: string | null;
+  rider1?: string | null; rider2?: string | null;
   isFavorite?: boolean; isDsq?: boolean; isWarned?: boolean;
   total: number; sprintPoints: number; lapPoints: number; omniumPoints: number;
   wins: number; seconds: number; thirds: number; fourths: number;
@@ -12,7 +13,8 @@ export interface TeamStanding {
 
 interface Team {
   id: string; number: number; name: string;
-  club?: string | null; isFavorite?: boolean;
+  club?: string | null; lv?: string | null; rider2Lv?: string | null;
+  isFavorite?: boolean;
   rider1?: string | null; rider2?: string | null;
 }
 interface SprintResult { teamId: string; position: number; }
@@ -29,7 +31,8 @@ function baseMap(teams: Team[], flags: Flag[], omniumMap: Map<string, number>) {
     const omniumPoints = omniumMap.get(team.id) ?? 0;
     map.set(team.id, {
       teamId: team.id, teamNumber: team.number, teamName: team.name,
-      club: team.club ?? null, rider1: team.rider1, rider2: team.rider2,
+      club: team.club ?? null, lv: team.lv ?? null, rider2Lv: team.rider2Lv ?? null,
+      rider1: team.rider1, rider2: team.rider2,
       isFavorite: team.isFavorite ?? false,
       isDsq: dsqIds.has(team.id), isWarned: warnIds.has(team.id),
       total: 0, sprintPoints: 0,
