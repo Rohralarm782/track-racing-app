@@ -47,6 +47,7 @@ export default function AnsetzungImport({ eventId, event, initialBase64, suggest
   const [step, setStep] = useState<Step>('analyzing');
   const [error, setError] = useState('');
   const [detectedTeams, setDetectedTeams] = useState<DetectedTeam[]>([]);
+  const [detectedPlannedSprints, setDetectedPlannedSprints] = useState<number | null>(null);
 
   // Auswahl: bestehendes Rennen ODER neues Rennen anlegen
   const [selectedRaceId, setSelectedRaceId] = useState('');
@@ -81,12 +82,13 @@ export default function AnsetzungImport({ eventId, event, initialBase64, suggest
   async function analyze() {
     setStep('analyzing'); setError('');
     try {
-      const res = await api.post<{ ageClasses: DetectedAK[] }>(
+      const res = await api.post<{ ageClasses: DetectedAK[]; plannedSprints?: number | null }>(
         `/api/events/${eventId}/analyze-startlist`,
         { pdfBase64: initialBase64 },
       );
       const teams = res.ageClasses.flatMap(ak => ak.teams);
       setDetectedTeams(teams);
+      setDetectedPlannedSprints(res.plannedSprints ?? null);
       setStep('pick-race');
     } catch (e: any) {
       setError(e.message ?? 'Analyse fehlgeschlagen');
@@ -125,7 +127,7 @@ export default function AnsetzungImport({ eventId, event, initialBase64, suggest
       const res = await api.post<
         | { mode: 'legacy'; excluded: number; included: number; unmatched: number; pointsImported: number }
         | { mode: 'direct'; created: number; removed: number; pointsImported: number }
-      >(`/api/races/${raceId}/apply-ansetzung`, { teams: detectedTeams });
+      >(`/api/races/${raceId}/apply-ansetzung`, { teams: detectedTeams, plannedSprints: detectedPlannedSprints });
       setResult(res);
       setStep('done');
     } catch (e: any) {
@@ -159,7 +161,8 @@ export default function AnsetzungImport({ eventId, event, initialBase64, suggest
         {(step === 'pick-race' || step === 'applying') && (
           <>
             <p className="text-sm text-muted" style={{ marginTop: 0 }}>
-              {detectedTeams.length} Team(s) erkannt. Für welches Rennen gilt diese Ansetzung?
+              {detectedTeams.length} Team(s) erkannt
+              {detectedPlannedSprints != null && ` · ${detectedPlannedSprints} Wertungen geplant`}. Für welches Rennen gilt diese Ansetzung?
             </p>
 
             {!creatingNew && (
