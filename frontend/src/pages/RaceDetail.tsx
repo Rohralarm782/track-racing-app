@@ -5,7 +5,7 @@ import { useAdmin } from '../components/Layout';
 import VerfolgungsplanungView, { PlanSaveData } from '../components/VerfolgungsplanungView';
 import MadisonTeamBuilder from '../components/MadisonTeamBuilder';
 
-interface Team { id: string; number: number; name: string; club?: string|null; rider1?: string|null; rider2?: string|null; isFavorite?: boolean; }
+interface Team { id: string; number: number; name: string; club?: string|null; lv?: string|null; rider2Lv?: string|null; rider1?: string|null; rider2?: string|null; isFavorite?: boolean; }
 interface SprintResult { id: string; position: number; team: Team; }
 interface Sprint { id: string; number: number; isFinale: boolean; results: SprintResult[]; }
 interface LapEvent { id: string; delta: number; createdAt: string; team: Team; }
@@ -13,7 +13,8 @@ interface OmniumScore { id: string; points: number; team: Team; }
 interface RaceFlag { id: string; teamId: string; type: 'DSQ'|'WARNING'; }
 interface TeamStanding {
   teamId: string; teamNumber: number; teamName: string;
-  club?: string|null; rider1?: string|null; rider2?: string|null;
+  club?: string|null; lv?: string|null; rider2Lv?: string|null;
+  rider1?: string|null; rider2?: string|null;
   isFavorite?: boolean; isDsq?: boolean; isWarned?: boolean;
   total: number; sprintPoints: number; lapPoints: number; omniumPoints: number;
   wins: number; seconds: number; thirds: number; fourths: number;
@@ -22,6 +23,7 @@ interface TeamStanding {
 interface Race {
   id: string; name: string; type: string; status: string; finaleActive: boolean;
   format?: string|null;
+  plannedSprints?: number|null;
   category: { id: string | null; name: string; format: string; teams: Team[]; event: { id: string; name: string } };
   sprints: Sprint[]; lapEvents: LapEvent[]; omniumScores: OmniumScore[];
   flags: RaceFlag[]; scoreboard: TeamStanding[]|null;
@@ -445,7 +447,10 @@ export default function RaceDetail() {
                             {s.isDsq&&<span title="Disqualifiziert" style={{color:'var(--c-danger)'}}>⛔</span>}
                             <span style={{fontWeight:500}}>{s.teamName}</span>
                           </div>
-                          {s.club&&<div style={{fontSize:11,color:'var(--c-text-muted)'}}>{s.club}</div>}
+                          {displayFormat==='TEAM_PAIRS'
+                            ? (s.lv||s.rider2Lv)&&<div style={{fontSize:11,color:'var(--c-text-muted)'}}>{s.lv&&s.lv===s.rider2Lv?s.lv:[s.lv,s.rider2Lv].filter(Boolean).join(' / ')}</div>
+                            : s.club&&<div style={{fontSize:11,color:'var(--c-text-muted)'}}>{s.club}</div>
+                          }
                         </td>
                         <td style={{textAlign:'center',fontWeight:600,color:s.wins>0?'var(--c-success)':''}}>{s.wins||''}</td>
                         {schlusswertung&&<td style={{textAlign:'center',fontSize:12,color:'var(--c-text-muted)'}}>{s.finalePosition??''}</td>}
@@ -588,7 +593,10 @@ export default function RaceDetail() {
       <div className="flex-between mb-4">
         <div>
           <h1>{race.name}</h1>
-          <p className="text-sm text-muted" style={{margin:'2px 0 0'}}>{category.name} · {race.sprints.length} Sprints</p>
+          <p className="text-sm text-muted" style={{margin:'2px 0 0'}}>
+            {category.name} · {race.sprints.length} Sprints
+            {race.plannedSprints!=null && ` (${race.plannedSprints} geplant)`}
+          </p>
         </div>
         {isAdmin && (
           <div style={{display:'flex',gap:8}}>
@@ -597,7 +605,9 @@ export default function RaceDetail() {
                 🔀 Teams aufbauen
               </button>
             )}
-            <button className="btn btn-secondary btn-sm" onClick={openOmnium}>Omnium-Vorpunkte</button>
+            {displayFormat!=='TEAM_PAIRS' && (
+              <button className="btn btn-secondary btn-sm" onClick={openOmnium}>Omnium-Vorpunkte</button>
+            )}
             {!entryOpen && !showTeamBuilder && <button className="btn btn-primary" onClick={openNew}>+ Sprint {nextNum}</button>}
             <button className="btn btn-danger btn-sm" onClick={deleteRace}>Rennen löschen</button>
           </div>
@@ -814,7 +824,10 @@ export default function RaceDetail() {
                           {s.isDsq&&<span title="Disqualifiziert" style={{color:'var(--c-danger)'}}>⛔</span>}
                           <span style={{fontWeight:500}}>{s.teamName}</span>
                         </div>
-                        {s.club&&<div style={{fontSize:11,color:'var(--c-text-muted)'}}>{s.club}</div>}
+                        {displayFormat==='TEAM_PAIRS'
+                          ? (s.lv||s.rider2Lv)&&<div style={{fontSize:11,color:'var(--c-text-muted)'}}>{s.lv&&s.lv===s.rider2Lv?s.lv:[s.lv,s.rider2Lv].filter(Boolean).join(' / ')}</div>
+                          : s.club&&<div style={{fontSize:11,color:'var(--c-text-muted)'}}>{s.club}</div>
+                        }
                         {displayFormat==='TEAM_PAIRS'&&(s.rider1||s.rider2)&&<div style={{fontSize:11,color:'var(--c-text-muted)'}}>{[s.rider1,s.rider2].filter(Boolean).join(' / ')}</div>}
                       </td>
                       {race.sprints.map(sprint=>{const pts=sprintPts(sprint,s.teamId);return(<td key={sprint.id} style={{textAlign:'center'}}>{pts!==null?<span style={{fontWeight:pts>=5?700:pts>=3?600:400,color:pts>=5?'var(--c-success)':pts>=3?'var(--c-primary)':'var(--c-text)',fontSize:pts>=5?15:13}}>{pts}</span>:''}</td>);})}
