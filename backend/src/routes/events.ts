@@ -113,7 +113,7 @@ router.post('/:id/analyze-startlist', requireAdmin, async (req, res, next) => {
 Erkenne alle Altersklassen und liste die Teilnehmer je Altersklasse auf.
 Gib NUR JSON zurück (kein Markdown, kein Text davor/danach):
 
-{"ageClasses":[{"name":"U17 männlich","shortName":"U17m","teams":[{"number":1,"name":"Vorname Nachname","club":"Vereinsname","lv":"MEV"}]}],"plannedSprints":5}
+{"ageClasses":[{"name":"U17 männlich","shortName":"U17m","teams":[{"number":1,"name":"Vorname Nachname","club":"Vereinsname","lv":"MEV"}]}],"plannedSprints":5,"raceKind":"MADISON"}
 
 Regeln:
 - Erkenne AK-Abschnitte an Überschriften (z.B. "U17 männlich", "Juniorinnen U19", "Elite Frauen")
@@ -127,6 +127,9 @@ Regeln:
   Sonst points weglassen (nicht 0 raten, wenn keine Spalte vorhanden ist).
 - plannedSprints: Falls im Kopfbereich eine Streckenangabe wie "12,5 km / 50 Runden / 5 Wertungen"
   steht, die Anzahl der Wertungen als Ganzzahl (im Beispiel: 5). Weglassen, wenn nicht vorhanden.
+- raceKind: Erkenne die Disziplin aus dem Dokumenttitel/Kopfbereich (z.B. "Punktefahren",
+  "Madison", "Temporunden"). Werte: "PUNKTEFAHREN", "MADISON" oder "TEMPORUNDEN".
+  Weglassen, wenn nicht eindeutig erkennbar.
 
 WICHTIG — Team-Paare (z.B. Madison/Zweier-Mannschaftsfahren):
 Manche Startlisten haben eine Team-Nummer-Spalte (oft "Nr."), die über GENAU ZWEI Zeilen
