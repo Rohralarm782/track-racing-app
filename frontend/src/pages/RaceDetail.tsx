@@ -39,10 +39,22 @@ type SlotEntry = { teamId: string; teamNumber: number; teamName: string }|null;
 
 export default function RaceDetail() {
   const { id }      = useParams<{ id: string }>();
+  const navigate    = useNavigate();
   const { isAdmin } = useAdmin();
   const [race, setRace]       = useState<Race|null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState('');
+
+  async function deleteRace() {
+    if (!race || !id) return;
+    if (!confirm(`Rennen "${race.name}" wirklich löschen? Alle Ergebnisse gehen verloren.`)) return;
+    try {
+      await api.delete(`/api/races/${id}`);
+      navigate(race.category?.id ? `/categories/${race.category.id}` : `/events/${race.category.event.id}`);
+    } catch (e: any) {
+      setError(e.message ?? 'Löschen fehlgeschlagen');
+    }
+  }
 
   // ── Sprint-Eingabe (Punktefahren / TEMPORUNDEN-Schlusswertung) ────────────
   const [entryOpen, setEntryOpen]       = useState(false);
@@ -248,6 +260,9 @@ export default function RaceDetail() {
               {category.name} · {teams.length} Teams · Verfolgung
             </p>
           </div>
+          {isAdmin && (
+            <button className="btn btn-danger btn-sm" onClick={deleteRace}>Rennen löschen</button>
+          )}
         </div>
         {error && <div className="alert alert-error mb-3">{error}</div>}
         <VerfolgungsplanungView
@@ -286,10 +301,15 @@ export default function RaceDetail() {
               {category.name} · {regularRounds.length} Runden{schlusswertung ? ' + Schlusswertung' : ''}
             </p>
           </div>
-          {isAdmin && !isLocked && !entryOpen && !schlusswertung && (
-            <button className="btn btn-secondary" onClick={openTempoSchlusswertung} style={{borderColor:'#f59e0b',color:'#b45309'}}>
-              Schlusswertung ★
-            </button>
+          {isAdmin && (
+            <div style={{display:'flex',gap:8}}>
+              {!isLocked && !entryOpen && !schlusswertung && (
+                <button className="btn btn-secondary" onClick={openTempoSchlusswertung} style={{borderColor:'#f59e0b',color:'#b45309'}}>
+                  Schlusswertung ★
+                </button>
+              )}
+              <button className="btn btn-danger btn-sm" onClick={deleteRace}>Rennen löschen</button>
+            </div>
           )}
         </div>
 
@@ -579,6 +599,7 @@ export default function RaceDetail() {
             )}
             <button className="btn btn-secondary btn-sm" onClick={openOmnium}>Omnium-Vorpunkte</button>
             {!entryOpen && !showTeamBuilder && <button className="btn btn-primary" onClick={openNew}>+ Sprint {nextNum}</button>}
+            <button className="btn btn-danger btn-sm" onClick={deleteRace}>Rennen löschen</button>
           </div>
         )}
       </div>
