@@ -103,7 +103,18 @@ export default function RaceDetail() {
   useEffect(() => { fetchRace(); const t = setInterval(fetchRace, 6000); return () => clearInterval(t); }, [fetchRace]);
 
   // ── Punktefahren-Sprint-Eingabe ───────────────────────────────────────────
-  function openNew() { setSlots([null,null,null,null]); setActiveSlot(0); setIsFinale(false); setEditingId(null); setBibInput(''); setEntryOpen(true); }
+  function openNew() {
+    const teams = race?.category.teams ?? [];
+    const upcomingNum = (race?.sprints[race.sprints.length - 1]?.number ?? 0) + 1;
+    const willBeFinale = race?.plannedSprints != null && upcomingNum >= race.plannedSprints;
+    const numSlots = willBeFinale ? teams.length : 4;
+    setSlots(Array(numSlots).fill(null));
+    setActiveSlot(0);
+    setIsFinale(willBeFinale);
+    setEditingId(null);
+    setBibInput('');
+    setEntryOpen(true);
+  }
 
   function openEdit(sprint: Sprint) {
     const teams = race?.category.teams ?? [];
