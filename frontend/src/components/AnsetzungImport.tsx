@@ -13,6 +13,7 @@ interface Props {
 interface DetectedTeam {
   number: number; name: string; club?: string | null; lv?: string | null;
   rider2?: string | null; rider2Club?: string | null; rider2Lv?: string | null;
+  points?: number | null;
 }
 interface DetectedAK { name: string; shortName: string; teams: DetectedTeam[] }
 
@@ -55,8 +56,8 @@ export default function AnsetzungImport({ eventId, event, initialBase64, suggest
   const [newRaceName, setNewRaceName] = useState('');
 
   const [result, setResult] = useState<
-    | { mode: 'legacy'; excluded: number; included: number; unmatched: number }
-    | { mode: 'direct'; created: number; removed: number }
+    | { mode: 'legacy'; excluded: number; included: number; unmatched: number; pointsImported: number }
+    | { mode: 'direct'; created: number; removed: number; pointsImported: number }
     | null
   >(null);
 
@@ -122,8 +123,8 @@ export default function AnsetzungImport({ eventId, event, initialBase64, suggest
       }
 
       const res = await api.post<
-        | { mode: 'legacy'; excluded: number; included: number; unmatched: number }
-        | { mode: 'direct'; created: number; removed: number }
+        | { mode: 'legacy'; excluded: number; included: number; unmatched: number; pointsImported: number }
+        | { mode: 'direct'; created: number; removed: number; pointsImported: number }
       >(`/api/races/${raceId}/apply-ansetzung`, { teams: detectedTeams });
       setResult(res);
       setStep('done');
@@ -256,6 +257,7 @@ export default function AnsetzungImport({ eventId, event, initialBase64, suggest
                     {result.unmatched > 0 && ` · ${result.unmatched} Startnummer(n) nicht zugeordnet`}</>
                 : <>{result.created} Team(s) in der Startliste{result.removed > 0 && ` · ${result.removed} entfernt (Korrektur)`}</>
               }
+              {result.pointsImported > 0 && <><br />📊 {result.pointsImported} Punktestand(e) übernommen</>}
             </p>
             <button className="btn btn-primary btn-block" onClick={onDone}>Fertig</button>
           </div>
