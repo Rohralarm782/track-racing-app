@@ -14,7 +14,7 @@ interface RaceFlag { id: string; teamId: string; type: 'DSQ'|'WARNING'; }
 interface TeamStanding {
   teamId: string; teamNumber: number; teamName: string;
   club?: string|null; lv?: string|null; rider2Lv?: string|null;
-  rider1?: string|null; rider2?: string|null;
+  rider1?: string|null; rider2?: string|null; color?: string|null;
   isFavorite?: boolean; isDsq?: boolean; isWarned?: boolean;
   total: number; sprintPoints: number; lapPoints: number; omniumPoints: number;
   wins: number; seconds: number; thirds: number; fourths: number;
@@ -55,6 +55,28 @@ export default function RaceDetail() {
       navigate(race.category?.id ? `/categories/${race.category.id}` : `/events/${race.category.event.id}`);
     } catch (e: any) {
       setError(e.message ?? 'Löschen fehlgeschlagen');
+    }
+  }
+
+  // ── Team-Name & Farbe bearbeiten (v.a. für Madison-Paare) ─────────────────
+  const [editingTeamId, setEditingTeamId] = useState<string|null>(null);
+  const [editName, setEditName]           = useState('');
+  const [editColor, setEditColor]         = useState('#3b82f6');
+
+  function startEditTeam(teamId: string, currentName: string, currentColor?: string|null) {
+    setEditingTeamId(teamId);
+    setEditName(currentName);
+    setEditColor(currentColor || '#3b82f6');
+  }
+
+  async function saveTeamEdit() {
+    if (!editingTeamId) return;
+    try {
+      await api.patch(`/api/teams/${editingTeamId}`, { name: editName.trim(), color: editColor });
+      setEditingTeamId(null);
+      await fetchRace();
+    } catch (e: any) {
+      setError(e.message ?? 'Speichern fehlgeschlagen');
     }
   }
 
@@ -829,17 +851,35 @@ export default function RaceDetail() {
                       <td style={{color:'var(--c-text-muted)',fontSize:12}}>{s.isDsq?'':idx+1}</td>
                       <td className="num" style={{fontWeight:600}}>{s.teamNumber}</td>
                       <td>
-                        <div style={{display:'flex',alignItems:'center',gap:4}}>
-                          {s.isFavorite&&<span>⭐</span>}
-                          {s.isWarned&&<span title="Verwarnung" style={{color:'var(--c-warning)'}}>⚠</span>}
-                          {s.isDsq&&<span title="Disqualifiziert" style={{color:'var(--c-danger)'}}>⛔</span>}
-                          <span style={{fontWeight:500}}>{s.teamName}</span>
-                        </div>
-                        {displayFormat==='TEAM_PAIRS'
-                          ? (s.lv||s.rider2Lv)&&<div style={{fontSize:11,color:'var(--c-text-muted)'}}>{s.lv&&s.lv===s.rider2Lv?s.lv:[s.lv,s.rider2Lv].filter(Boolean).join(' / ')}</div>
-                          : s.club&&<div style={{fontSize:11,color:'var(--c-text-muted)'}}>{s.club}</div>
-                        }
-                        {displayFormat==='TEAM_PAIRS'&&(s.rider1||s.rider2)&&<div style={{fontSize:11,color:'var(--c-text-muted)'}}>{[s.rider1,s.rider2].filter(Boolean).join(' / ')}</div>}
+                        {editingTeamId===s.teamId ? (
+                          <div style={{display:'flex',flexDirection:'column',gap:6,minWidth:180}}>
+                            <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                              <input type="color" value={editColor} onChange={e=>setEditColor(e.target.value)} style={{width:28,height:28,padding:0,border:'1px solid var(--c-border)',borderRadius:6}} />
+                              <input className="form-input" style={{fontSize:13,padding:'5px 8px'}} value={editName} onChange={e=>setEditName(e.target.value)} onKeyDown={e=>e.key==='Enter'&&saveTeamEdit()} autoFocus />
+                            </div>
+                            <div style={{display:'flex',gap:6}}>
+                              <button className="btn btn-primary btn-sm" onClick={saveTeamEdit}>Speichern</button>
+                              <button className="btn btn-ghost btn-sm" onClick={()=>setEditingTeamId(null)}>Abbrechen</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <div style={{display:'flex',alignItems:'center',gap:4}}>
+                              {s.isFavorite&&<span>⭐</span>}
+                              {s.isWarned&&<span title="Verwarnung" style={{color:'var(--c-warning)'}}>⚠</span>}
+                              {s.isDsq&&<span title="Disqualifiziert" style={{color:'var(--c-danger)'}}>⛔</span>}
+                              {s.color&&<span style={{width:11,height:11,borderRadius:3,background:s.color,flexShrink:0}} />}
+                              <span style={{fontWeight:500}}>{s.teamName}</span>
+                              {isAdmin&&displayFormat==='TEAM_PAIRS'&&(
+                                <button onClick={()=>startEditTeam(s.teamId,s.teamName,s.color)} title="Name/Farbe bearbeiten" style={{background:'none',border:'none',cursor:'pointer',fontSize:12,opacity:0.4,padding:0}}>✏️</button>
+                              )}
+                            </div>
+                            {displayFormat==='TEAM_PAIRS'
+                              ? (s.lv||s.rider2Lv)&&<div style={{fontSize:11,color:'var(--c-text-muted)'}}>{s.lv&&s.lv===s.rider2Lv?s.lv:[s.lv,s.rider2Lv].filter(Boolean).join(' / ')}</div>
+                              : s.club&&<div style={{fontSize:11,color:'var(--c-text-muted)'}}>{s.club}</div>
+                            }
+                          </>
+                        )}
                       </td>
                       {race.sprints.map(sprint=>{const pts=sprintPts(sprint,s.teamId);return(<td key={sprint.id} style={{textAlign:'center'}}>{pts!==null?<span style={{fontWeight:pts>=5?700:pts>=3?600:400,color:pts>=5?'var(--c-success)':pts>=3?'var(--c-primary)':'var(--c-text)',fontSize:pts>=5?15:13}}>{pts}</span>:''}</td>);})}
                       {hasFinale&&<td style={{textAlign:'center',fontSize:12,color:'var(--c-text-muted)'}}>{s.finalePosition??''}</td>}
