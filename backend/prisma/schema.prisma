@@ -79,6 +79,8 @@ model Team {
   number     Int
   name       String
   club       String?
+  lv         String?  // Landesverband (z.B. "MEV", "NRW") des ersten Fahrers/Teams
+  rider2Lv   String?  // Landesverband des zweiten Fahrers bei Paaren (Madison)
   isFavorite Boolean  @default(false)
   rider1     String?
   rider2     String?
@@ -112,6 +114,7 @@ model Race {
   status       RaceStatus      @default(SETUP)
   order        Int             @default(0)
   finaleActive Boolean         @default(true)
+  plannedSprints Int?          // aus Ansetzung erkannte Anzahl Wertungen — die letzte wird automatisch als Finale gewertet
   createdAt    DateTime        @default(now())
 
   omniumScores  OmniumScore[]
