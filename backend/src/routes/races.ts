@@ -274,10 +274,17 @@ router.post('/:id/sprints', requireAdmin, async (req, res, next) => {
     const parsed = CreateSprintSchema.safeParse(req.body);
     if (!parsed.success) { res.status(400).json(parsed.error.flatten()); return; }
     const raceId = req.params.id;
+    const race = await prisma.race.findUnique({ where: { id: raceId }, select: { plannedSprints: true } });
     const lastSprint = await prisma.sprint.findFirst({ where: { raceId }, orderBy: { number: 'desc' } });
     const number = (lastSprint?.number ?? 0) + 1;
+    // Wenn die geplante Wertungsanzahl aus der Ansetzung bekannt ist, wird die
+    // letzte Wertung automatisch als Finale gewertet — unabhängig davon, was
+    // die Anfrage selbst mitgibt (Ansetzung ist die verlässlichere Quelle).
+    const isFinale = race?.plannedSprints != null
+      ? number >= race.plannedSprints
+      : parsed.data.isFinale;
     const sprint = await prisma.$transaction(async (tx) => {
-      const s = await tx.sprint.create({ data: { raceId, number, isFinale: parsed.data.isFinale } });
+      const s = await tx.sprint.create({ data: { raceId, number, isFinale } });
       await tx.sprintResult.createMany({
         data: parsed.data.results.map(r => ({ sprintId: s.id, teamId: r.teamId, position: r.position })),
       });
@@ -287,7 +294,7 @@ router.post('/:id/sprints', requireAdmin, async (req, res, next) => {
       });
     });
     // Status automatisch setzen
-    if (parsed.data.isFinale) {
+    if (isFinale) {
       await advanceStatus(raceId, 'FINISHED');
     } else {
       await advanceStatus(raceId, 'ACTIVE');
@@ -341,12 +348,13 @@ router.post('/:id/flags', requireAdmin, async (req, res, next) => {
 //   automatisch als Favorit markiert. Kein DNS nötig.
 router.post('/:id/apply-ansetzung', requireAdmin, async (req, res, next) => {
   try {
-    const { teams } = req.body as {
+    const { teams, plannedSprints } = req.body as {
       teams: Array<{
         number: number; name: string; club?: string | null; lv?: string | null;
         rider2?: string | null; rider2Club?: string | null; rider2Lv?: string | null;
         points?: number | null;
       }>;
+      plannedSprints?: number | null;
     };
     if (!Array.isArray(teams)) { res.status(400).json({ error: 'teams fehlt' }); return; }
 
@@ -355,6 +363,10 @@ router.post('/:id/apply-ansetzung', requireAdmin, async (req, res, next) => {
       include: { category: { include: { teams: true } }, teams: true },
     });
     if (!race) { res.status(404).json({ error: 'Rennen nicht gefunden' }); return; }
+
+    if (plannedSprints != null) {
+      await prisma.race.update({ where: { id: race.id }, data: { plannedSprints } });
+    }
 
     if (race.categoryId) {
       // ── Altes Modell: DNS-Flags gegen die bestehende Kategorie-Startliste ──
@@ -399,6 +411,8 @@ router.post('/:id/apply-ansetzung', requireAdmin, async (req, res, next) => {
         const data = {
           name: isPair ? `${t.name} / ${t.rider2}` : t.name,
           club: t.club ?? null,
+          lv: t.lv ?? null,
+          rider2Lv: t.rider2Lv ?? null,
           rider1: isPair ? t.name : null,
           rider2: t.rider2 ?? null,
           isFavorite: t.lv === 'MEV' || t.rider2Lv === 'MEV',
