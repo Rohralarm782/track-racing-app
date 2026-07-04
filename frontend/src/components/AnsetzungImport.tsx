@@ -82,13 +82,21 @@ export default function AnsetzungImport({ eventId, event, initialBase64, suggest
   async function analyze() {
     setStep('analyzing'); setError('');
     try {
-      const res = await api.post<{ ageClasses: DetectedAK[]; plannedSprints?: number | null }>(
+      const res = await api.post<{ ageClasses: DetectedAK[]; plannedSprints?: number | null; raceKind?: string | null }>(
         `/api/events/${eventId}/analyze-startlist`,
         { pdfBase64: initialBase64 },
       );
       const teams = res.ageClasses.flatMap(ak => ak.teams);
       setDetectedTeams(teams);
       setDetectedPlannedSprints(res.plannedSprints ?? null);
+      if (res.raceKind) {
+        const matchKey = res.raceKind.toLowerCase();
+        const matched = RACE_KIND_OPTIONS.find(k => k.key === matchKey);
+        if (matched) {
+          setNewKind(matched.key);
+          setNewRaceName(matched.label);
+        }
+      }
       setStep('pick-race');
     } catch (e: any) {
       setError(e.message ?? 'Analyse fehlgeschlagen');
