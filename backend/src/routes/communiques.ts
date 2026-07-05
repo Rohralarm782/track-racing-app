@@ -6,6 +6,7 @@ import { listShareFiles, fetchShareFile } from '../lib/webdav';
 import { classifyFileName } from '../lib/classify';
 import { getCachedFile, setCachedFile } from '../lib/fileCache';
 import { notifyNewDocuments } from '../lib/push';
+import { analyzeMevForDocument } from '../lib/mevDetect';
 
 const router = Router();
 
@@ -155,7 +156,8 @@ export async function pollSource(sourceId: string, shareToken: string) {
     const remote = remoteByName.get(d.fileName);
     if (!remote || remote.modifiedAt.getTime() !== d.remoteModifiedAt.getTime()) return false; // steckt schon in toCreate
     const fresh = classifyFileName(d.fileName);
-    return fresh.docType !== d.docType || fresh.ak !== d.ak || fresh.discipline !== d.discipline;
+    return fresh.docType !== d.docType || fresh.ak !== d.ak || fresh.discipline !== d.discipline
+      || fresh.disciplineCode !== d.disciplineCode || fresh.phaseLabel !== d.phaseLabel;
   });
 
   if (toReclassify.length > 0) {
@@ -167,24 +169,37 @@ export async function pollSource(sourceId: string, shareToken: string) {
     );
   }
 
-  if (toCreate.length === 0) {
-    await prisma.communiqueSource.update({ where: { id: sourceId }, data: { lastPolledAt: new Date() } });
-    return [];
+  let created: Awaited<ReturnType<typeof prisma.communiqueDocument.upsert>>[] = [];
+
+  if (toCreate.length > 0) {
+    created = await prisma.$transaction(
+      toCreate.map(f => {
+        const { docType, ak, discipline, disciplineCode, phaseLabel } = classifyFileName(f.fileName);
+        return prisma.communiqueDocument.upsert({
+          where: { sourceId_fileName: { sourceId, fileName: f.fileName } },
+          create: { sourceId, fileName: f.fileName, docType, ak, discipline, disciplineCode, phaseLabel, remoteModifiedAt: f.modifiedAt },
+          update: { remoteModifiedAt: f.modifiedAt, docType, ak, discipline, disciplineCode, phaseLabel },
+        });
+      })
+    );
+    await notifyNewDocuments(sourceId, created);
   }
 
-  const created = await prisma.$transaction(
-    toCreate.map(f => {
-      const { docType, ak, discipline } = classifyFileName(f.fileName);
-      return prisma.communiqueDocument.upsert({
-        where: { sourceId_fileName: { sourceId, fileName: f.fileName } },
-        create: { sourceId, fileName: f.fileName, docType, ak, discipline, remoteModifiedAt: f.modifiedAt },
-        update: { remoteModifiedAt: f.modifiedAt, docType, ak, discipline },
-      });
-    })
-  );
-
   await prisma.communiqueSource.update({ where: { id: sourceId }, data: { lastPolledAt: new Date() } });
-  await notifyNewDocuments(sourceId, created);
+
+  // ── MEV-Hintergrund-Analyse für Startlisten ohne Analyse ──────────────────
+  // Läuft für neu entdeckte Startlisten UND als Selbstheilung für Dokumente,
+  // bei denen ein vorheriger Analyseversuch fehlgeschlagen ist (mevAnalyzedAt
+  // ist dann weiterhin null). Sequentiell, um die Anthropic-API nicht mit
+  // vielen gleichzeitigen Anfragen zu treffen — bei der Erstverbindung einer
+  // Quelle mit vielen Dokumenten dauert ein Poll-Zyklus dadurch entsprechend
+  // länger, blockiert aber keine anderen Quellen (siehe index.ts).
+  const unanalyzed = await prisma.communiqueDocument.findMany({
+    where: { sourceId, docType: 'STARTLISTE', mevAnalyzedAt: null },
+  });
+  for (const doc of unanalyzed) {
+    await analyzeMevForDocument(doc, shareToken);
+  }
 
   return created;
 }
