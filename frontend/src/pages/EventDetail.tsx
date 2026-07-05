@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Link, useParams, useNavigate } from 'react-router-dom';
+import { Link, useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, type Event } from '../api/client';
 import { useAdmin } from '../components/Layout';
 import StartlistImport from '../components/StartlistImport';
 import EventTabBar from '../components/EventTabBar';
+import SettingsGearButton from '../components/SettingsGearButton';
 
 const FORMAT_LABEL: Record<string, string> = {
   INDIVIDUAL: 'Einzelrennen',
@@ -27,9 +28,14 @@ type LocalTab = 'uebersicht' | 'einstellungen';
 export default function EventDetail() {
   const { id }                        = useParams<{ id: string }>();
   const navigate                      = useNavigate();
+  const [searchParams]                = useSearchParams();
   const [event, setEvent]             = useState<Event | null>(null);
   const [loading, setLoading]         = useState(true);
-  const [tab, setTab]                 = useState<LocalTab>('uebersicht');
+  // Initialer Tab kann per ?tab=einstellungen von außen vorgegeben werden
+  // (z.B. vom Zahnrad-Icon auf der Kommuniqués- oder Zeitplan-Seite aus).
+  const [tab, setTab]                 = useState<LocalTab>(
+    searchParams.get('tab') === 'einstellungen' ? 'einstellungen' : 'uebersicht'
+  );
   const [showNewCat, setShowNewCat]   = useState(false);
   const [showImport, setShowImport]   = useState(false);
   const [catName, setCatName]         = useState('');
@@ -98,11 +104,20 @@ export default function EventDetail() {
         {event.name}
       </div>
 
-      <div className="mb-4">
-        <h1>{event.name}</h1>
-        <p className="text-sm text-muted" style={{ margin: '2px 0 0' }}>
-          {event.date ? formatDate(event.date) : ''}
-        </p>
+      <div className="mb-4" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+        <div>
+          <h1>{event.name}</h1>
+          <p className="text-sm text-muted" style={{ margin: '2px 0 0' }}>
+            {event.date ? formatDate(event.date) : ''}
+          </p>
+        </div>
+        {id && (
+          <SettingsGearButton
+            eventId={id}
+            active={tab === 'einstellungen'}
+            onLocalClick={() => setTab('einstellungen')}
+          />
+        )}
       </div>
 
       {id && <EventTabBar eventId={id} active={tab} onLocalTabChange={setTab} />}
