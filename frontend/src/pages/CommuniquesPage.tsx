@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import PdfViewer from '../components/PdfViewer';
 import EventTabBar from '../components/EventTabBar';
+import SettingsGearButton from '../components/SettingsGearButton';
 import AnsetzungImport from '../components/AnsetzungImport';
 import OmniumImport from '../components/OmniumImport';
 import { useAdmin } from '../components/Layout';
@@ -409,7 +410,10 @@ export default function CommuniquesPage() {
         <Link to="/">Veranstaltungen</Link><span>›</span>
         <Link to={`/events/${eventId}`}>{event?.name ?? '…'}</Link><span>›</span>Kommuniqués
       </div>
-      <h1 className="mb-4">{event?.name ?? 'Kommuniqués'}</h1>
+      <div className="flex-between mb-4" style={{ alignItems: 'flex-start' }}>
+        <h1 style={{ margin: 0 }}>{event?.name ?? 'Kommuniqués'}</h1>
+        {eventId && <SettingsGearButton eventId={eventId} />}
+      </div>
 
       {eventId && <EventTabBar eventId={eventId} active="kommuniques" />}
 
