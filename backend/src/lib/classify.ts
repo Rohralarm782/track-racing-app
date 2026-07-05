@@ -47,12 +47,56 @@ export function detectDiscipline(fileName: string): Discipline {
   return 'ALLGEMEIN';
 }
 
+// ─── Disziplin-Kürzel & Phase (für die Zeitplan-Verknüpfung) ───────────────
+// Kommuniqué-Dateinamen folgen meist dem Muster
+//   "K<Nr> - <AK> - <Kürzel> - <Phase> - <Typ>.pdf"
+// aber in der Praxis uneinheitlich (Trennzeichen, zusammengezogene Segmente,
+// fehlende Phase). Statt einer starren Positions-Zuordnung wird deshalb
+// keyword-basiert erkannt — robuster gegenüber echten, unsauberen Dateinamen.
+
+const AK_SEGMENT = /^u1[3579]\s?[mw]$|^elite\s?[mw]$|^masters\s?[mw]$/i;
+const TYPE_SUFFIX = /\b(Ansetzung|Ansetz|Ergebnis|Endstand|Strafen|ZStand\.?\s?\d*|Zwischenstand\s?\d*)\b\.?\s*$/i;
+
+export function detectDisciplineCode(fileName: string): string | null {
+  if (/\bMA\b/i.test(fileName)) return 'MA';
+  if (/\bPR\b/i.test(fileName)) return 'PR';
+  if (/\bOM\b/i.test(fileName)) return 'OM';
+  if (/temporunden|\bTR\b/i.test(fileName)) return 'TR';
+  if (/verfolgung|\bVF\b/i.test(fileName)) return 'VF';
+  return null;
+}
+
+// Extrahiert den "Rest" des Dateinamens nach Entfernen von Kommuniqué-Nummer,
+// AK-Segment und abschließendem Typ-Schlagwort — das, was übrig bleibt, ist
+// meist die Phase (z.B. "1. VL", "A-Lauf", "Finale"), manchmal kombiniert mit
+// dem Disziplin-Kürzel selbst (z.B. "Om AS A-Lauf" bei Omnium-Teildisziplinen).
+export function detectPhaseLabel(fileName: string): string | null {
+  const base = fileName.replace(/\.pdf$/i, '');
+  const segments = base.split(' - ').map(s => s.trim()).filter(Boolean);
+  const rest = segments.slice(1).filter(seg => !AK_SEGMENT.test(seg));
+  if (rest.length === 0) return null;
+
+  let joined = rest.join(' ').replace(TYPE_SUFFIX, '').trim();
+  // Führendes Disziplin-Kürzel entfernen, falls es der Anfang des Rests ist
+  joined = joined.replace(/^(MA|PR|OM)\s*/i, '').trim();
+
+  return joined.length > 0 ? joined : null;
+}
+
 // ─── Kombiniert ─────────────────────────────────────────────────────────────
 
-export function classifyFileName(fileName: string): { docType: DocType; ak: string; discipline: Discipline } {
+export function classifyFileName(fileName: string): {
+  docType: DocType;
+  ak: string;
+  discipline: Discipline;
+  disciplineCode: string | null;
+  phaseLabel: string | null;
+} {
   return {
     docType: detectDocType(fileName),
     ak: detectAK(fileName),
     discipline: detectDiscipline(fileName),
+    disciplineCode: detectDisciplineCode(fileName),
+    phaseLabel: detectPhaseLabel(fileName),
   };
 }
