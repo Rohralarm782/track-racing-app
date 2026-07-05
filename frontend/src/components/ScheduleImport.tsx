@@ -158,8 +158,8 @@ export default function ScheduleImport({ eventId, onDone, onClose }: Props) {
                   />
                   <input
                     className="form-input"
-                    value={r.ak === 'Mehrere' ? '' : r.ak}
-                    placeholder={r.ak === 'Mehrere' ? 'Mehrere AKs' : 'AK'}
+                    value={r.ak}
+                    placeholder="AK"
                     onChange={e => updateRow(r._id, { ak: e.target.value })}
                     style={{ fontSize: 12, padding: '4px 6px', height: 'auto' }}
                     title="Altersklasse"
