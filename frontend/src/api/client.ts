@@ -65,6 +65,10 @@ export interface CommuniqueDocument {
   isPinned: boolean;
   remoteModifiedAt: string;
   discoveredAt: string;
+  disciplineCode?: string | null;
+  phaseLabel?: string | null;
+  mevNames?: string[];
+  mevAnalyzedAt?: string | null;
 }
 
 export interface CommuniqueSource {
@@ -74,6 +78,54 @@ export interface CommuniqueSource {
   label: string | null;
   lastPolledAt: string | null;
   documents: CommuniqueDocument[];
+}
+
+// ─── Zeitplan ────────────────────────────────────────────────────────────────
+
+export type ScheduleEntryType = 'RACE' | 'CEREMONY' | 'INFO';
+export type LiveStatusKey = 'STARTING' | 'RUNNING' | 'FINISHED';
+
+export interface ScheduleEntryLinkedDoc {
+  id: string;
+  fileName: string;
+  mevNames: string[];
+  mevAnalyzedAt: string | null;
+}
+
+export interface ScheduleEntry {
+  id: string;
+  eventId: string;
+  day: number;
+  time: string;
+  ak: string;
+  disciplineLabel: string;
+  phase: string | null;
+  type: ScheduleEntryType;
+  massStart: boolean;
+  order: number;
+  linkedDocumentId: string | null;
+  linkedDocument: ScheduleEntryLinkedDoc | null;
+}
+
+export interface DraftScheduleEntry {
+  day: number;
+  time: string;
+  ak: string;
+  disciplineLabel: string;
+  phase?: string | null;
+  type: ScheduleEntryType;
+  massStart: boolean;
+}
+
+export interface EventStatus {
+  id: string;
+  eventId: string;
+  scheduleEntryId: string;
+  statusKey: LiveStatusKey;
+  roundsLeft: number | null;
+  offsetMinutes: number;
+  updatedAt: string;
+  scheduleEntry: ScheduleEntry;
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -138,4 +190,27 @@ export const communiquesApi = {
 
   unsubscribe: (endpoint: string) =>
     api.delete(`/api/communiques/subscribe?endpoint=${encodeURIComponent(endpoint)}`),
+};
+
+export const scheduleApi = {
+  analyze: (eventId: string, pdfBase64: string) =>
+    api.post<{ entries: DraftScheduleEntry[] }>(`/api/events/${eventId}/schedule/analyze`, { pdfBase64 }),
+
+  save: (eventId: string, entries: DraftScheduleEntry[]) =>
+    api.post<ScheduleEntry[]>(`/api/events/${eventId}/schedule`, { entries }),
+
+  list: (eventId: string) =>
+    api.get<ScheduleEntry[]>(`/api/events/${eventId}/schedule`),
+
+  rematch: (eventId: string) =>
+    api.post<ScheduleEntry[]>(`/api/events/${eventId}/schedule/rematch`, {}),
+
+  linkDocument: (entryId: string, linkedDocumentId: string | null) =>
+    api.patch<ScheduleEntry>(`/api/schedule-entries/${entryId}`, { linkedDocumentId }),
+
+  getStatus: (eventId: string) =>
+    api.get<EventStatus | null>(`/api/events/${eventId}/status`),
+
+  setStatus: (eventId: string, scheduleEntryId: string, statusKey: LiveStatusKey, roundsLeft: number | null) =>
+    api.put<EventStatus>(`/api/events/${eventId}/status`, { scheduleEntryId, statusKey, roundsLeft }),
 };
