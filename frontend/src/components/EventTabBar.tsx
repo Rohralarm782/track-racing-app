@@ -2,23 +2,31 @@ import { useNavigate } from 'react-router-dom';
 
 interface EventTabBarProps {
   eventId: string;
-  active: 'uebersicht' | 'kommuniques' | 'einstellungen';
+  // 'einstellungen' ist hier absichtlich ein gültiger Wert, auch wenn keiner
+  // der drei Tabs dafür hervorgehoben wird — so bleibt die Anzeige "keiner der
+  // drei Reiter aktiv" korrekt typisiert, während das Zahnrad-Icon (neben dem
+  // Veranstaltungstitel, siehe SettingsGearButton) seinen eigenen aktiven
+  // Zustand separat anzeigt.
+  active: 'uebersicht' | 'kommuniques' | 'zeitplan' | 'einstellungen';
   onLocalTabChange?: (tab: 'uebersicht' | 'einstellungen') => void;
 }
 
 /**
- * Tab-Leiste für die Veranstaltungsseite. "Übersicht" und "Einstellungen" sind
- * lokale Tabs innerhalb von EventDetail (kein Routenwechsel), "Kommuniqués"
- * navigiert zur bestehenden eigenen Seite — spart einen riskanten Merge zweier
- * großer, eigenständiger Komponenten, sieht aber wie ein einheitliches
- * Tab-System aus.
+ * Tab-Leiste für die Veranstaltungsseite. "Übersicht" ist ein lokaler Tab
+ * innerhalb von EventDetail (kein Routenwechsel), "Kommuniqués" und
+ * "Zeitplan" navigieren zu eigenen Seiten — spart einen riskanten Merge
+ * mehrerer großer, eigenständiger Komponenten, sieht aber wie ein
+ * einheitliches Tab-System aus. "Einstellungen" ist bewusst kein Tab mehr
+ * hier, sondern ein kompaktes Zahnrad-Icon neben dem Titel (SettingsGearButton).
  */
 export default function EventTabBar({ eventId, active, onLocalTabChange }: EventTabBarProps) {
   const navigate = useNavigate();
 
-  function go(tab: 'uebersicht' | 'kommuniques' | 'einstellungen') {
+  function go(tab: 'uebersicht' | 'kommuniques' | 'zeitplan') {
     if (tab === 'kommuniques') {
       navigate(`/events/${eventId}/communiques`);
+    } else if (tab === 'zeitplan') {
+      navigate(`/events/${eventId}/schedule`);
     } else if (onLocalTabChange) {
       onLocalTabChange(tab);
     } else {
@@ -38,7 +46,7 @@ export default function EventTabBar({ eventId, active, onLocalTabChange }: Event
     <div style={{ display: 'flex', gap: 2, background: '#f3f4f6', borderRadius: 9, padding: 3, marginBottom: 16 }}>
       <button style={tabStyle('uebersicht')} onClick={() => go('uebersicht')}>Übersicht</button>
       <button style={tabStyle('kommuniques')} onClick={() => go('kommuniques')}>🔔 Kommuniqués</button>
-      <button style={tabStyle('einstellungen')} onClick={() => go('einstellungen')}>⚙️ Einstellungen</button>
+      <button style={tabStyle('zeitplan')} onClick={() => go('zeitplan')}>🗓️ Zeitplan</button>
     </div>
   );
 }
