@@ -9,6 +9,7 @@ import { sprintsRouter, lapsRouter, raceFlagsRouter } from './routes/resources';
 import { requireAdmin } from './middleware/auth';
 import pursuitPlansRouter from './routes/pursuit-plans';  // ← geändert
 import communiquesRouter, { pollSource } from './routes/communiques';
+import scheduleRouter from './routes/schedule';
 import prisma from './prisma';
 
 dotenv.config();
@@ -34,6 +35,7 @@ app.use('/api/laps',           lapsRouter);
 app.use('/api/race-flags',     raceFlagsRouter);
 app.use('/api/pursuit-plans',  pursuitPlansRouter);  // ← geändert
 app.use('/api/communiques',    communiquesRouter);
+app.use('/api',                scheduleRouter); // Zeitplan + Aktueller-Stand-Endpunkte (eigene Pfade unter /api/events/:id/schedule, /api/schedule-entries/:id)
 
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);
