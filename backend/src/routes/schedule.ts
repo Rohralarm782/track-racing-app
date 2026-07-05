@@ -208,7 +208,7 @@ Gib NUR JSON zurück (kein Markdown, kein Text davor/danach):
 Regeln:
 - day: 1 = erster im Dokument vorkommender Veranstaltungstag, 2 = zweiter usw. (Reihenfolge im Dokument, nicht das Kalenderdatum selbst — manche Zeitplan-Dokumente haben fehlerhafte/inkonsistente Jahresangaben, das ist irrelevant, nur die Reihenfolge und Uhrzeit zählen)
 - time: Uhrzeit im Format "HH:MM", so wie im Dokument angegeben
-- ak: Altersklasse normalisiert (z.B. "U17m", "U15w", "Elite m"); falls ein Eintrag mehrere AKs gleichzeitig betrifft, "Mehrere" verwenden
+- ak: Altersklasse normalisiert (z.B. "U17m", "U15w", "Elite m"); falls ein Eintrag mehrere Altersklassen gleichzeitig betrifft (z.B. kombinierte Teamsprint-Wertung über zwei Altersklassen), alle betroffenen Altersklassen durch ein Leerzeichen getrennt in aufsteigender Reihenfolge angeben (z.B. "U17w U19w"), NICHT "Mehrere" verwenden
 - disciplineLabel: Disziplin als Klartext (z.B. "Punktefahren", "Madison", "Omnium Scratch", "3000m Mannschaftsverfolgung")
 - phase: Phasen-Bezeichnung falls vorhanden (z.B. "1. Vorlauf", "Finale", "A-Lauf", "Qualifikation"), sonst weglassen
 - type: "RACE" für Wettkämpfe, "CEREMONY" für Siegerehrungen, "INFO" für Warm-Up/Pausen/Ende-Hinweise
