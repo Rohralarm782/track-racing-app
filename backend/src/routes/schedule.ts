@@ -26,6 +26,8 @@ const DISCIPLINE_HINTS: Record<string, string[]> = {
   VF: ['verfolgung'],
   MV: ['mannschaftsverfolgung'],
   EV: ['einzelverfolgung', ' ev', 'ev '],
+  AF: ['ausscheidungsfahren'],
+  SC: ['scratch'],
 };
 
 // Phasen-Kürzel aus Kommuniqué-Dateinamen auf die von der KI aus dem
