@@ -63,8 +63,22 @@ export default function SchedulePage() {
   const [updateStatusKey, setUpdateStatusKey] = useState<LiveStatusKey>('RUNNING');
   const [updateRounds, setUpdateRounds]     = useState(1);
   const [updateBusy, setUpdateBusy]         = useState(false);
+  const [rematchBusy, setRematchBusy]       = useState(false);
 
   useEffect(() => { if (eventId) load(); }, [eventId]);
+
+  async function handleRematch() {
+    if (!eventId) return;
+    setRematchBusy(true); setError('');
+    try {
+      const list = await scheduleApi.rematch(eventId);
+      setEntries(list);
+    } catch (e: any) {
+      setError(e.message ?? 'Abgleich fehlgeschlagen');
+    } finally {
+      setRematchBusy(false);
+    }
+  }
 
   async function load() {
     if (!eventId) return;
@@ -136,7 +150,20 @@ export default function SchedulePage() {
 
       <div className="flex-between mb-4" style={{ alignItems: 'flex-start' }}>
         <h1 style={{ margin: 0 }}>{event?.name ?? 'Zeitplan'}</h1>
-        {eventId && <SettingsGearButton eventId={eventId} />}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {isAdmin && entries.length > 0 && (
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={handleRematch}
+              disabled={rematchBusy}
+              title="Verknüpfung mit Kommuniqués neu berechnen"
+              style={{ fontSize: 12 }}
+            >
+              {rematchBusy ? '…' : '🔄 Kommuniqués abgleichen'}
+            </button>
+          )}
+          {eventId && <SettingsGearButton eventId={eventId} />}
+        </div>
       </div>
 
       {eventId && <EventTabBar eventId={eventId} active="zeitplan" />}
