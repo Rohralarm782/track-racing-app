@@ -14,27 +14,47 @@ export function detectDocType(fileName: string): DocType {
 // Kommuniqués verwenden zwei Schreibweisen nebeneinander:
 //   Altersklasse zuerst:  "U17w", "U17 w", "Elite m"
 //   Geschlecht zuerst (BDR-Kurzform): "ME" (Männer Elite), "WE" (Frauen Elite), "MU17", "WU19"
+// Bei kombinierten Wertungen (z.B. Teamsprint über zwei Altersklassen) treten
+// ZWEI Vorkommen im selben Dateinamen auf (z.B. "U17w U19w Ansetz Quali
+// Teamsprint.pdf") — beide werden erkannt und aufsteigend sortiert zu einer
+// einzigen Zeichenkette zusammengefügt (z.B. "U17w U19w"), damit sie exakt
+// der Schreibweise entspricht, die der Zeitplan-Import für dieselbe
+// kombinierte Wertung erzeugt (siehe Prompt in schedule.ts).
+
+function akSortKey(ak: string): number {
+  const m = ak.match(/^U1([3579])/i);
+  if (m) return parseInt(m[1], 10);
+  if (/^elite/i.test(ak)) return 90;
+  if (/^masters/i.test(ak)) return 91;
+  return 99;
+}
 
 export function detectAK(fileName: string): string {
-  const classFirst = fileName.match(/\b(U1[3579]|Elite|Masters)[\s_-]*([mw])\b/i);
-  if (classFirst) {
-    const rawBase = classFirst[1];
+  const found = new Set<string>();
+
+  const classFirstRe = /\b(U1[3579]|Elite|Masters)[\s_-]*([mw])\b/gi;
+  let m: RegExpExecArray | null;
+  while ((m = classFirstRe.exec(fileName))) {
+    const rawBase = m[1];
     const base = /^u1[3579]$/i.test(rawBase)
       ? rawBase.toUpperCase()
       : rawBase[0].toUpperCase() + rawBase.slice(1).toLowerCase();
-    const gender = classFirst[2].toLowerCase();
-    return (base === 'Elite' || base === 'Masters') ? `${base} ${gender}` : `${base}${gender}`;
+    const gender = m[2].toLowerCase();
+    found.add((base === 'Elite' || base === 'Masters') ? `${base} ${gender}` : `${base}${gender}`);
   }
 
-  const genderFirst = fileName.match(/\b([MW])(E|U1[3579])\b/);
-  if (genderFirst) {
-    const gender = genderFirst[1].toUpperCase() === 'M' ? 'm' : 'w';
-    const code = genderFirst[2].toUpperCase();
-    const base = code === 'E' ? 'Elite' : code;
-    return base === 'Elite' ? `Elite ${gender}` : `${base}${gender}`;
+  if (found.size === 0) {
+    const genderFirstRe = /\b([MW])(E|U1[3579])\b/g;
+    while ((m = genderFirstRe.exec(fileName))) {
+      const gender = m[1].toUpperCase() === 'M' ? 'm' : 'w';
+      const code = m[2].toUpperCase();
+      const base = code === 'E' ? 'Elite' : code;
+      found.add(base === 'Elite' ? `Elite ${gender}` : `${base}${gender}`);
+    }
   }
 
-  return 'Alle';
+  if (found.size === 0) return 'Alle';
+  return [...found].sort((a, b) => akSortKey(a) - akSortKey(b)).join(' ');
 }
 
 // ─── Disziplin (Sprint vs. Ausdauer) ────────────────────────────────────────
