@@ -60,7 +60,7 @@ export function detectAK(fileName: string): string {
 // ─── Disziplin (Sprint vs. Ausdauer) ────────────────────────────────────────
 
 const SPRINT_KEYWORDS = /(sprint|keirin|teamsprint|zeitfahren|kilometer|200\s?m)/i;
-const AUSDAUER_KEYWORDS = /(punktefahren|madison|verfolgung|omnium|scratch|temporunden|ausscheidungsfahren|mannschaftsfahren|\bEV\b|\bMV\b)/i;
+const AUSDAUER_KEYWORDS = /(punktefahren|madison|verfolgung|omnium|scratch|temporunden|ausscheidungsfahren|\bausscheidung\b|mannschaftsfahren|\bEV\b|\bMV\b)/i;
 
 export function detectDiscipline(fileName: string): Discipline {
   if (SPRINT_KEYWORDS.test(fileName)) return 'SPRINT';
@@ -99,6 +99,10 @@ export function detectDisciplineCode(fileName: string): string | null {
   if (/mannschaftsverfolgung/i.test(fileName) || /\bMV\b/i.test(fileName)) return 'MV';
   if (/einzelverfolgung/i.test(fileName) || /\bEV\b/i.test(fileName)) return 'EV';
   if (/verfolgung/i.test(fileName)) return 'VF';
+  // "Ausscheidung" ist eine in der Praxis vorkommende Kurzform von
+  // "Ausscheidungsfahren".
+  if (/ausscheidungsfahren|\bausscheidung\b/i.test(fileName)) return 'AF';
+  if (/scratch/i.test(fileName)) return 'SC';
   return null;
 }
 
