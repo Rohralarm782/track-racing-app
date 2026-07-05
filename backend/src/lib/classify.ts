@@ -4,8 +4,9 @@ import type { DocType, Discipline } from '@prisma/client';
 
 export function detectDocType(fileName: string): DocType {
   const lower = fileName.toLowerCase();
-  if (/(start.?liste|start.?aufstellung|meldeliste|ansetz)/.test(lower)) return 'STARTLISTE';
-  if (/(ergebnis|wertung|resultat|schlusswertung|rundenwertung)/.test(lower)) return 'ERGEBNIS';
+  // "Ansatz" ist eine in der Praxis vorkommende Tippvariante von "Ansetz(ung)"
+  if (/(start.?liste|start.?aufstellung|meldeliste|ansetz|ansatz)/.test(lower)) return 'STARTLISTE';
+  if (/(ergebnis|ergeb\b|wertung|resultat|schlusswertung|rundenwertung)/.test(lower)) return 'ERGEBNIS';
   return 'SONSTIGES';
 }
 
@@ -39,7 +40,7 @@ export function detectAK(fileName: string): string {
 // ─── Disziplin (Sprint vs. Ausdauer) ────────────────────────────────────────
 
 const SPRINT_KEYWORDS = /(sprint|keirin|teamsprint|zeitfahren|kilometer|200\s?m)/i;
-const AUSDAUER_KEYWORDS = /(punktefahren|madison|verfolgung|omnium|scratch|temporunden|ausscheidungsfahren|mannschaftsfahren)/i;
+const AUSDAUER_KEYWORDS = /(punktefahren|madison|verfolgung|omnium|scratch|temporunden|ausscheidungsfahren|mannschaftsfahren|\bEV\b|\bMV\b)/i;
 
 export function detectDiscipline(fileName: string): Discipline {
   if (SPRINT_KEYWORDS.test(fileName)) return 'SPRINT';
@@ -55,32 +56,62 @@ export function detectDiscipline(fileName: string): Discipline {
 // keyword-basiert erkannt — robuster gegenüber echten, unsauberen Dateinamen.
 
 const AK_SEGMENT = /^u1[3579]\s?[mw]$|^elite\s?[mw]$|^masters\s?[mw]$/i;
-const TYPE_SUFFIX = /\b(Ansetzung|Ansetz|Ergebnis|Endstand|Strafen|ZStand\.?\s?\d*|Zwischenstand\s?\d*)\b\.?\s*$/i;
+// Wortweise Variante (nicht ganzes Segment) für die Phasen-Extraktion weiter unten
+const AK_WORD = /\b(u1[3579]\s?[mw]|elite\s?[mw]|masters\s?[mw])\b/gi;
+
+// Reine Typ-/Status-Schlagworte (Ansetzung vs. Ergebnis) — bewusst OHNE "VF",
+// weil das in echten Dateinamen als Abkürzung für "Viertelfinale" (Phase)
+// verwendet wird, nicht für "Verfolgung" (Disziplin) — siehe detectDisciplineCode.
+const TYPE_WORDS = /\b(Ansetzung|Ansetz|Ansatz|Ergebnis|Ergeb|Endstand|Strafen|ZStand\.?\s?\d*|Zwischenstand\s?\d*)\b\.?/gi;
+// Eindeutige Disziplin-Kürzel/Wörter, die aus der Phase entfernt werden, weil
+// sie bereits über disciplineCode abgebildet sind. "VF" bewusst ausgenommen
+// (siehe oben).
+const DISCIPLINE_CODE_WORDS = /\b(MA|PR|OM|MV|EV)\b/g;
 
 export function detectDisciplineCode(fileName: string): string | null {
-  if (/\bMA\b/i.test(fileName)) return 'MA';
-  if (/\bPR\b/i.test(fileName)) return 'PR';
-  if (/\bOM\b/i.test(fileName)) return 'OM';
-  if (/temporunden|\bTR\b/i.test(fileName)) return 'TR';
-  if (/verfolgung|\bVF\b/i.test(fileName)) return 'VF';
+  if (/\bMA\b/i.test(fileName) || /madison/i.test(fileName)) return 'MA';
+  if (/\bPR\b/i.test(fileName) || /punktefahren/i.test(fileName)) return 'PR';
+  if (/\bOM\b/i.test(fileName) || /omnium/i.test(fileName)) return 'OM';
+  if (/temporunden/i.test(fileName)) return 'TR';
+  // Mannschafts-/Einzelverfolgung MÜSSEN vor dem generischen "verfolgung"-Fallback
+  // geprüft werden. Ein blankes "VF" wird bewusst NICHT als Verfolgung gewertet,
+  // da es in Sprint-Dateinamen "Viertelfinale" bedeutet (Phase, keine Disziplin).
+  if (/mannschaftsverfolgung/i.test(fileName) || /\bMV\b/i.test(fileName)) return 'MV';
+  if (/einzelverfolgung/i.test(fileName) || /\bEV\b/i.test(fileName)) return 'EV';
+  if (/verfolgung/i.test(fileName)) return 'VF';
   return null;
 }
 
 // Extrahiert den "Rest" des Dateinamens nach Entfernen von Kommuniqué-Nummer,
-// AK-Segment und abschließendem Typ-Schlagwort — das, was übrig bleibt, ist
-// meist die Phase (z.B. "1. VL", "A-Lauf", "Finale"), manchmal kombiniert mit
-// dem Disziplin-Kürzel selbst (z.B. "Om AS A-Lauf" bei Omnium-Teildisziplinen).
+// Altersklasse, Typ-Schlagwort (Ansetzung/Ergebnis/…) und eindeutigem
+// Disziplin-Kürzel — was übrig bleibt, ist die Phase/Runde (z.B. "Quali",
+// "Finale", "1.VL", "VF" bei Sprint = Viertelfinale). Arbeitet wortweise statt
+// über feste Trennzeichen-Positionen, da reale Dateinamen meist nur einen
+// einzigen " - "-Trenner haben (z.B. "K19 - U17w Ansatz Quali EV.pdf").
 export function detectPhaseLabel(fileName: string): string | null {
   const base = fileName.replace(/\.pdf$/i, '');
   const segments = base.split(' - ').map(s => s.trim()).filter(Boolean);
   const rest = segments.slice(1).filter(seg => !AK_SEGMENT.test(seg));
   if (rest.length === 0) return null;
 
-  let joined = rest.join(' ').replace(TYPE_SUFFIX, '').trim();
-  // Führendes Disziplin-Kürzel entfernen, falls es der Anfang des Rests ist
-  joined = joined.replace(/^(MA|PR|OM)\s*/i, '').trim();
+  let joined = rest.join(' ');
+  joined = joined.replace(AK_WORD, ' ');
+  joined = joined.replace(TYPE_WORDS, ' ');
+  joined = joined.replace(DISCIPLINE_CODE_WORDS, ' ');
+  joined = joined.replace(/\s+/g, ' ').trim();
 
   return joined.length > 0 ? joined : null;
+}
+
+// ─── Kommuniqué-Nummer ──────────────────────────────────────────────────────
+// Kommuniqués sind block-nummeriert in der Reihenfolge des Ablaufprogramms
+// (z.B. "K198", "K198B"). Dient als robustes, textunabhängiges Signal für die
+// Zeitplan-Verknüpfung (siehe schedule.ts): innerhalb derselben AK+Disziplin
+// entspricht die K-Nummer-Reihenfolge der zeitlichen Reihenfolge im Zeitplan —
+// unabhängig davon, wie die Phase im Dateinamen geschrieben ist.
+export function parseCommuniqueNumber(fileName: string): number {
+  const match = fileName.match(/^K?\s*(\d+)/);
+  return match ? parseInt(match[1], 10) : Number.MAX_SAFE_INTEGER;
 }
 
 // ─── Kombiniert ─────────────────────────────────────────────────────────────
