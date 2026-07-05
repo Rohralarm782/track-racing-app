@@ -7,6 +7,7 @@ import CategoryDetail from './pages/CategoryDetail';
 import RaceDetail from './pages/RaceDetail';
 import PursuitPage from './pages/PursuitPage';
 import CommuniquesPage from './pages/CommuniquesPage';
+import SchedulePage from './pages/SchedulePage';
 
 const router = createBrowserRouter([
   {
@@ -17,6 +18,7 @@ const router = createBrowserRouter([
       { path: 'events/new',     element: <CreateEvent /> },
       { path: 'events/:id',     element: <EventDetail /> },
       { path: 'events/:id/communiques', element: <CommuniquesPage /> },
+      { path: 'events/:id/schedule',    element: <SchedulePage /> },
       { path: 'categories/:id', element: <CategoryDetail /> },
       { path: 'races/:id',      element: <RaceDetail /> },
       { path: 'pursuit', element: <PursuitPage /> },
