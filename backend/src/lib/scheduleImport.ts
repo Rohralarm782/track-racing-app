@@ -131,10 +131,23 @@ const DISCIPLINE_HINTS: Record<string, string[]> = {
   TR: ['temporunden'],
   VF: ['verfolgung'],
   MV: ['mannschaftsverfolgung'],
-  EV: ['einzelverfolgung', ' ev', 'ev '],
+  EV: ['einzelverfolgung', 'ev'],
   AF: ['ausscheidungsfahren'],
   SC: ['scratch'],
+  ZF: ['zeitfahren'],
+  TS: ['teamsprint'],
+  SP: ['sprint'],
+  KE: ['keirin'],
 };
+
+// Kurze Hints (z.B. "ev", "sprint") können sonst versehentlich in einem
+// längeren Wort anschlagen, das eine ANDERE Disziplin bezeichnet (z.B.
+// "sprint" in "Teamsprint"). Mehrwortige Hints bleiben eine einfache
+// Teilstring-Suche, einzelne Wörter werden per Wortgrenze geprüft.
+function hasHint(disciplineNorm: string, hint: string): boolean {
+  if (hint.includes(' ')) return disciplineNorm.includes(hint);
+  return new RegExp(`\\b${hint}\\b`).test(disciplineNorm);
+}
 
 // Phasen-Kürzel aus Kommuniqué-Dateinamen auf die von der KI aus dem
 // Zeitplan-PDF extrahierten Klartext-Bezeichnungen mappen. Muss VOR dem
@@ -157,9 +170,9 @@ function normalize(s: string): string {
 // vorhanden) entspricht — für das Rang-Matching, da Einträge selbst kein
 // Kürzel haben. Bei Mehrdeutigkeit (mehrere Kürzel passen zufällig) wird
 // null zurückgegeben, um keine falsche Gruppierung zu riskieren.
-function inferCodeForEntry(disciplineLabel: string): string | null {
+export function inferCodeForEntry(disciplineLabel: string): string | null {
   const norm = normalize(disciplineLabel);
-  const matches = Object.entries(DISCIPLINE_HINTS).filter(([, hints]) => hints.some(h => norm.includes(h)));
+  const matches = Object.entries(DISCIPLINE_HINTS).filter(([, hints]) => hints.some(h => hasHint(norm, h)));
   return matches.length === 1 ? matches[0][0] : null;
 }
 
@@ -236,7 +249,7 @@ function findBestMatch(
       let score = 0;
       if (d.disciplineCode) {
         const hints = DISCIPLINE_HINTS[d.disciplineCode] ?? [];
-        if (hints.some(h => disciplineNorm.includes(h))) score += 1;
+        if (hints.some(h => hasHint(disciplineNorm, h))) score += 1;
       }
       if (phaseNorm && d.phaseLabel) {
         const dPhaseNorm = normalize(d.phaseLabel);
@@ -304,7 +317,12 @@ export function loadScheduleWithLinks(eventId: string) {
     where: { eventId },
     orderBy: { order: 'asc' },
     include: {
-      linkedDocument: { select: { id: true, fileName: true, mevNames: true, mevAnalyzedAt: true } },
+      linkedDocument: {
+        select: {
+          id: true, fileName: true, mevNames: true, mevRiders: true,
+          heatCount: true, roundCount: true, starterCount: true, mevAnalyzedAt: true,
+        },
+      },
       linkedResultDocument: { select: { id: true, fileName: true } },
     },
   });
