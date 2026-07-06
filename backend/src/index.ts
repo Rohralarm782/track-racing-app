@@ -54,7 +54,7 @@ async function pollAllSources() {
     const sources = await prisma.communiqueSource.findMany();
     for (const source of sources) {
       try {
-        await pollSource(source.id, source.shareToken);
+        await pollSource(source.id, source.shareToken, source.eventId);
       } catch (err) {
         console.error(`Polling fehlgeschlagen für Quelle ${source.id}:`, err);
       }
