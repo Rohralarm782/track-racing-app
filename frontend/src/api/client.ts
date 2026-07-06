@@ -55,6 +55,11 @@ export interface Event {
 export type DocType = 'STARTLISTE' | 'ERGEBNIS' | 'ZEITPLAN' | 'SONSTIGES';
 export type Discipline = 'SPRINT' | 'AUSDAUER' | 'ALLGEMEIN';
 
+export interface MevRider {
+  name: string;
+  lauf: number | null;
+}
+
 export interface CommuniqueDocument {
   id: string;
   sourceId: string;
@@ -68,6 +73,10 @@ export interface CommuniqueDocument {
   disciplineCode?: string | null;
   phaseLabel?: string | null;
   mevNames?: string[];
+  mevRiders?: MevRider[];
+  heatCount?: number | null;
+  starterCount?: number | null;
+  roundCount?: number | null;
   mevAnalyzedAt?: string | null;
 }
 
@@ -89,6 +98,10 @@ export interface ScheduleEntryLinkedDoc {
   id: string;
   fileName: string;
   mevNames: string[];
+  mevRiders: MevRider[];
+  heatCount: number | null;
+  roundCount: number | null;
+  starterCount: number | null;
   mevAnalyzedAt: string | null;
 }
 
@@ -113,6 +126,10 @@ export interface ScheduleEntry {
   linkedDocument: ScheduleEntryLinkedDoc | null;
   linkedResultDocumentId: string | null;
   linkedResultDocument: ScheduleEntryResultDoc | null;
+  // Geschätzte Renndauer in Minuten (Formel + Kalibrierungsfaktor, siehe
+  // durationEstimate.ts) — null, wenn (noch) nicht schätzbar, z.B. weil die
+  // Runden-/Laufzahl aus der Startliste fehlt.
+  estimatedMinutes: number | null;
 }
 
 export interface DraftScheduleEntry {
@@ -185,6 +202,9 @@ export const communiquesApi = {
 
   togglePin: (eventId: string, documentId: string, pinned: boolean) =>
     api.patch<CommuniqueDocument>(`/api/communiques/${eventId}/documents/${documentId}/pin`, { pinned }),
+
+  reanalyzeMev: (eventId: string, documentId: string) =>
+    api.post<CommuniqueDocument>(`/api/communiques/${eventId}/documents/${documentId}/reanalyze-mev`, {}),
 
   importSchedule: (eventId: string, documentId: string) =>
     api.post<void>(`/api/communiques/${eventId}/documents/${documentId}/import-schedule`, {}),
