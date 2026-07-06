@@ -3,6 +3,7 @@ import { z } from 'zod';
 import prisma from '../prisma';
 import { requireAdmin } from '../middleware/auth';
 import { analyzeZeitplanPdf, autoMatch, loadScheduleWithLinks, ScheduleEntryInputSchema } from '../lib/scheduleImport';
+import { estimateMinutes, recalibrateFromStatusUpdate } from '../lib/durationEstimate';
 
 const router = Router();
 
@@ -44,14 +45,27 @@ router.post('/events/:id/schedule', requireAdmin, async (req, res, next) => {
     });
 
     await autoMatch(eventId);
-    res.status(201).json(await loadScheduleWithLinks(eventId));
+    res.status(201).json(await withEstimates(await loadScheduleWithLinks(eventId)));
   } catch (e) { next(e); }
 });
+
+// Reichert eine geladene Zeitplan-Liste um die geschätzte Dauer pro Rennen an
+// (siehe durationEstimate.ts). Separat von loadScheduleWithLinks gehalten,
+// da nicht jeder Aufrufer (z.B. autoMatch) das braucht.
+async function withEstimates<T extends { ak: string; disciplineLabel: string; massStart: boolean; type: string; linkedDocument: { roundCount: number | null; heatCount: number | null } | null }>(
+  entries: T[],
+): Promise<Array<T & { estimatedMinutes: number | null }>> {
+  return Promise.all(entries.map(async e => ({
+    ...e,
+    estimatedMinutes: await estimateMinutes(e, e.linkedDocument),
+  })));
+}
 
 // GET /api/events/:id/schedule — Liste inkl. verknüpftem Kommuniqué
 router.get('/events/:id/schedule', async (req, res, next) => {
   try {
-    res.json(await loadScheduleWithLinks(req.params.id));
+    const entries = await loadScheduleWithLinks(req.params.id);
+    res.json(await withEstimates(entries));
   } catch (e) { next(e); }
 });
 
@@ -60,7 +74,7 @@ router.get('/events/:id/schedule', async (req, res, next) => {
 router.post('/events/:id/schedule/rematch', requireAdmin, async (req, res, next) => {
   try {
     await autoMatch(req.params.id);
-    res.json(await loadScheduleWithLinks(req.params.id));
+    res.json(await withEstimates(await loadScheduleWithLinks(req.params.id)));
   } catch (e) { next(e); }
 });
 
@@ -74,7 +88,7 @@ router.delete('/events/:id/schedule/days/:day', requireAdmin, async (req, res, n
     const day = Number(req.params.day);
     if (!Number.isInteger(day)) { res.status(400).json({ error: 'Ungültige Tagesnummer' }); return; }
     await prisma.scheduleEntry.deleteMany({ where: { eventId: req.params.id, day } });
-    res.json(await loadScheduleWithLinks(req.params.id));
+    res.json(await withEstimates(await loadScheduleWithLinks(req.params.id)));
   } catch (e) { next(e); }
 });
 
@@ -148,6 +162,17 @@ router.put('/events/:id/status', requireAdmin, async (req, res, next) => {
       update: { scheduleEntryId, statusKey, roundsLeft: roundsLeft ?? null, offsetMinutes },
       include: { scheduleEntry: true },
     });
+
+    // Verlaufseintrag für die Selbstkalibrierung (siehe durationEstimate.ts) —
+    // getrennt vom EventStatus-Singleton oben, das nur den letzten Stand hält.
+    const logEntry = await prisma.statusUpdateLog.create({
+      data: { eventId: req.params.id, scheduleEntryId, statusKey },
+    });
+    // Läuft bewusst nicht blockierend für die Antwort, aber mit Fehlerprotokoll —
+    // ein Kalibrierungsfehler darf das eigentliche Speichern nie verhindern.
+    recalibrateFromStatusUpdate(req.params.id, logEntry.id, scheduleEntryId, logEntry.createdAt)
+      .catch(err => console.error('Kalibrierung fehlgeschlagen:', err));
+
     res.json(status);
   } catch (e) { next(e); }
 });
