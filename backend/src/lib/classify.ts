@@ -4,6 +4,7 @@ import type { DocType, Discipline } from '@prisma/client';
 
 export function detectDocType(fileName: string): DocType {
   const lower = fileName.toLowerCase();
+  if (/zeitplan/.test(lower)) return 'ZEITPLAN';
   // "Ansatz" ist eine in der Praxis vorkommende Tippvariante von "Ansetz(ung)"
   if (/(start.?liste|start.?aufstellung|meldeliste|ansetz|ansatz)/.test(lower)) return 'STARTLISTE';
   if (/(ergebnis|ergeb\b|wertung|resultat|schlusswertung|rundenwertung)/.test(lower)) return 'ERGEBNIS';
