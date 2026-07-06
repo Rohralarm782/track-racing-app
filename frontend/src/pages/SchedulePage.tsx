@@ -311,6 +311,17 @@ export default function SchedulePage() {
                           <span>kein Kommuniqué zugeordnet</span>
                         )}
                         {mev && <span> · MEV: {mev}</span>}
+                        {entry.linkedResultDocument && (
+                          <>
+                            {' · '}
+                            <span
+                              style={{ color: 'var(--c-success, #16a34a)', cursor: 'pointer' }}
+                              onClick={() => setViewingDocId(entry.linkedResultDocument!.id)}
+                            >
+                              🏁 Ergebnis öffnen
+                            </span>
+                          </>
+                        )}
                       </div>
                     )}
                   </div>
