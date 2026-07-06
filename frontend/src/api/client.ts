@@ -109,6 +109,7 @@ export interface ScheduleEntry {
 
 export interface DraftScheduleEntry {
   day: number;
+  dayLabel?: string | null;
   time: string;
   ak: string;
   disciplineLabel: string;
@@ -207,6 +208,9 @@ export const scheduleApi = {
 
   rematch: (eventId: string) =>
     api.post<ScheduleEntry[]>(`/api/events/${eventId}/schedule/rematch`, {}),
+
+  deleteDay: (eventId: string, day: number) =>
+    api.delete<ScheduleEntry[]>(`/api/events/${eventId}/schedule/days/${day}`),
 
   linkDocument: (entryId: string, linkedDocumentId: string | null) =>
     api.patch<ScheduleEntry>(`/api/schedule-entries/${entryId}`, { linkedDocumentId }),
