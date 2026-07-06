@@ -101,6 +101,7 @@ export interface ScheduleEntry {
   id: string;
   eventId: string;
   day: number;
+  dayLabel: string | null;
   time: string;
   ak: string;
   disciplineLabel: string;
