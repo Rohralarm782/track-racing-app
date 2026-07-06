@@ -43,7 +43,10 @@ export default function EventTabBar({ eventId, active, onLocalTabChange }: Event
   });
 
   return (
-    <div style={{ display: 'flex', gap: 2, background: '#f3f4f6', borderRadius: 9, padding: 3, marginBottom: 16 }}>
+    <div style={{
+      display: 'flex', gap: 2, background: '#f3f4f6', borderRadius: 9, padding: 3, marginBottom: 16,
+      position: 'sticky', top: 54, zIndex: 9,
+    }}>
       <button style={tabStyle('uebersicht')} onClick={() => go('uebersicht')}>Übersicht</button>
       <button style={tabStyle('kommuniques')} onClick={() => go('kommuniques')}>🔔 Kommuniqués</button>
       <button style={tabStyle('zeitplan')} onClick={() => go('zeitplan')}>🗓️ Zeitplan</button>
