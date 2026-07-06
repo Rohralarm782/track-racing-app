@@ -275,6 +275,9 @@ model CommuniqueDocument {
   mevAnalyzedAt DateTime? // wann die MEV-Analyse zuletzt gelaufen ist (null = noch nicht analysiert)
 
   scheduleEntry ScheduleEntry?
+  // Reverse von linkedResultDocumentId (siehe ScheduleEntry) — falls DIESES
+  // Dokument als Ergebnis zu einem Zeitplan-Eintrag verknüpft ist.
+  scheduleEntryAsResult ScheduleEntry? @relation("ScheduleEntryResult")
   // Zeitplan-Einträge, die aus DIESEM Dokument automatisch importiert wurden
   // (nur bei docType=ZEITPLAN relevant) — siehe sourceDocumentId oben.
   sourceForEntries ScheduleEntry[] @relation("ScheduleEntrySource")
@@ -318,6 +321,12 @@ model ScheduleEntry {
 
   linkedDocumentId String?             @unique
   linkedDocument    CommuniqueDocument? @relation(fields: [linkedDocumentId], references: [id], onDelete: SetNull)
+
+  // Verknüpftes Ergebnis-Kommuniqué, sobald verfügbar — bewusst getrennt von
+  // linkedDocument (Startliste/Ansetzung), damit die dortigen MEV-Namen auch
+  // nach Veröffentlichung des Ergebnisses weiter angezeigt werden können.
+  linkedResultDocumentId String?             @unique
+  linkedResultDocument    CommuniqueDocument? @relation("ScheduleEntryResult", fields: [linkedResultDocumentId], references: [id], onDelete: SetNull)
 
   // Welches ZEITPLAN-Kommuniqué diesen Eintrag automatisch erzeugt hat (siehe
   // autoImportScheduleFromDocument). Getrennt von linkedDocumentId (das die
