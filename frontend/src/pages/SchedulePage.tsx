@@ -7,7 +7,7 @@ import ScheduleImport from '../components/ScheduleImport';
 import { useAdmin } from '../components/Layout';
 import {
   api, communiquesApi, scheduleApi,
-  type Event as EventT, type ScheduleEntry, type EventStatus, type LiveStatusKey,
+  type Event as EventT, type ScheduleEntry, type EventStatus, type LiveStatusKey, type MevRider,
 } from '../api/client';
 
 const TYPE_ICON: Record<string, string> = { RACE: '🏁', CEREMONY: '🏅', INFO: 'ℹ️' };
@@ -38,13 +38,58 @@ function agoLabel(iso: string): string {
 // grober Zeichen-Schwellenwert statt fester Personenzahl (siehe Absprache).
 // Nur Vorname (erstes Wort) — reicht für die Wiedererkennung am Start, spart
 // Platz. Bindestrich-Vornamen (z.B. "Max-David") bleiben erhalten, da nur an
-// Leerzeichen getrennt wird, nicht am Bindestrich.
-function mevSummary(names: string[]): string | null {
-  if (!names || names.length === 0) return null;
-  const firstNames = names.map(n => n.trim().split(/\s+/)[0]);
-  const joined = firstNames.join(', ');
-  if (joined.length <= 38) return joined;
-  return `${names.length} Fahrer`;
+// Leerzeichen getrennt wird, nicht am Bindestrich. Lauf-Nummer (falls
+// vorhanden) wird direkt am Namen angezeigt, da bei mehreren MEV-Fahrern im
+// selben Rennen jeder in einem anderen Lauf stehen kann.
+function mevSummary(riders: MevRider[]): string | null {
+  if (!riders || riders.length === 0) return null;
+  const parts = riders.map(r => {
+    const first = r.name.trim().split(/\s+/)[0];
+    return r.lauf != null ? `${first} (Lauf ${r.lauf})` : first;
+  });
+  const joined = parts.join(', ');
+  if (joined.length <= 46) return joined;
+  return `${riders.length} Fahrer`;
+}
+
+const CEREMONY_ESTIMATE_MIN = 3;
+const ESTIMATE_DISPLAY_THRESHOLD_MIN = 5;
+
+// Errechnet pro Eintrag eines Tages eine geschätzte Uhrzeit, indem die
+// geschätzte Dauer (estimatedMinutes, vom Backend kalibriert) ab einem Anker
+// fortlaufend aufsummiert wird — statt der bisherigen Variante, die den
+// ganzen Tag nur um einen einzigen fixen Versatz verschoben hat. Anker-Logik:
+//   - Sobald der Eintrag mit dem aktuell gemeldeten "Aktueller Stand"
+//     übereinstimmt: die ECHTE beobachtete Zeit (Zeitplan-Zeit + offsetMinutes)
+//     als neuen, verlässlicheren Anker übernehmen.
+//   - Bei INFO-Einträgen (Warm-up, Pausen, Ende) IMMER auf deren eigene
+//     Zeitplan-Zeit zurücksetzen — die sind meist echte, fixe Eckpunkte.
+//   - Wenn für einen Eintrag keine Schätzung vorliegt (z.B. Runden-/Laufzahl
+//     noch unbekannt), NICHT weiter aufsummieren, sondern beim nächsten
+//     Eintrag wieder bei dessen eigener Zeitplan-Zeit neu ansetzen — lieber
+//     eine Lücke als eine unbegründete Zahl.
+function computeEstimatedTimes(
+  dayEntries: ScheduleEntry[],
+  status: EventStatus | null,
+  currentEntryDay: number | null | undefined,
+): Map<string, string> {
+  const result = new Map<string, string>();
+  let cumulative: number | null = null;
+
+  for (const entry of dayEntries) {
+    if (status && currentEntryDay === entry.day && status.scheduleEntryId === entry.id) {
+      cumulative = toMinutes(entry.time) + status.offsetMinutes;
+    } else if (entry.type === 'INFO' || cumulative == null) {
+      cumulative = toMinutes(entry.time);
+    }
+
+    result.set(entry.id, fromMinutes(cumulative));
+
+    const dur = entry.estimatedMinutes ?? (entry.type === 'CEREMONY' ? CEREMONY_ESTIMATE_MIN : null);
+    cumulative = dur != null ? cumulative + dur : null;
+  }
+
+  return result;
 }
 
 export default function SchedulePage() {
@@ -206,7 +251,10 @@ export default function SchedulePage() {
         <>
           {/* Tages-Reiter */}
           {days.length > 1 && (
-            <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+            <div style={{
+              display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center',
+              position: 'sticky', top: 90, zIndex: 8, background: 'var(--c-bg)', paddingTop: 6, paddingBottom: 6,
+            }}>
               {days.map(d => (
                 <button
                   key={d}
@@ -270,13 +318,16 @@ export default function SchedulePage() {
 
           {/* Zeitplan-Liste (alle Rennen & Siegerehrungen des Tages) */}
           <div className="card" style={{ padding: '4px 14px' }}>
-            {dayEntries.map(entry => {
-              const isCurrent = status?.scheduleEntryId === entry.id;
-              const isPast = status != null && currentEntryDay === entry.day && currentEntryOrder != null && entry.order < currentEntryOrder;
-              const adjustedTime = status && currentEntryDay === entry.day
-                ? fromMinutes(toMinutes(entry.time) + status.offsetMinutes)
-                : entry.time;
-              const mev = entry.linkedDocument ? mevSummary(entry.linkedDocument.mevNames) : null;
+            {(() => {
+              const estimatedTimes = computeEstimatedTimes(dayEntries, status, currentEntryDay);
+              return dayEntries.map(entry => {
+                const isCurrent = status?.scheduleEntryId === entry.id;
+                const isPast = status != null && currentEntryDay === entry.day && currentEntryOrder != null && entry.order < currentEntryOrder;
+                const estimatedTime = estimatedTimes.get(entry.id) ?? entry.time;
+                const showEstimate = Math.abs(toMinutes(estimatedTime) - toMinutes(entry.time)) > ESTIMATE_DISPLAY_THRESHOLD_MIN;
+                const displayTime = showEstimate ? estimatedTime : entry.time;
+                const mev = entry.linkedDocument ? mevSummary(entry.linkedDocument.mevRiders) : null;
+                const heatCount = entry.linkedDocument?.heatCount ?? null;
 
               return (
                 <div
@@ -291,8 +342,8 @@ export default function SchedulePage() {
                   }}
                 >
                   <div>
-                    <div style={{ fontSize: 13, fontWeight: isCurrent ? 600 : 400 }}>{adjustedTime}</div>
-                    {adjustedTime !== entry.time && (
+                    <div style={{ fontSize: 13, fontWeight: isCurrent ? 600 : 400 }}>{displayTime}</div>
+                    {showEstimate && (
                       <div style={{ fontSize: 10, color: 'var(--c-text-muted)' }}>{entry.time}</div>
                     )}
                   </div>
@@ -301,6 +352,14 @@ export default function SchedulePage() {
                       {entry.type !== 'RACE' && <span style={{ marginRight: 5 }}>{TYPE_ICON[entry.type]}</span>}
                       {entry.type === 'INFO' ? entry.disciplineLabel : (
                         <>{entry.ak} · {entry.disciplineLabel}{entry.phase ? ` · ${entry.phase}` : ''}</>
+                      )}
+                      {entry.type === 'RACE' && heatCount != null && (
+                        <span style={{
+                          marginLeft: 6, fontSize: 11, fontWeight: 500, color: 'var(--c-text-muted)',
+                          background: 'var(--c-bg-muted, #f3f4f6)', padding: '1px 7px', borderRadius: 10,
+                        }}>
+                          {heatCount} {heatCount === 1 ? 'Lauf' : 'Läufe'}
+                        </span>
                       )}
                     </div>
                     {entry.type === 'RACE' && (
@@ -335,7 +394,8 @@ export default function SchedulePage() {
                   </span>
                 </div>
               );
-            })}
+              });
+            })()}
           </div>
 
           {isAdmin && (
