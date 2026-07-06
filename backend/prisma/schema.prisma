@@ -39,6 +39,7 @@ enum FlagType {
 enum DocType {
   STARTLISTE
   ERGEBNIS
+  ZEITPLAN
   SONSTIGES
 }
 
@@ -274,6 +275,9 @@ model CommuniqueDocument {
   mevAnalyzedAt DateTime? // wann die MEV-Analyse zuletzt gelaufen ist (null = noch nicht analysiert)
 
   scheduleEntry ScheduleEntry?
+  // Zeitplan-Einträge, die aus DIESEM Dokument automatisch importiert wurden
+  // (nur bei docType=ZEITPLAN relevant) — siehe sourceDocumentId oben.
+  sourceForEntries ScheduleEntry[] @relation("ScheduleEntrySource")
 
   @@unique([sourceId, fileName])
 }
@@ -311,6 +315,15 @@ model ScheduleEntry {
 
   linkedDocumentId String?             @unique
   linkedDocument    CommuniqueDocument? @relation(fields: [linkedDocumentId], references: [id], onDelete: SetNull)
+
+  // Welches ZEITPLAN-Kommuniqué diesen Eintrag automatisch erzeugt hat (siehe
+  // autoImportScheduleFromDocument). Getrennt von linkedDocumentId (das die
+  // passende Ansetzung/Ergebnis für die Renn-Anzeige verknüpft), weil reale
+  // Zeitpläne oft aus einem PDF PRO VERANSTALTUNGSTAG bestehen — beim
+  // (Re-)Import eines Tages dürfen die Einträge der anderen Tage nicht
+  // gelöscht werden. NICHT @unique: ein Dokument erzeugt viele Einträge.
+  sourceDocumentId String?
+  sourceDocument   CommuniqueDocument? @relation("ScheduleEntrySource", fields: [sourceDocumentId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
 
