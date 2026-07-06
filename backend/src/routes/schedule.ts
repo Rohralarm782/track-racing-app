@@ -81,16 +81,24 @@ router.delete('/events/:id/schedule/days/:day', requireAdmin, async (req, res, n
 // PATCH /api/schedule-entries/:id — manuelle Korrektur (z.B. Kommuniqué per Hand verknüpfen/lösen)
 const PatchEntrySchema = z.object({
   linkedDocumentId: z.string().nullable().optional(),
+  linkedResultDocumentId: z.string().nullable().optional(),
 });
 
 router.patch('/schedule-entries/:id', requireAdmin, async (req, res, next) => {
   try {
     const parsed = PatchEntrySchema.safeParse(req.body);
     if (!parsed.success) { res.status(400).json(parsed.error.flatten()); return; }
-    if (parsed.data.linkedDocumentId === undefined) { res.json(await prisma.scheduleEntry.findUnique({ where: { id: req.params.id } })); return; }
+    const { linkedDocumentId, linkedResultDocumentId } = parsed.data;
+    if (linkedDocumentId === undefined && linkedResultDocumentId === undefined) {
+      res.json(await prisma.scheduleEntry.findUnique({ where: { id: req.params.id } }));
+      return;
+    }
+    const data: Record<string, string | null> = {};
+    if (linkedDocumentId !== undefined) data.linkedDocumentId = linkedDocumentId;
+    if (linkedResultDocumentId !== undefined) data.linkedResultDocumentId = linkedResultDocumentId;
     const entry = await prisma.scheduleEntry.update({
       where: { id: req.params.id },
-      data: { linkedDocumentId: parsed.data.linkedDocumentId },
+      data: data as any,
     });
     res.json(entry);
   } catch (e) { next(e); }
