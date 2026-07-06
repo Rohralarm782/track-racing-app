@@ -73,6 +73,7 @@ export default function CommuniquesPage() {
   const [omniumBase64, setOmniumBase64] = useState<string | null>(null);
   const [omniumBusy, setOmniumBusy] = useState(false);
   const [zeitplanBusy, setZeitplanBusy] = useState(false);
+  const [mevReanalyzeBusy, setMevReanalyzeBusy] = useState(false);
   const [error, setError]     = useState('');
 
   // Setup
@@ -360,6 +361,23 @@ export default function CommuniquesPage() {
       setError(e.message ?? 'Zeitplan-Import fehlgeschlagen');
     } finally {
       setZeitplanBusy(false);
+    }
+  }
+
+  async function handleReanalyzeMev(doc: CommuniqueDocumentT) {
+    if (!eventId) return;
+    setMevReanalyzeBusy(true); setError('');
+    try {
+      const updated = await communiquesApi.reanalyzeMev(eventId, doc.id);
+      setSource(prev => prev ? {
+        ...prev,
+        documents: prev.documents.map(d => d.id === doc.id ? updated : d),
+      } : prev);
+      setViewingDoc(updated);
+    } catch (e: any) {
+      setError(e.message ?? 'MEV-Analyse fehlgeschlagen');
+    } finally {
+      setMevReanalyzeBusy(false);
     }
   }
 
@@ -742,6 +760,17 @@ export default function CommuniquesPage() {
                   style={{ fontSize: 12 }}
                 >
                   {zeitplanBusy ? 'Lädt…' : '📅 Zeitplan importieren'}
+                </button>
+              )}
+              {isAdmin && viewingDoc.docType === 'STARTLISTE' && (
+                <button
+                  onClick={() => handleReanalyzeMev(viewingDoc)}
+                  className="btn btn-secondary btn-sm"
+                  disabled={mevReanalyzeBusy}
+                  title="MEV-Namen, Lauf-Nummer, Laufzahl und Rundenzahl neu erkennen"
+                  style={{ fontSize: 12 }}
+                >
+                  {mevReanalyzeBusy ? 'Lädt…' : '🔁 MEV neu analysieren'}
                 </button>
               )}
               {isAdmin && (
