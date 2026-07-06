@@ -15,10 +15,11 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const ZEITPLAN_PROMPT = `Analysiere diesen Zeitplan einer Bahnrad-Veranstaltung (kann mehrere Tage umfassen).
 Gib NUR JSON zurück (kein Markdown, kein Text davor/danach):
 
-{"entries":[{"day":1,"time":"17:00","ak":"U17m","disciplineLabel":"Punktefahren","phase":"Vorläufe","type":"RACE","massStart":true}]}
+{"entries":[{"day":1,"dayLabel":"Mittwoch","time":"17:00","ak":"U17m","disciplineLabel":"Punktefahren","phase":"Vorläufe","type":"RACE","massStart":true}]}
 
 Regeln:
 - day: 1 = erster im Dokument vorkommender Veranstaltungstag, 2 = zweiter usw. (Reihenfolge im Dokument, nicht das Kalenderdatum selbst — manche Zeitplan-Dokumente haben fehlerhafte/inkonsistente Jahresangaben, das ist irrelevant, nur die Reihenfolge und Uhrzeit zählen)
+- dayLabel: der Wochentag dieses Tages als Klartext (z.B. "Mittwoch"), so wie im Dokument angegeben (z.B. aus einer Überschrift wie "Mittwoch, 02.07.2025"). Alle Einträge desselben Tages bekommen denselben dayLabel-Wert. Falls kein Wochentag erkennbar ist, weglassen.
 - time: Uhrzeit im Format "HH:MM", so wie im Dokument angegeben
 - ak: Altersklasse normalisiert (z.B. "U17m", "U15w", "Elite m"); falls ein Eintrag mehrere Altersklassen gleichzeitig betrifft (z.B. kombinierte Teamsprint-Wertung über zwei Altersklassen), alle betroffenen Altersklassen durch ein Leerzeichen getrennt in aufsteigender Reihenfolge angeben (z.B. "U17w U19w"), NICHT "Mehrere" verwenden
 - disciplineLabel: Disziplin als Klartext (z.B. "Punktefahren", "Madison", "Omnium Scratch", "3000m Mannschaftsverfolgung")
@@ -52,6 +53,7 @@ export async function analyzeZeitplanPdf(pdfBase64: string): Promise<any[]> {
 
 export const ScheduleEntryInputSchema = z.object({
   day: z.number().int().min(1),
+  dayLabel: z.string().nullable().optional(),
   time: z.string(),
   ak: z.string(),
   disciplineLabel: z.string(),
@@ -59,6 +61,10 @@ export const ScheduleEntryInputSchema = z.object({
   type: z.enum(['RACE', 'CEREMONY', 'INFO']).default('RACE'),
   massStart: z.boolean().default(false),
 });
+
+function normalizeLabel(s: string): string {
+  return s.toLowerCase().trim();
+}
 
 // ─── Matching-Heuristik ─────────────────────────────────────────────────────
 // Drei unabhängige Signale werden zu einem Score addiert. Bei Mehrdeutigkeit
@@ -229,6 +235,14 @@ export async function autoMatch(eventId: string) {
   }
 }
 
+export function loadScheduleWithLinks(eventId: string) {
+  return prisma.scheduleEntry.findMany({
+    where: { eventId },
+    orderBy: { order: 'asc' },
+    include: { linkedDocument: { select: { id: true, fileName: true, mevNames: true, mevAnalyzedAt: true } } },
+  });
+}
+
 // ─── Automatischer Import aus einem Zeitplan-Kommuniqué ────────────────────
 // Reale Zeitpläne kommen häufig als EIN PDF PRO VERANSTALTUNGSTAG (z.B.
 // "Zeitplan Mittwoch.pdf", "Zeitplan Donnerstag.pdf", ...). Im Unterschied
@@ -237,15 +251,18 @@ export async function autoMatch(eventId: string) {
 // Einträge, die zuvor aus genau diesem einen Dokument stammen
 // (sourceDocumentId) — andere Tage bleiben unangetastet.
 //
-// Tages-Nummerierung: Die KI nummeriert Tage relativ INNERHALB des jeweiligen
-// PDFs (1 = erster im Dokument vorkommender Tag). Bei einem Ein-Tag-PDF ist
-// das also immer "1". Damit trotzdem jeder Tag der Veranstaltung seine
-// eigene, fortlaufende Nummer bekommt:
-//   - Neues Dokument (noch keine Einträge mit dieser sourceDocumentId):
-//     wird HINTEN an die bisherige höchste Tagesnummer angehängt.
-//   - Bereits importiertes Dokument wird erneut verarbeitet (z.B. eine
-//     korrigierte Fassung wurde hochgeladen): behält seine bisherige(n)
-//     Tagesnummer(n), statt erneut ans Ende gehängt zu werden.
+// Tages-Auflösung pro lokalem Tag im Analyseergebnis (ein Dokument kann
+// mehrere Tage enthalten):
+//   1. Wurde dieser Tag schon einmal aus GENAU DIESEM Dokument importiert
+//      (Korrektur, z.B. ein aktualisiertes PDF)? → dieselbe Tagesnummer
+//      wie beim letzten Mal wiederverwenden.
+//   2. Sonst: gibt es bereits einen Tag mit demselben Wochentag-Label
+//      (dayLabel), egal woher (manueller Upload ODER ein anderes
+//      Dokument)? → dorthin zusammenführen (dessen alte Einträge werden
+//      ersetzt) statt einen Dubletten-Tag anzulegen. Das ist der Fix für
+//      den Fall "Zeitplan wurde schon einmal per PDF-Upload UND später
+//      nochmal aus dem Kommuniqué importiert".
+//   3. Sonst: neuer Tag, hinten an die höchste bestehende Nummer angehängt.
 export async function autoImportScheduleFromDocument(
   eventId: string,
   doc: { id: string; fileName: string },
@@ -264,24 +281,60 @@ export async function autoImportScheduleFromDocument(
     if (entries.length === 0) return;
 
     await prisma.$transaction(async (tx) => {
-      const previous = await tx.scheduleEntry.findMany({
+      // Welche Tagesnummer(n) hatte DIESES Dokument beim letzten Import?
+      const previousByThisDoc = await tx.scheduleEntry.findMany({
         where: { sourceDocumentId: doc.id },
         select: { day: true },
       });
-
-      let dayOffset: number;
-      if (previous.length > 0) {
-        dayOffset = Math.min(...previous.map(p => p.day)) - 1;
+      const previousDayNumbers = [...new Set(previousByThisDoc.map(p => p.day))].sort((a, b) => a - b);
+      if (previousByThisDoc.length > 0) {
         await tx.scheduleEntry.deleteMany({ where: { sourceDocumentId: doc.id } });
-      } else {
-        const agg = await tx.scheduleEntry.aggregate({ where: { eventId }, _max: { day: true } });
-        dayOffset = agg._max.day ?? 0;
+      }
+
+      // Bestehende Tage der Veranstaltung (nach dem Löschen von oben, damit ein
+      // erneuter Import desselben Dokuments sich nicht selbst als "Dublette" sieht).
+      const existingDays = await tx.scheduleEntry.findMany({
+        where: { eventId },
+        select: { day: true, dayLabel: true },
+        distinct: ['day'],
+      });
+      const dayByLabel = new Map<string, number>();
+      for (const d of existingDays) {
+        if (d.dayLabel) dayByLabel.set(normalizeLabel(d.dayLabel), d.day);
+      }
+      let nextNewDay = existingDays.length > 0 ? Math.max(...existingDays.map(d => d.day)) + 1 : 1;
+
+      const localDays = [...new Set(entries.map(e => e.day))].sort((a, b) => a - b);
+      const resolvedDayFor = new Map<number, number>(); // lokale Tagesnummer im Dokument -> globale Tagesnummer
+
+      localDays.forEach((localDay, idx) => {
+        const label = entries.find(e => e.day === localDay)?.dayLabel;
+        const normLabel = label ? normalizeLabel(label) : null;
+
+        if (previousDayNumbers[idx] !== undefined) {
+          resolvedDayFor.set(localDay, previousDayNumbers[idx]); // Korrektur: alte Nummer behalten
+        } else if (normLabel && dayByLabel.has(normLabel)) {
+          resolvedDayFor.set(localDay, dayByLabel.get(normLabel)!); // Zusammenführen mit bestehendem Tag
+        } else {
+          resolvedDayFor.set(localDay, nextNewDay++); // neuer Tag
+        }
+      });
+
+      // Bei Zusammenführung (Fall 2) die alten Einträge des übernommenen Tages
+      // (z.B. aus einem manuellen Upload, sourceDocumentId=null) entfernen,
+      // damit sie nicht neben den frischen bestehen bleiben.
+      const mergedDayNumbers = [...new Set(resolvedDayFor.values())].filter(
+        gday => !previousDayNumbers.includes(gday)
+      );
+      if (mergedDayNumbers.length > 0) {
+        await tx.scheduleEntry.deleteMany({ where: { eventId, day: { in: mergedDayNumbers } } });
       }
 
       await tx.scheduleEntry.createMany({
         data: entries.map(e => ({
           eventId,
-          day: e.day + dayOffset,
+          day: resolvedDayFor.get(e.day)!,
+          dayLabel: e.dayLabel ?? null,
           time: e.time,
           ak: e.ak,
           disciplineLabel: e.disciplineLabel,
