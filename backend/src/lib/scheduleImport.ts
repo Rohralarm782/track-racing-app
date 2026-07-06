@@ -66,6 +66,54 @@ function normalizeLabel(s: string): string {
   return s.toLowerCase().trim();
 }
 
+const WEEKDAY_ORDER: Record<string, number> = {
+  montag: 1, dienstag: 2, mittwoch: 3, donnerstag: 4, freitag: 5, samstag: 6, sonntag: 7,
+};
+
+function weekdaySortKey(label: string | null): number | null {
+  if (!label) return null;
+  return WEEKDAY_ORDER[normalizeLabel(label)] ?? null;
+}
+
+// Nummeriert alle Tage der Veranstaltung anhand des erkannten Wochentags neu
+// durch — statt der Reihenfolge, in der die Dokumente zufällig importiert
+// wurden. Behebt z.B. den Fall, dass "Sonntag" vor "Freitag" aus einem
+// Kommuniqué importiert wurde und dadurch fälschlich eine niedrigere
+// Tagesnummer (und damit auch eine falsche Gesamt-Reihenfolge, siehe
+// order-Feld) bekommen hätte. Tage OHNE erkanntes dayLabel (z.B. alte, vor
+// Einführung dieses Felds manuell importierte Tage) behalten ihre bisherige
+// relative Reihenfolge zueinander und werden VOR den Tagen mit Wochentag-
+// Label einsortiert, da sie in der Praxis die frühesten Tage einer
+// Veranstaltung sind. Nutzt einen kollisionsfreien Zwischenwert (Offset),
+// damit sich beim Ummappen keine zwei Tage kurzzeitig dieselbe Nummer teilen.
+async function renumberDaysByWeekday(tx: any, eventId: string): Promise<void> {
+  const rows: Array<{ day: number; dayLabel: string | null }> = await tx.scheduleEntry.findMany({
+    where: { eventId },
+    select: { day: true, dayLabel: true },
+    distinct: ['day'],
+  });
+
+  const unlabeled = rows.filter(r => weekdaySortKey(r.dayLabel) == null).sort((a, b) => a.day - b.day);
+  const labeled = rows
+    .filter(r => weekdaySortKey(r.dayLabel) != null)
+    .sort((a, b) => weekdaySortKey(a.dayLabel)! - weekdaySortKey(b.dayLabel)!);
+
+  const finalOrder = [...unlabeled, ...labeled];
+  const dayNumberMap = new Map<number, number>(); // alte Tagesnummer -> neue Tagesnummer
+  finalOrder.forEach((r, i) => dayNumberMap.set(r.day, i + 1));
+
+  const changed = [...dayNumberMap.entries()].filter(([oldDay, newDay]) => oldDay !== newDay);
+  if (changed.length === 0) return;
+
+  const OFFSET = 100000;
+  for (const [oldDay] of changed) {
+    await tx.scheduleEntry.updateMany({ where: { eventId, day: oldDay }, data: { day: oldDay + OFFSET } });
+  }
+  for (const [oldDay, newDay] of changed) {
+    await tx.scheduleEntry.updateMany({ where: { eventId, day: oldDay + OFFSET }, data: { day: newDay } });
+  }
+}
+
 // ─── Matching-Heuristik ─────────────────────────────────────────────────────
 // Drei unabhängige Signale werden zu einem Score addiert. Bei Mehrdeutigkeit
 // (zwei gleich gute Treffer) wird lieber gar nicht verknüpft als geraten.
@@ -364,6 +412,11 @@ export async function autoImportScheduleFromDocument(
           order: 0, // wird direkt im Anschluss über alle Einträge neu berechnet
         })),
       });
+
+      // Tage können in beliebiger Reihenfolge importiert worden sein (z.B.
+      // Sonntag vor Freitag) — hier auf die tatsächliche Wochentag-
+      // Reihenfolge bringen, bevor die Gesamt-Reihenfolge (order) berechnet wird.
+      await renumberDaysByWeekday(tx, eventId);
 
       const all = await tx.scheduleEntry.findMany({
         where: { eventId },
