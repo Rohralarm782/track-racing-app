@@ -135,6 +135,26 @@ router.patch('/:eventId/documents/:documentId/pin', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// POST /api/communiques/:eventId/documents/:documentId/reanalyze-mev — MEV-Analyse
+// manuell neu anstoßen. Fallback für Dokumente, die bereits VOR Einführung von
+// Lauf-Nummer/Laufzahl/Rundenzahl analysiert wurden (mevAnalyzedAt ist dann
+// schon gesetzt, der normale Poll-Zyklus fasst sie deshalb nicht mehr an).
+router.post('/:eventId/documents/:documentId/reanalyze-mev', requireAdmin, async (req, res, next) => {
+  try {
+    const doc = await prisma.communiqueDocument.findUnique({
+      where: { id: req.params.documentId },
+      include: { source: true },
+    });
+    if (!doc || doc.source.eventId !== req.params.eventId) {
+      res.status(404).json({ error: 'Dokument nicht gefunden' });
+      return;
+    }
+    await analyzeMevForDocument(doc, doc.source.shareToken);
+    const updated = await prisma.communiqueDocument.findUnique({ where: { id: doc.id } });
+    res.json(updated);
+  } catch (e) { next(e); }
+});
+
 // POST /api/communiques/:eventId/documents/:documentId/import-schedule — Zeitplan
 // manuell (erneut) aus einem bereits bekannten Dokument importieren. Für neu
 // entdeckte Zeitplan-Kommuniqués passiert das automatisch (siehe pollSource
