@@ -13,8 +13,8 @@ import {
 
 const AK_OPTIONS = ['U15m', 'U15w', 'U17m', 'U17w', 'U19m', 'U19w', 'Elite m', 'Elite w'];
 const DISCIPLINE_LABELS: Record<string, string> = { Alle: 'Alle', SPRINT: 'Sprint', AUSDAUER: 'Ausdauer' };
-const CAT_LABELS: Record<string, string> = { alle: 'Alle', STARTLISTE: 'Startlisten', ERGEBNIS: 'Ergebnisse', SONSTIGES: 'Sonstiges' };
-const CAT_ICON: Record<string, string> = { STARTLISTE: '📋', ERGEBNIS: '🏁', SONSTIGES: '📄' };
+const CAT_LABELS: Record<string, string> = { alle: 'Alle', STARTLISTE: 'Startlisten', ERGEBNIS: 'Ergebnisse', ZEITPLAN: 'Zeitplan', SONSTIGES: 'Sonstiges' };
+const CAT_ICON: Record<string, string> = { STARTLISTE: '📋', ERGEBNIS: '🏁', ZEITPLAN: '📅', SONSTIGES: '📄' };
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
@@ -72,6 +72,7 @@ export default function CommuniquesPage() {
   const [ansetzungBusy, setAnsetzungBusy] = useState(false);
   const [omniumBase64, setOmniumBase64] = useState<string | null>(null);
   const [omniumBusy, setOmniumBusy] = useState(false);
+  const [zeitplanBusy, setZeitplanBusy] = useState(false);
   const [error, setError]     = useState('');
 
   // Setup
@@ -346,6 +347,19 @@ export default function CommuniquesPage() {
       setError(e.message ?? 'Import fehlgeschlagen');
     } finally {
       setAnsetzungBusy(false);
+    }
+  }
+
+  async function startZeitplanImport(doc: CommuniqueDocumentT) {
+    if (!eventId) return;
+    setZeitplanBusy(true); setError('');
+    try {
+      await communiquesApi.importSchedule(eventId, doc.id);
+      setViewingDoc(null);
+    } catch (e: any) {
+      setError(e.message ?? 'Zeitplan-Import fehlgeschlagen');
+    } finally {
+      setZeitplanBusy(false);
     }
   }
 
@@ -719,6 +733,16 @@ export default function CommuniquesPage() {
               {viewingDoc.fileName}
             </span>
             <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+              {isAdmin && viewingDoc.docType === 'ZEITPLAN' && (
+                <button
+                  onClick={() => startZeitplanImport(viewingDoc)}
+                  className="btn btn-primary btn-sm"
+                  disabled={zeitplanBusy}
+                  style={{ fontSize: 12 }}
+                >
+                  {zeitplanBusy ? 'Lädt…' : '📅 Zeitplan importieren'}
+                </button>
+              )}
               {isAdmin && (
                 <button
                   onClick={() => startAnsetzungImport(viewingDoc)}
