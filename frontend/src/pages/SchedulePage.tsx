@@ -36,9 +36,13 @@ function agoLabel(iso: string): string {
 }
 // Namen zeigen solange sie in eine Zeile passen, sonst auf Anzahl umschalten —
 // grober Zeichen-Schwellenwert statt fester Personenzahl (siehe Absprache).
+// Nur Vorname (erstes Wort) — reicht für die Wiedererkennung am Start, spart
+// Platz. Bindestrich-Vornamen (z.B. "Max-David") bleiben erhalten, da nur an
+// Leerzeichen getrennt wird, nicht am Bindestrich.
 function mevSummary(names: string[]): string | null {
   if (!names || names.length === 0) return null;
-  const joined = names.join(', ');
+  const firstNames = names.map(n => n.trim().split(/\s+/)[0]);
+  const joined = firstNames.join(', ');
   if (joined.length <= 38) return joined;
   return `${names.length} Fahrer`;
 }
@@ -82,7 +86,7 @@ export default function SchedulePage() {
 
   async function handleDeleteDay(day: number) {
     if (!eventId) return;
-    if (!window.confirm(`Tag ${day} wirklich komplett löschen? Das entfernt alle Zeitplan-Einträge dieses Tages unwiderruflich.`)) return;
+    if (!window.confirm(`${dayLabelFor(day)} wirklich komplett löschen? Das entfernt alle Zeitplan-Einträge dieses Tages unwiderruflich.`)) return;
     setRematchBusy(true); setError('');
     try {
       const list = await scheduleApi.deleteDay(eventId, day);
@@ -121,6 +125,7 @@ export default function SchedulePage() {
   }
 
   const days = [...new Set(entries.map(e => e.day))].sort((a, b) => a - b);
+  const dayLabelFor = (d: number) => entries.find(e => e.day === d && e.dayLabel)?.dayLabel ?? `Tag ${d}`;
   const dayEntries = entries.filter(e => e.day === activeDay).sort((a, b) => a.order - b.order);
   const raceOptions = entries.filter(e => e.type === 'RACE' && e.day === activeDay);
 
@@ -213,13 +218,13 @@ export default function SchedulePage() {
                     color: activeDay === d ? '#fff' : 'var(--c-text)',
                   }}
                 >
-                  Tag {d}
+                  {dayLabelFor(d)}
                 </button>
               ))}
               {isAdmin && (
                 <button
                   onClick={() => handleDeleteDay(activeDay)}
-                  title={`Tag ${activeDay} löschen`}
+                  title={`${dayLabelFor(activeDay)} löschen`}
                   className="btn btn-ghost btn-sm"
                   style={{ fontSize: 12, color: 'var(--c-danger, #dc2626)', padding: '4px 8px' }}
                 >
