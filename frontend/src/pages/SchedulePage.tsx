@@ -80,6 +80,24 @@ export default function SchedulePage() {
     }
   }
 
+  async function handleDeleteDay(day: number) {
+    if (!eventId) return;
+    if (!window.confirm(`Tag ${day} wirklich komplett löschen? Das entfernt alle Zeitplan-Einträge dieses Tages unwiderruflich.`)) return;
+    setRematchBusy(true); setError('');
+    try {
+      const list = await scheduleApi.deleteDay(eventId, day);
+      setEntries(list);
+      const remainingDays = [...new Set(list.map(e => e.day))];
+      if (!remainingDays.includes(activeDay)) {
+        setActiveDay(remainingDays[0] ?? 1);
+      }
+    } catch (e: any) {
+      setError(e.message ?? 'Löschen fehlgeschlagen');
+    } finally {
+      setRematchBusy(false);
+    }
+  }
+
   async function load() {
     if (!eventId) return;
     setLoading(true); setError('');
@@ -183,7 +201,7 @@ export default function SchedulePage() {
         <>
           {/* Tages-Reiter */}
           {days.length > 1 && (
-            <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
               {days.map(d => (
                 <button
                   key={d}
@@ -198,6 +216,16 @@ export default function SchedulePage() {
                   Tag {d}
                 </button>
               ))}
+              {isAdmin && (
+                <button
+                  onClick={() => handleDeleteDay(activeDay)}
+                  title={`Tag ${activeDay} löschen`}
+                  className="btn btn-ghost btn-sm"
+                  style={{ fontSize: 12, color: 'var(--c-danger, #dc2626)', padding: '4px 8px' }}
+                >
+                  🗑
+                </button>
+              )}
             </div>
           )}
 
