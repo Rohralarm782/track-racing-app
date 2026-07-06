@@ -416,7 +416,7 @@ export async function autoImportScheduleFromDocument(
       }
 
       await tx.scheduleEntry.createMany({
-        data: entries.map(e => ({
+        data: entries.map((e, i) => ({
           eventId,
           day: resolvedDayFor.get(e.day)!,
           dayLabel: e.dayLabel ?? null,
@@ -427,7 +427,10 @@ export async function autoImportScheduleFromDocument(
           type: e.type,
           massStart: e.massStart,
           sourceDocumentId: doc.id,
-          order: 0, // wird direkt im Anschluss über alle Einträge neu berechnet
+          // Platzhalter, der die Reihenfolge INNERHALB dieses Imports erhält
+          // (wird gleich neu berechnet, dient hier nur als Tiebreaker für
+          // Einträge mit exakt derselben Uhrzeit — siehe unten).
+          order: i,
         })),
       });
 
@@ -436,9 +439,14 @@ export async function autoImportScheduleFromDocument(
       // Reihenfolge bringen, bevor die Gesamt-Reihenfolge (order) berechnet wird.
       await renumberDaysByWeekday(tx, eventId);
 
+      // Bei exakt gleicher Uhrzeit (sehr häufig — reale Zeitpläne setzen oft
+      // "alle Rennen im Anschluss" ohne eigene Uhrzeit) reicht (day, time)
+      // allein nicht aus, um die PDF-Reihenfolge zu erhalten. Der bisherige
+      // order-Wert (oben beim Anlegen gesetzt bzw. aus einem früheren Import
+      // übernommen) dient als dritter, stabiler Sortier-Schlüssel.
       const all = await tx.scheduleEntry.findMany({
         where: { eventId },
-        orderBy: [{ day: 'asc' }, { time: 'asc' }],
+        orderBy: [{ day: 'asc' }, { time: 'asc' }, { order: 'asc' }],
         select: { id: true, order: true },
       });
       for (let i = 0; i < all.length; i++) {
