@@ -304,7 +304,10 @@ model ScheduleEntry {
   id              String            @id @default(cuid())
   eventId         String
   event           Event             @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  day             Int               // 1 = erster Veranstaltungstag laut Dokument, 2 = zweiter, ...
+  day             Int               // fortlaufende Nummer innerhalb der Veranstaltung, 1 = erster Tag, 2 = zweiter, ...
+  dayLabel        String?           // Wochentag laut Dokument (z.B. "Mittwoch") — dient NUR der Dubletten-Erkennung
+                                     // beim (Auto-)Import (siehe scheduleImport.ts), unabhängig vom Kalenderdatum,
+                                     // das in manchen Zeitplan-PDFs fehlerhaft ist. Kein Anzeige-Feld.
   time            String            // "HH:MM" laut Zeitplan-PDF, rein informativ (siehe EventStatus für Live-Korrektur)
   ak              String            // Altersklasse, z.B. "U17m" — freier Text aus dem Zeitplan, keine echte Beziehung
   disciplineLabel String            // Disziplin als Klartext, z.B. "Punktefahren", "Omnium Scratch"
