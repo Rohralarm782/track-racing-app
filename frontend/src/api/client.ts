@@ -52,7 +52,7 @@ export interface Event {
   races: Race[]; // neue, direkt am Event hängende Rennen ohne Kategorie
 }
 
-export type DocType = 'STARTLISTE' | 'ERGEBNIS' | 'SONSTIGES';
+export type DocType = 'STARTLISTE' | 'ERGEBNIS' | 'ZEITPLAN' | 'SONSTIGES';
 export type Discipline = 'SPRINT' | 'AUSDAUER' | 'ALLGEMEIN';
 
 export interface CommuniqueDocument {
