@@ -234,15 +234,20 @@ export async function pollSource(sourceId: string, shareToken: string, eventId: 
 
   await prisma.communiqueSource.update({ where: { id: sourceId }, data: { lastPolledAt: new Date() } });
 
-  // ── MEV-Hintergrund-Analyse für Startlisten ohne Analyse ──────────────────
-  // Läuft für neu entdeckte Startlisten UND als Selbstheilung für Dokumente,
-  // bei denen ein vorheriger Analyseversuch fehlgeschlagen ist (mevAnalyzedAt
-  // ist dann weiterhin null). Sequentiell, um die Anthropic-API nicht mit
-  // vielen gleichzeitigen Anfragen zu treffen — bei der Erstverbindung einer
-  // Quelle mit vielen Dokumenten dauert ein Poll-Zyklus dadurch entsprechend
-  // länger, blockiert aber keine anderen Quellen (siehe index.ts).
+  // ── MEV-Hintergrund-Analyse für Startlisten ohne (vollständige) Analyse ────
+  // Läuft für neu entdeckte Startlisten, als Selbstheilung für fehlgeschlagene
+  // Analyseversuche, UND als automatischer Nachtrag für Dokumente, die noch
+  // VOR Einführung von Lauf-/Rundenzahl analysiert wurden. Trigger ist
+  // starterCount (nicht mevAnalyzedAt): jede erfolgreiche Analyse liefert so
+  // gut wie immer eine zählbare Teilnehmerzahl, im Unterschied zu
+  // heatCount/roundCount, die bei vielen Disziplinen legitim leer bleiben —
+  // darauf zu triggern würde diese Dokumente bei jedem Poll erneut anfassen.
+  // Sequentiell, um die Anthropic-API nicht mit vielen gleichzeitigen
+  // Anfragen zu treffen — bei der Erstverbindung einer Quelle mit vielen
+  // Dokumenten dauert ein Poll-Zyklus dadurch entsprechend länger, blockiert
+  // aber keine anderen Quellen (siehe index.ts).
   const unanalyzed = await prisma.communiqueDocument.findMany({
-    where: { sourceId, docType: 'STARTLISTE', mevAnalyzedAt: null },
+    where: { sourceId, docType: 'STARTLISTE', starterCount: null },
   });
   for (const doc of unanalyzed) {
     await analyzeMevForDocument(doc, shareToken);
