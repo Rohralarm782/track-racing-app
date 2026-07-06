@@ -7,6 +7,7 @@ import { classifyFileName } from '../lib/classify';
 import { getCachedFile, setCachedFile } from '../lib/fileCache';
 import { notifyNewDocuments } from '../lib/push';
 import { analyzeMevForDocument } from '../lib/mevDetect';
+import { autoImportScheduleFromDocument } from '../lib/scheduleImport';
 
 const router = Router();
 
@@ -53,7 +54,7 @@ router.post('/:eventId/poll', async (req, res, next) => {
     const source = await prisma.communiqueSource.findUnique({ where: { eventId: req.params.eventId } });
     if (!source) { res.status(404).json({ error: 'Keine Quelle hinterlegt' }); return; }
 
-    const newDocs = await pollSource(source.id, source.shareToken);
+    const newDocs = await pollSource(source.id, source.shareToken, source.eventId);
     res.json({ newCount: newDocs.length, newDocs });
   } catch (e) { next(e); }
 });
@@ -134,12 +135,38 @@ router.patch('/:eventId/documents/:documentId/pin', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// POST /api/communiques/:eventId/documents/:documentId/import-schedule — Zeitplan
+// manuell (erneut) aus einem bereits bekannten Dokument importieren. Für neu
+// entdeckte Zeitplan-Kommuniqués passiert das automatisch (siehe pollSource
+// unten); dieser Endpunkt ist der Fallback für bereits vorhandene Dokumente,
+// die vor Einführung dieses Features hochgeladen wurden und deshalb beim
+// nächsten Poll nicht als "neu" erkannt werden.
+router.post('/:eventId/documents/:documentId/import-schedule', requireAdmin, async (req, res, next) => {
+  try {
+    const doc = await prisma.communiqueDocument.findUnique({
+      where: { id: req.params.documentId },
+      include: { source: true },
+    });
+    if (!doc || doc.source.eventId !== req.params.eventId) {
+      res.status(404).json({ error: 'Dokument nicht gefunden' });
+      return;
+    }
+    if (doc.docType !== 'ZEITPLAN') {
+      res.status(400).json({ error: 'Dokument ist nicht als Zeitplan erkannt' });
+      return;
+    }
+
+    await autoImportScheduleFromDocument(req.params.eventId, doc, doc.source.shareToken);
+    res.status(204).send();
+  } catch (e) { next(e); }
+});
+
 /**
  * Kernlogik: Ordner abfragen, neue/geänderte Dateien gegen DB abgleichen,
  * neue Einträge speichern und Push auslösen. Wird sowohl vom manuellen
  * Poll-Endpunkt als auch vom Hintergrund-Interval in index.ts genutzt.
  */
-export async function pollSource(sourceId: string, shareToken: string) {
+export async function pollSource(sourceId: string, shareToken: string, eventId: string) {
   const remoteFiles = await listShareFiles(shareToken);
   const known = await prisma.communiqueDocument.findMany({ where: { sourceId } });
   const knownMap = new Map(known.map(d => [d.fileName, d]));
@@ -199,6 +226,16 @@ export async function pollSource(sourceId: string, shareToken: string) {
   });
   for (const doc of unanalyzed) {
     await analyzeMevForDocument(doc, shareToken);
+  }
+
+  // ── Automatischer Zeitplan-Import ──────────────────────────────────────────
+  // Nur für NEU entdeckte Zeitplan-Dokumente (created), nicht für
+  // reklassifizierte — ein bereits einmal importiertes Dokument, das sich
+  // nicht geändert hat, soll nicht bei jedem Poll erneut analysiert werden.
+  // Sequentiell aus demselben Grund wie die MEV-Analyse oben.
+  const newZeitplanDocs = created.filter(d => d.docType === 'ZEITPLAN');
+  for (const doc of newZeitplanDocs) {
+    await autoImportScheduleFromDocument(eventId, doc, shareToken);
   }
 
   return created;
