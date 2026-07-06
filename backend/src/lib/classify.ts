@@ -60,7 +60,7 @@ export function detectAK(fileName: string): string {
 
 // ─── Disziplin (Sprint vs. Ausdauer) ────────────────────────────────────────
 
-const SPRINT_KEYWORDS = /(sprint|keirin|teamsprint|zeitfahren|kilometer|200\s?m)/i;
+const SPRINT_KEYWORDS = /(sprint|keirin|teamsprint|zeitfahren|kilometer|200\s?m|\b500\s?m\b|\b1000\s?m\b)/i;
 const AUSDAUER_KEYWORDS = /(punktefahren|madison|verfolgung|omnium|scratch|temporunden|ausscheidungsfahren|\bausscheidung\b|mannschaftsfahren|\bEV\b|\bMV\b)/i;
 
 export function detectDiscipline(fileName: string): Discipline {
@@ -88,6 +88,14 @@ const TYPE_WORDS = /\b(Ansetzung|Ansetz|Ansatz|Ergebnis|Ergeb|Endstand|Strafen|Z
 // sie bereits über disciplineCode abgebildet sind. "VF" bewusst ausgenommen
 // (siehe oben).
 const DISCIPLINE_CODE_WORDS = /\b(MA|PR|OM|MV|EV)\b/g;
+// Ausgeschriebene Disziplin-Namen, die ebenfalls aus der Phase entfernt
+// werden — nicht alle Disziplinen haben ein kurzes Kürzel im Dateinamen
+// (z.B. "Sprint", "Zeitfahren", "Keirin" stehen immer ausgeschrieben da).
+// Ohne diesen Schritt bleibt der Disziplinname im Phasen-Text hängen (z.B.
+// "Halbfinale Sprint") und verhindert den Textvergleich mit dem Zeitplan-
+// Eintrag, dessen Phase diesen Zusatz nicht enthält (z.B. "Halbfinale 1.
+// Serie") — keine der beiden Zeichenketten ist dann mehr Teilstring der anderen.
+const DISCIPLINE_WORDS_FULL = /\b(Punktefahren|Madison|Omnium|Temporunden|Ausscheidungsfahren|Mannschaftsverfolgung|Einzelverfolgung|Verfolgung|Scratch|Teamsprint|Zeitfahren|Sprint|Keirin)\b/gi;
 
 export function detectDisciplineCode(fileName: string): string | null {
   if (/\bMA\b/i.test(fileName) || /madison/i.test(fileName)) return 'MA';
@@ -104,6 +112,17 @@ export function detectDisciplineCode(fileName: string): string | null {
   // "Ausscheidungsfahren".
   if (/ausscheidungsfahren|\bausscheidung\b/i.test(fileName)) return 'AF';
   if (/scratch/i.test(fileName)) return 'SC';
+  if (/zeitfahren/i.test(fileName)) return 'ZF';
+  // 500m/1000m sind im Bahnradsport standardmäßig das Zeitfahren ("Kilometer");
+  // im Unterschied zu den Verfolgungsdistanzen (2000-4000m) steht bei diesen
+  // Dateien oft GAR KEIN Disziplin-Wort im Namen, nur die reine Distanz.
+  if (/\b(500|1000)\s?m\b/i.test(fileName) && !/\bEV\b|\bMV\b|verfolgung/i.test(fileName)) return 'ZF';
+  // Keirin MUSS vor Teamsprint/Sprint geprüft werden (kein Überschneidungsrisiko,
+  // aber konsistente Reihenfolge von spezifisch zu generisch).
+  if (/keirin/i.test(fileName)) return 'KE';
+  // Teamsprint MUSS vor dem generischen "sprint"-Fallback geprüft werden.
+  if (/teamsprint/i.test(fileName)) return 'TS';
+  if (/\bsprint\b/i.test(fileName)) return 'SP';
   return null;
 }
 
@@ -123,6 +142,7 @@ export function detectPhaseLabel(fileName: string): string | null {
   joined = joined.replace(AK_WORD, ' ');
   joined = joined.replace(TYPE_WORDS, ' ');
   joined = joined.replace(DISCIPLINE_CODE_WORDS, ' ');
+  joined = joined.replace(DISCIPLINE_WORDS_FULL, ' ');
   joined = joined.replace(/\s+/g, ' ').trim();
 
   return joined.length > 0 ? joined : null;
