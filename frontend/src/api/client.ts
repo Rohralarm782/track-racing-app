@@ -92,6 +92,11 @@ export interface ScheduleEntryLinkedDoc {
   mevAnalyzedAt: string | null;
 }
 
+export interface ScheduleEntryResultDoc {
+  id: string;
+  fileName: string;
+}
+
 export interface ScheduleEntry {
   id: string;
   eventId: string;
@@ -105,6 +110,8 @@ export interface ScheduleEntry {
   order: number;
   linkedDocumentId: string | null;
   linkedDocument: ScheduleEntryLinkedDoc | null;
+  linkedResultDocumentId: string | null;
+  linkedResultDocument: ScheduleEntryResultDoc | null;
 }
 
 export interface DraftScheduleEntry {
@@ -214,6 +221,9 @@ export const scheduleApi = {
 
   linkDocument: (entryId: string, linkedDocumentId: string | null) =>
     api.patch<ScheduleEntry>(`/api/schedule-entries/${entryId}`, { linkedDocumentId }),
+
+  linkResultDocument: (entryId: string, linkedResultDocumentId: string | null) =>
+    api.patch<ScheduleEntry>(`/api/schedule-entries/${entryId}`, { linkedResultDocumentId }),
 
   getStatus: (eventId: string) =>
     api.get<EventStatus | null>(`/api/events/${eventId}/status`),
