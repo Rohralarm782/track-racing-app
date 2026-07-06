@@ -73,6 +73,7 @@ model Event {
   communiqueSource CommuniqueSource?
   scheduleEntries  ScheduleEntry[]
   status           EventStatus?
+  statusLog        StatusUpdateLog[]
 }
 
 model Category {
@@ -271,7 +272,11 @@ model CommuniqueDocument {
   phaseLabel     String?  // z.B. "1. VL", "A-Lauf", "Finale" — aus Dateinamen erkannt
 
   // ─── MEV-Erkennung (nur bei STARTLISTE-Dokumenten, per Hintergrund-Analyse) ──
-  mevNames      String[]  @default([]) // Namen erkannter MEV-Fahrer/Teams
+  mevNames      String[]  @default([]) // Namen erkannter MEV-Fahrer/Teams (nur Namen, für Abwärtskompatibilität)
+  mevRiders     Json      @default("[]") // [{ name: string, lauf: number | null }] — wie mevNames, zusätzlich mit Lauf-Nummer bei Einzelstart-Formaten
+  heatCount     Int?      // Gesamtzahl unterschiedlicher Läufe (Einzelstart-Formate wie Zeitfahren/Verfolgung)
+  starterCount  Int?      // Gesamtzahl Starter/Teams laut Tabelle
+  roundCount    Int?      // Rundenzahl des Rennens (Massenstart-Formate); bei Ausscheidungsfahren = starterCount*2 statt Textfund (siehe mevDetect.ts)
   mevAnalyzedAt DateTime? // wann die MEV-Analyse zuletzt gelaufen ist (null = noch nicht analysiert)
 
   scheduleEntry ScheduleEntry?
@@ -340,6 +345,7 @@ model ScheduleEntry {
   createdAt DateTime @default(now())
 
   liveStatus EventStatus?
+  statusLogEntries StatusUpdateLog[]
 
   @@index([eventId, order])
 }
@@ -360,4 +366,43 @@ model EventStatus {
   roundsLeft      Int?
   offsetMinutes   Int           @default(0)
   updatedAt       DateTime      @updatedAt
+}
+
+// ─── Zeitschätzung ──────────────────────────────────────────────────────────
+// Verlaufsprotokoll JEDER "Aktueller Stand"-Meldung (im Unterschied zu
+// EventStatus oben, das nur den jeweils LETZTEN Stand als Singleton hält).
+// Grundlage für die Selbstkalibrierung: aus der Zeitspanne zwischen zwei
+// aufeinanderfolgenden Meldungen und den dazwischen liegenden Zeitplan-
+// Einträgen lässt sich ableiten, ob die aktuelle Schätzung zu hoch oder zu
+// niedrig lag (siehe recalibrateFromStatusUpdate in durationEstimate.ts).
+model StatusUpdateLog {
+  id              String        @id @default(cuid())
+  eventId         String
+  event           Event         @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  scheduleEntryId String
+  scheduleEntry   ScheduleEntry @relation(fields: [scheduleEntryId], references: [id], onDelete: Cascade)
+  statusKey       LiveStatusKey
+  createdAt       DateTime      @default(now())
+
+  @@index([eventId, createdAt])
+}
+
+// Ein einziger Korrekturfaktor pro Kategorie (Altersklasse + Disziplin +
+// Massenstart ja/nein), der die feste Ausgangsformel (siehe
+// durationEstimate.ts, Werte aus Haukes Erfahrung) hoch- oder runterskaliert.
+// Startet bei 1.0 (= Ausgangsformel unverändert) und wird bei jeder
+// "Aktueller Stand"-Meldung leicht in Richtung der beobachteten Realität
+// verschoben — je mehr Beobachtungen (sampleCount), desto kleiner der
+// nächste Ausschlag, damit sich der Wert mit der Zeit stabilisiert statt zu
+// überschwingen.
+model DurationEstimate {
+  id               String   @id @default(cuid())
+  ak               String
+  disciplineLabel  String
+  massStart        Boolean
+  correctionFactor Float    @default(1.0)
+  sampleCount      Int      @default(0)
+  updatedAt        DateTime @updatedAt
+
+  @@unique([ak, disciplineLabel, massStart])
 }
