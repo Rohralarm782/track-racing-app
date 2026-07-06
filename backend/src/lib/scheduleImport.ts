@@ -150,12 +150,13 @@ function rankEntries(entries: MatchableEntry[]): Map<string, number> {
   return rank;
 }
 
-// Rang jedes STARTLISTE-Dokuments innerhalb derselben Altersklasse+Disziplin,
-// sortiert nach Kommuniqué-Nummer (K-Nummer folgt der Ablaufreihenfolge).
-function rankDocs(docs: MatchableDoc[]): Map<string, number> {
+// Rang jedes Dokuments eines bestimmten Typs (STARTLISTE oder ERGEBNIS)
+// innerhalb derselben Altersklasse+Disziplin, sortiert nach Kommuniqué-
+// Nummer (K-Nummer folgt der Ablaufreihenfolge).
+function rankDocs(docs: MatchableDoc[], docType: string): Map<string, number> {
   const groups = new Map<string, MatchableDoc[]>();
   for (const d of docs) {
-    if (d.docType !== 'STARTLISTE' || !d.disciplineCode) continue;
+    if (d.docType !== docType || !d.disciplineCode) continue;
     const key = `${d.ak}::${d.disciplineCode}`;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key)!.push(d);
@@ -173,8 +174,9 @@ function findBestMatch(
   docs: MatchableDoc[],
   entryRank: number | undefined,
   docRank: Map<string, number>,
+  docType: string,
 ): MatchableDoc | null {
-  const candidates = docs.filter(d => d.docType === 'STARTLISTE' && d.ak === entry.ak);
+  const candidates = docs.filter(d => d.docType === docType && d.ak === entry.ak);
   if (candidates.length === 0) return null;
 
   const disciplineNorm = normalize(entry.disciplineLabel);
@@ -205,6 +207,13 @@ function findBestMatch(
   return scored[0].doc;
 }
 
+// Zwei unabhängige Durchläufe: Startliste/Ansetzung (wie bisher) und Ergebnis
+// (neu). Jeder Durchlauf hat seinen eigenen Dokumenten-Pool und sein eigenes
+// "bereits verknüpft"-Set, da ein Rennen z.B. schon eine Startliste, aber
+// noch kein Ergebnis haben kann (oder umgekehrt bei einer Nachmeldung). Das
+// Ergebnis wird bewusst NICHT anstelle der Startliste verknüpft, sondern
+// zusätzlich (siehe linkedResultDocumentId im Schema) — die MEV-Namen kommen
+// weiterhin von der Startliste.
 export async function autoMatch(eventId: string) {
   const source = await prisma.communiqueSource.findUnique({ where: { eventId } });
   if (!source) return;
@@ -214,23 +223,30 @@ export async function autoMatch(eventId: string) {
     prisma.communiqueDocument.findMany({ where: { sourceId: source.id } }),
   ]);
 
-  const alreadyLinked = new Set(
-    allRaceEntries.filter(e => e.linkedDocumentId).map(e => e.linkedDocumentId!)
-  );
-  const openEntries = allRaceEntries.filter(e => !e.linkedDocumentId);
-
-  // Ränge werden über ALLE Einträge/Dokumente berechnet (nicht nur die noch
-  // offenen), damit die Reihenfolge stabil bleibt, unabhängig davon, was
-  // bereits manuell oder in einem früheren Lauf verknüpft wurde.
+  // Ränge werden über ALLE Einträge berechnet (nicht nur die noch offenen),
+  // damit die Reihenfolge stabil bleibt, unabhängig davon, was bereits
+  // manuell oder in einem früheren Lauf verknüpft wurde.
   const entryRank = rankEntries(allRaceEntries);
-  const docRank = rankDocs(docs);
 
-  for (const entry of openEntries) {
-    const available = docs.filter(d => !alreadyLinked.has(d.id));
-    const match = findBestMatch(entry, available, entryRank.get(entry.id), docRank);
-    if (match) {
-      await prisma.scheduleEntry.update({ where: { id: entry.id }, data: { linkedDocumentId: match.id } });
-      alreadyLinked.add(match.id);
+  const passes: Array<{ docType: 'STARTLISTE' | 'ERGEBNIS'; field: 'linkedDocumentId' | 'linkedResultDocumentId' }> = [
+    { docType: 'STARTLISTE', field: 'linkedDocumentId' },
+    { docType: 'ERGEBNIS', field: 'linkedResultDocumentId' },
+  ];
+
+  for (const { docType, field } of passes) {
+    const alreadyLinked = new Set(
+      allRaceEntries.filter(e => e[field]).map(e => e[field] as string)
+    );
+    const openEntries = allRaceEntries.filter(e => !e[field]);
+    const docRank = rankDocs(docs, docType);
+
+    for (const entry of openEntries) {
+      const available = docs.filter(d => !alreadyLinked.has(d.id));
+      const match = findBestMatch(entry, available, entryRank.get(entry.id), docRank, docType);
+      if (match) {
+        await prisma.scheduleEntry.update({ where: { id: entry.id }, data: { [field]: match.id } as any });
+        alreadyLinked.add(match.id);
+      }
     }
   }
 }
@@ -239,7 +255,10 @@ export function loadScheduleWithLinks(eventId: string) {
   return prisma.scheduleEntry.findMany({
     where: { eventId },
     orderBy: { order: 'asc' },
-    include: { linkedDocument: { select: { id: true, fileName: true, mevNames: true, mevAnalyzedAt: true } } },
+    include: {
+      linkedDocument: { select: { id: true, fileName: true, mevNames: true, mevAnalyzedAt: true } },
+      linkedResultDocument: { select: { id: true, fileName: true } },
+    },
   });
 }
 
