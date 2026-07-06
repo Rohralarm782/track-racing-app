@@ -177,6 +177,9 @@ export const communiquesApi = {
   togglePin: (eventId: string, documentId: string, pinned: boolean) =>
     api.patch<CommuniqueDocument>(`/api/communiques/${eventId}/documents/${documentId}/pin`, { pinned }),
 
+  importSchedule: (eventId: string, documentId: string) =>
+    api.post<void>(`/api/communiques/${eventId}/documents/${documentId}/import-schedule`, {}),
+
   getVapidPublicKey: () =>
     api.get<{ key: string }>('/api/communiques/vapid-public-key'),
 
