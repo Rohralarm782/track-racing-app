@@ -414,6 +414,7 @@ export default function CommuniquesPage() {
     alle: docs.length,
     STARTLISTE: docs.filter(d => d.docType === 'STARTLISTE').length,
     ERGEBNIS: docs.filter(d => d.docType === 'ERGEBNIS').length,
+    ZEITPLAN: docs.filter(d => d.docType === 'ZEITPLAN').length,
     SONSTIGES: docs.filter(d => d.docType === 'SONSTIGES').length,
   };
 
