@@ -32,7 +32,22 @@ const SPRINT_PER_HEAT_MIN = 2;
 const TEAMSPRINT_PER_HEAT_MIN = 2; // Annahme: wie Sprint (von Hauke bestätigt)
 const KEIRIN_PER_HEAT_MIN = 4;
 
-const CEREMONY_MIN = 3;
+const CEREMONY_MIN = 5;
+
+// Grobe Rückfallgrößen, falls die Startliste keine Runden-/Laufzahl hergibt.
+// Ohne Rückfall bricht die Schätzkette für JEDEN nachfolgenden Eintrag
+// desselben Tages ab, sobald ein einziges Rennen dazwischen unbekannt ist —
+// lieber eine grobe Schätzung zeigen, die sich über die Kalibrierung von
+// selbst einpendelt, als gar keine (eine Kategorie kann sich zudem erst
+// kalibrieren, wenn sie mindestens einmal eine Schätzung geliefert hat).
+// Pro Disziplin unterschiedlich, da z.B. Punktefahren-Finals typischerweise
+// deutlich mehr Runden haben als andere Massenstart-Formate.
+const FALLBACK_ROUND_COUNT_BY_CODE: Record<string, number> = {
+  PR: 50, // Punktefahren
+  TR: 30, // Temporunden
+};
+const DEFAULT_FALLBACK_ROUND_COUNT = 30; // Madison, Scratch, Omnium, ...
+const FALLBACK_HEAT_COUNT = 8;
 
 function typicalRaceMinutes(disciplineLabel: string): number {
   for (const [re, min] of DISTANCE_RACE_MIN) {
@@ -43,50 +58,41 @@ function typicalRaceMinutes(disciplineLabel: string): number {
 
 /**
  * Reine Formel-Schätzung (noch ohne Kalibrierung) für ein Rennen, gegeben die
- * aus der verknüpften Startliste bekannte Runden-/Laufzahl. Gibt null zurück,
- * wenn die nötige Zahl (noch) nicht bekannt ist, oder es sich um kein
- * schätzbares Rennen handelt (INFO-Einträge wie Warm-up/Pausen) — dann lieber
- * gar keine Schätzung anzeigen als eine offensichtlich falsche.
+ * Runden-/Laufzahl (ggf. schon mit Rückfallwert aufgefüllt, siehe
+ * unitCountFor). Gibt nur bei INFO-Einträgen (Warm-up/Pausen) null zurück —
+ * die sind bewusst nicht schätzbar.
  */
 export function baseFormulaMinutes(
   entry: { disciplineLabel: string; massStart: boolean; type: string },
-  unitCount: number | null,
+  unitCount: number,
 ): number | null {
   if (entry.type === 'CEREMONY') return CEREMONY_MIN;
   if (entry.type !== 'RACE') return null;
 
   const code = inferCodeForEntry(entry.disciplineLabel);
 
-  if (code === 'AF') {
-    if (unitCount == null) return null;
-    return AF_SETUP_MIN + AF_PER_ROUND_MIN * unitCount + AF_CLEAR_MIN;
-  }
-  if (code === 'SP') {
-    return unitCount == null ? null : SPRINT_PER_HEAT_MIN * unitCount;
-  }
-  if (code === 'TS') {
-    return unitCount == null ? null : TEAMSPRINT_PER_HEAT_MIN * unitCount;
-  }
-  if (code === 'KE') {
-    return unitCount == null ? null : KEIRIN_PER_HEAT_MIN * unitCount;
-  }
+  if (code === 'AF') return AF_SETUP_MIN + AF_PER_ROUND_MIN * unitCount + AF_CLEAR_MIN;
+  if (code === 'SP') return SPRINT_PER_HEAT_MIN * unitCount;
+  if (code === 'TS') return TEAMSPRINT_PER_HEAT_MIN * unitCount;
+  if (code === 'KE') return KEIRIN_PER_HEAT_MIN * unitCount;
   if (code === 'VF' || code === 'MV' || code === 'EV' || code === 'ZF') {
-    if (unitCount == null) return null;
     const perHeat = PURSUIT_SETUP_MIN + typicalRaceMinutes(entry.disciplineLabel);
     return perHeat * unitCount;
   }
   // Massenstart-Sammelkategorie: Punktefahren, Madison, Scratch, Temporunden,
   // Omnium (grobe Annahme, im Detail noch nicht besprochen)
-  if (unitCount == null) return null;
   return MASS_START_SETUP_MIN + MASS_START_PER_ROUND_MIN * unitCount + MASS_START_CLEAR_MIN;
 }
 
 function unitCountFor(
-  entry: { massStart: boolean },
+  entry: { disciplineLabel: string; massStart: boolean },
   linkedDoc: { roundCount: number | null; heatCount: number | null } | null | undefined,
-): number | null {
-  if (!linkedDoc) return null;
-  return entry.massStart ? linkedDoc.roundCount : linkedDoc.heatCount;
+): number {
+  const known = linkedDoc ? (entry.massStart ? linkedDoc.roundCount : linkedDoc.heatCount) : null;
+  if (known != null) return known;
+  if (!entry.massStart) return FALLBACK_HEAT_COUNT;
+  const code = inferCodeForEntry(entry.disciplineLabel);
+  return (code ? FALLBACK_ROUND_COUNT_BY_CODE[code] : undefined) ?? DEFAULT_FALLBACK_ROUND_COUNT;
 }
 
 /**
