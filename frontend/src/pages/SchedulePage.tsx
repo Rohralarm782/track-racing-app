@@ -77,6 +77,7 @@ function mevSummary(riders: MevRider[]): string | null {
 
 const CEREMONY_ESTIMATE_MIN = 5;
 const ESTIMATE_DISPLAY_THRESHOLD_MIN = 5;
+const PAUSE_BUFFER_MIN = 20; // Cool-down-Puffer nach dem letzten Rennen eines Blocks
 
 // Errechnet pro Eintrag eines Tages eine geschätzte Uhrzeit, indem die
 // geschätzte Dauer (estimatedMinutes, vom Backend kalibriert) ab einem Anker
@@ -350,7 +351,7 @@ export default function SchedulePage() {
               const timeCounts = new Map<string, number>();
               for (const e of dayEntries) timeCounts.set(e.time, (timeCounts.get(e.time) ?? 0) + 1);
 
-              return dayEntries.map(entry => {
+              return dayEntries.map((entry, idx) => {
                 const isCurrent = status?.scheduleEntryId === entry.id;
                 const isPast = status != null && currentEntryDay === entry.day && currentEntryOrder != null && entry.order < currentEntryOrder;
                 const estimatedTime = estimatedTimes.get(entry.id) ?? entry.time;
@@ -362,37 +363,74 @@ export default function SchedulePage() {
                 const mev = entry.linkedDocument ? mevSummary(entry.linkedDocument.mevRiders) : null;
                 const heatCount = entry.linkedDocument?.heatCount ?? null;
 
+                const prevEntry = idx > 0 ? dayEntries[idx - 1] : null;
+                const nextEntry = idx < dayEntries.length - 1 ? dayEntries[idx + 1] : null;
+                const isLastOfBlock = (entry.type === 'RACE' || entry.type === 'CEREMONY') && nextEntry?.type === 'INFO';
+                const isBlockTransition = entry.type === 'INFO' && prevEntry != null
+                  && (prevEntry.type === 'RACE' || prevEntry.type === 'CEREMONY');
+
+                // Pause-Zeile: Bahn ist zu zwischen "letztes Rennen + Cool-down-
+                // Puffer" und dem Warm-up-Zeitpunkt (der markiert, wann die Bahn
+                // für den nächsten Block wieder öffnet — NICHT wann sie schließt).
+                if (isBlockTransition && prevEntry) {
+                  const prevStartMin = toMinutes(estimatedTimes.get(prevEntry.id) ?? prevEntry.time);
+                  const prevDuration = prevEntry.estimatedMinutes ?? (prevEntry.type === 'CEREMONY' ? CEREMONY_ESTIMATE_MIN : 0);
+                  const pauseStartMin = prevStartMin + prevDuration + PAUSE_BUFFER_MIN;
+                  const pauseEndMin = Math.max(toMinutes(estimatedTimes.get(entry.id) ?? entry.time), pauseStartMin);
+                  return (
+                    <div key={entry.id} style={{
+                      margin: '6px 0', padding: '12px 10px', borderRadius: 8,
+                      background: 'rgba(107, 114, 128, 0.12)', textAlign: 'center',
+                    }}>
+                      <span style={{ fontSize: 14, fontWeight: 500, color: 'var(--c-text-secondary, #4b5563)' }}>
+                        ⏸ Pause · ca. {fromMinutes(pauseStartMin)} – {fromMinutes(pauseEndMin)}
+                      </span>
+                    </div>
+                  );
+                }
+
+                // Warm-up ohne vorheriges Rennen (z.B. der allererste Block des
+                // Tages) — schlichter, nur mittel betont statt als volle Pause.
+                if (entry.type === 'INFO') {
+                  return (
+                    <div key={entry.id} style={{
+                      margin: '6px 0', padding: '8px 10px', borderRadius: 6,
+                      background: 'var(--c-bg-muted, #f3f4f6)',
+                    }}>
+                      <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--c-text-secondary, #4b5563)' }}>
+                        ℹ️ {displayTime} · {entry.disciplineLabel}
+                      </span>
+                    </div>
+                  );
+                }
+
               return (
                 <div
                   key={entry.id}
                   style={{
                     display: 'grid', gridTemplateColumns: '48px 1fr auto', gap: 10, alignItems: 'center',
-                    padding: entry.type === 'INFO' ? '10px 2px' : '8px 2px',
-                    borderBottom: entry.type === 'INFO' ? '2px solid var(--c-primary, #4338ca)' : '1px solid var(--c-border)',
-                    borderTop: entry.type === 'INFO' ? '2px solid var(--c-primary, #4338ca)' : undefined,
-                    opacity: entry.type === 'INFO' ? 1 : isPast ? 0.45 : 1,
-                    borderLeft: isCurrent ? '3px solid var(--c-success, #16a34a)' : entry.type === 'INFO' ? 'none' : '3px solid transparent',
-                    background: entry.type === 'INFO' ? 'var(--c-bg-muted, #eef2ff)' : isCurrent ? '#f8faff' : 'transparent',
+                    padding: '8px 2px',
+                    borderBottom: '1px solid var(--c-border)',
+                    opacity: isPast ? 0.45 : 1,
+                    borderLeft: isCurrent ? '3px solid var(--c-success, #16a34a)' : '3px solid transparent',
+                    background: isCurrent ? '#f8faff' : isLastOfBlock ? 'rgba(107, 114, 128, 0.05)' : 'transparent',
                     borderRadius: isCurrent ? '0 8px 8px 0' : 0,
                   }}
                 >
                   <div>
-                    <div style={{ fontSize: 13, fontWeight: isCurrent || entry.type === 'INFO' ? 600 : 400 }}>{displayTime}</div>
+                    <div style={{ fontSize: 13, fontWeight: isCurrent ? 600 : 400 }}>{displayTime}</div>
                     {showNominalSecondary && (
                       <div style={{ fontSize: 10, color: 'var(--c-text-muted)' }}>{entry.time}</div>
                     )}
                   </div>
                   <div style={{ minWidth: 0 }}>
                     <div style={{
-                      fontSize: entry.type === 'INFO' ? 13.5 : 13.5,
-                      fontWeight: isCurrent || entry.type === 'INFO' ? 600 : 400,
+                      fontSize: 13.5,
+                      fontWeight: isCurrent ? 600 : 400,
                       fontStyle: entry.type === 'CEREMONY' ? 'italic' : 'normal',
-                      color: entry.type === 'INFO' ? 'var(--c-primary, #4338ca)' : undefined,
                     }}>
                       {entry.type !== 'RACE' && <span style={{ marginRight: 5 }}>{TYPE_ICON[entry.type]}</span>}
-                      {entry.type === 'INFO' ? entry.disciplineLabel : (
-                        <>{entry.ak} · {entry.disciplineLabel}{entry.phase ? ` · ${entry.phase}` : ''}</>
-                      )}
+                      <>{entry.ak} · {entry.disciplineLabel}{entry.phase ? ` · ${entry.phase}` : ''}</>
                       {entry.type === 'RACE' && heatCount != null && (
                         <span style={{
                           marginLeft: 6, fontSize: 11, fontWeight: 500, color: 'var(--c-text-muted)',
@@ -414,7 +452,14 @@ export default function SchedulePage() {
                         ) : (
                           <span>kein Kommuniqué zugeordnet</span>
                         )}
-                        {mev && <span> · MEV: {mev}</span>}
+                        {mev && (
+                          <span style={{
+                            marginLeft: 6, fontSize: 11.5, fontWeight: 600, color: '#b45309',
+                            background: '#fef3c7', padding: '2px 8px', borderRadius: 10,
+                          }}>
+                            MEV: {mev}
+                          </span>
+                        )}
                         {entry.linkedResultDocument && (
                           <>
                             {' · '}
