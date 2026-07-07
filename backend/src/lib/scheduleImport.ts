@@ -24,7 +24,8 @@ Regeln:
 - ak: Altersklasse normalisiert (z.B. "U17m", "U15w", "Elite m"); falls ein Eintrag mehrere Altersklassen gleichzeitig betrifft (z.B. kombinierte Teamsprint-Wertung über zwei Altersklassen), alle betroffenen Altersklassen durch ein Leerzeichen getrennt in aufsteigender Reihenfolge angeben (z.B. "U17w U19w"), NICHT "Mehrere" verwenden
 - disciplineLabel: Disziplin als Klartext (z.B. "Punktefahren", "Madison", "Omnium Scratch", "3000m Mannschaftsverfolgung")
 - phase: Phasen-Bezeichnung falls vorhanden (z.B. "1. Vorlauf", "Finale", "A-Lauf", "Qualifikation"), sonst weglassen
-- type: "RACE" für Wettkämpfe, "CEREMONY" für Siegerehrungen, "INFO" für Warm-Up/Pausen/Ende-Hinweise
+- type: "RACE" für Wettkämpfe, "CEREMONY" für Siegerehrungen, "INFO" für Warm-Up/Bahn-Öffnung/Pausen/Ende-Hinweise
+- WICHTIG: JEDE Zeile im Dokument wird zu einem eigenen Eintrag — auch INFO-Zeilen wie Warm-up/Bahn-Öffnung, die sich fast wortgleich wiederholen (z.B. "Warm-up für Sportlerinnen/Sportler aus Session 1" UND "...aus Session 2" später im Dokument). Das sind ZWEI separate Einträge mit jeweils eigener Uhrzeit, NICHT nur einer — niemals eine wiederholte/ähnliche Zeile als Duplikat auslassen, nur weil der Text einer früheren Zeile ähnelt.
 - massStart: true bei Massenstart-Formaten (Punktefahren, Madison, Scratch, Ausscheidungsfahren, Temporunden), false bei Einzelstart-Formaten (Zeitfahren, Verfolgung, Sprint)
 - Reihenfolge der Einträge im JSON muss der zeitlichen Reihenfolge im Dokument entsprechen
 - Nur JSON, sonst nichts`;
