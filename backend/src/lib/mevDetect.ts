@@ -38,7 +38,7 @@ Finde alle Fahrer bzw. Teams, deren Landesverband-Kürzel (Spalte "LV" o.ä.) "M
 Prüfe außerdem:
 - ob die Tabelle eine "Lauf"-Spalte hat (Lauf-/Paarungs-Nummer, typisch bei Einzelstart-Formaten wie Zeitfahren oder Verfolgung, aber auch bei anderen Formaten möglich)
 - die Gesamtzahl der Starter/Teams in der Tabelle
-- ob irgendwo im Dokument eine Rundenzahl für das Rennen genannt wird (z.B. "Wertung nach 40 Runden")
+- die Rundenzahl für das Rennen. Bei allen Disziplinen AUSSER Ausscheidungsfahren steht diese praktisch immer irgendwo im Dokument, oft in einer Zeile direkt unter der Renn-Überschrift im Format "<Distanz> / <Rundenzahl> Runden / <Anzahl> Wertungen" (z.B. "15km / 60 Runden / 6 Wertungen") — diese Zeile kann auch am Ende des Dokuments wiederholt werden. Manchmal auch anders formuliert, z.B. "Wertung nach 40 Runden" oder als Teil der Renn-Überschrift ("Punktefahren über 40 Runden").
 
 Gib NUR JSON zurück (kein Markdown, kein Text davor/danach):
 
@@ -50,7 +50,7 @@ Regeln:
 - Bei Team-Paaren (z.B. Madison) beide Fahrer einzeln auflisten, falls einer oder beide MEV sind; beide bekommen denselben lauf-Wert, falls vorhanden
 - heatCount: Gesamtzahl unterschiedlicher Lauf-Nummern in der GESAMTEN Tabelle (nicht nur bei MEV-Zeilen), oder null falls keine Lauf-Spalte existiert
 - starterCount: Gesamtzahl der Fahrer/Teams (Zeilen) in der Tabelle, unabhängig von einer Lauf-Spalte
-- roundCount: die im Dokument EXPLIZIT genannte Rundenzahl, oder null falls nirgends angegeben
+- roundCount: die im Dokument genannte Rundenzahl. Aktiv danach suchen (siehe oben) — nur null zurückgeben, wenn wirklich nirgends im Dokument eine Rundenzahl steht
 - Leeres Array für mevRiders, wenn kein MEV-Fahrer gefunden wird
 - Nur JSON, sonst nichts`,
           },
