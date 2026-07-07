@@ -37,17 +37,19 @@ export async function analyzeMevForDocument(
 Finde alle Fahrer bzw. Teams, deren Landesverband-Kürzel (Spalte "LV" o.ä.) "MEV" ist.
 Prüfe außerdem:
 - ob die Tabelle eine "Lauf"-Spalte hat (Lauf-/Paarungs-Nummer, typisch bei Einzelstart-Formaten wie Zeitfahren oder Verfolgung, aber auch bei anderen Formaten möglich)
+- ob die Tabelle eine "Team"/"Mannschaft"-Spalte hat (typisch bei Mannschafts-Disziplinen wie Teamsprint, Mannschaftsverfolgung, Madison — dort stehen mehrere Fahrer pro Lauf, gruppiert unter einem Team-Kürzel wie "MEV 2" oder "MEV 1")
 - die Gesamtzahl der Starter/Teams in der Tabelle
 - die Rundenzahl für das Rennen. Bei allen Disziplinen AUSSER Ausscheidungsfahren steht diese praktisch immer irgendwo im Dokument, oft in einer Zeile direkt unter der Renn-Überschrift im Format "<Distanz> / <Rundenzahl> Runden / <Anzahl> Wertungen" (z.B. "15km / 60 Runden / 6 Wertungen") — diese Zeile kann auch am Ende des Dokuments wiederholt werden. Manchmal auch anders formuliert, z.B. "Wertung nach 40 Runden" oder als Teil der Renn-Überschrift ("Punktefahren über 40 Runden").
 
 Gib NUR JSON zurück (kein Markdown, kein Text davor/danach):
 
-{"mevRiders":[{"name":"Vorname Nachname","lauf":9}],"heatCount":13,"starterCount":24,"roundCount":40}
+{"mevRiders":[{"name":"Vorname Nachname","lauf":9,"team":"MEV 2"}],"heatCount":13,"starterCount":24,"roundCount":40}
 
 Regeln:
 - name: "Vorname Nachname", keine Startnummer/Verein/UCI-ID
 - lauf: die Lauf-Nummer dieses Fahrers laut Tabelle, falls eine Lauf-Spalte existiert, sonst null
-- Bei Team-Paaren (z.B. Madison) beide Fahrer einzeln auflisten, falls einer oder beide MEV sind; beide bekommen denselben lauf-Wert, falls vorhanden
+- team: der Wert aus der Team-/Mannschaft-Spalte (z.B. "MEV 2"), falls eine solche Spalte existiert, sonst null. NICHT der Vereinsname aus der "Verein"-Spalte — das Team-Kürzel besteht meist aus Landesverband-Kürzel + Nummer.
+- Bei Team-Paaren/Mannschaften (z.B. Madison, Teamsprint, Mannschaftsverfolgung) ALLE Fahrer des Teams einzeln auflisten, falls einer oder mehrere MEV sind; alle bekommen denselben lauf- und team-Wert
 - heatCount: Gesamtzahl unterschiedlicher Lauf-Nummern in der GESAMTEN Tabelle (nicht nur bei MEV-Zeilen), oder null falls keine Lauf-Spalte existiert
 - starterCount: Gesamtzahl der Fahrer/Teams (Zeilen) in der Tabelle, unabhängig von einer Lauf-Spalte
 - roundCount: die im Dokument genannte Rundenzahl. Aktiv danach suchen (siehe oben) — nur null zurückgeben, wenn wirklich nirgends im Dokument eine Rundenzahl steht
@@ -64,7 +66,11 @@ Regeln:
     const mevRiders = Array.isArray(parsed?.mevRiders)
       ? parsed.mevRiders
           .filter((r: any) => r && typeof r.name === 'string')
-          .map((r: any) => ({ name: r.name, lauf: typeof r.lauf === 'number' ? r.lauf : null }))
+          .map((r: any) => ({
+            name: r.name,
+            lauf: typeof r.lauf === 'number' ? r.lauf : null,
+            team: typeof r.team === 'string' ? r.team : null,
+          }))
       : [];
     const heatCount = typeof parsed?.heatCount === 'number' ? parsed.heatCount : null;
     const starterCount = typeof parsed?.starterCount === 'number' ? parsed.starterCount : null;
