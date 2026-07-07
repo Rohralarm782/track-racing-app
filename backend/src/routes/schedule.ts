@@ -119,12 +119,29 @@ router.patch('/schedule-entries/:id', requireAdmin, async (req, res, next) => {
 });
 
 // ─── Aktueller Stand ────────────────────────────────────────────────────────
+// scheduleEntry.linkedDocument wird mit eingebunden, damit das Frontend bei
+// Einzelstart-Disziplinen "Lauf X von Y" anzeigen kann (Y = heatCount aus der
+// Startliste) — ohne das würde status.scheduleEntry.linkedDocument undefined
+// bleiben, obwohl der TS-Typ ScheduleEntry es eigentlich erwartet.
+const STATUS_ENTRY_INCLUDE = {
+  scheduleEntry: {
+    include: {
+      linkedDocument: {
+        select: {
+          id: true, fileName: true, mevNames: true, mevRiders: true,
+          heatCount: true, roundCount: true, starterCount: true, mevAnalyzedAt: true,
+        },
+      },
+      linkedResultDocument: { select: { id: true, fileName: true } },
+    },
+  },
+} as const;
 
 router.get('/events/:id/status', async (req, res, next) => {
   try {
     const status = await prisma.eventStatus.findUnique({
       where: { eventId: req.params.id },
-      include: { scheduleEntry: true },
+      include: STATUS_ENTRY_INCLUDE,
     });
     res.json(status);
   } catch (e) { next(e); }
@@ -132,15 +149,18 @@ router.get('/events/:id/status', async (req, res, next) => {
 
 const StatusSchema = z.object({
   scheduleEntryId: z.string(),
-  statusKey: z.enum(['STARTING', 'RUNNING', 'FINISHED']),
+  statusKey: z.enum(['STARTING', 'RUNNING', 'FINISHED', 'STARTS_AT']),
   roundsLeft: z.number().int().min(0).nullable().optional(),
+  // Nur bei statusKey "STARTS_AT" relevant: die angesagte Startzeit ("HH:MM"),
+  // ersetzt die aktuelle Uhrzeit bei der offsetMinutes-Berechnung unten.
+  announcedTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
 });
 
 router.put('/events/:id/status', requireAdmin, async (req, res, next) => {
   try {
     const parsed = StatusSchema.safeParse(req.body);
     if (!parsed.success) { res.status(400).json(parsed.error.flatten()); return; }
-    const { scheduleEntryId, statusKey, roundsLeft } = parsed.data;
+    const { scheduleEntryId, statusKey, roundsLeft, announcedTime } = parsed.data;
 
     const entry = await prisma.scheduleEntry.findUnique({ where: { id: scheduleEntryId } });
     if (!entry || entry.eventId !== req.params.id) {
@@ -150,8 +170,18 @@ router.put('/events/:id/status', requireAdmin, async (req, res, next) => {
 
     const [h, m] = entry.time.split(':').map(Number);
     const plannedMin = h * 60 + m;
-    const now = new Date();
-    const offsetMinutes = (now.getHours() * 60 + now.getMinutes()) - plannedMin;
+
+    // Bei "startet um" wird die angesagte Zeit statt der echten aktuellen Zeit
+    // verwendet — dieselbe offsetMinutes-Formel wie sonst, nur mit einer
+    // angekündigten statt einer beobachteten Uhrzeit.
+    let offsetMinutes: number;
+    if (statusKey === 'STARTS_AT' && announcedTime) {
+      const [ah, am] = announcedTime.split(':').map(Number);
+      offsetMinutes = (ah * 60 + am) - plannedMin;
+    } else {
+      const now = new Date();
+      offsetMinutes = (now.getHours() * 60 + now.getMinutes()) - plannedMin;
+    }
 
     const status = await prisma.eventStatus.upsert({
       where: { eventId: req.params.id },
@@ -160,18 +190,22 @@ router.put('/events/:id/status', requireAdmin, async (req, res, next) => {
         roundsLeft: roundsLeft ?? null, offsetMinutes,
       },
       update: { scheduleEntryId, statusKey, roundsLeft: roundsLeft ?? null, offsetMinutes },
-      include: { scheduleEntry: true },
+      include: STATUS_ENTRY_INCLUDE,
     });
 
     // Verlaufseintrag für die Selbstkalibrierung (siehe durationEstimate.ts) —
     // getrennt vom EventStatus-Singleton oben, das nur den letzten Stand hält.
-    const logEntry = await prisma.statusUpdateLog.create({
-      data: { eventId: req.params.id, scheduleEntryId, statusKey },
-    });
-    // Läuft bewusst nicht blockierend für die Antwort, aber mit Fehlerprotokoll —
-    // ein Kalibrierungsfehler darf das eigentliche Speichern nie verhindern.
-    recalibrateFromStatusUpdate(req.params.id, logEntry.id, scheduleEntryId, logEntry.createdAt)
-      .catch(err => console.error('Kalibrierung fehlgeschlagen:', err));
+    // "Startet um" ist eine ANSAGE, keine BEOBACHTUNG — fließt bewusst nicht in
+    // die Kalibrierung ein, da sie sich als falsch herausstellen könnte.
+    if (statusKey !== 'STARTS_AT') {
+      const logEntry = await prisma.statusUpdateLog.create({
+        data: { eventId: req.params.id, scheduleEntryId, statusKey },
+      });
+      // Läuft bewusst nicht blockierend für die Antwort, aber mit Fehlerprotokoll —
+      // ein Kalibrierungsfehler darf das eigentliche Speichern nie verhindern.
+      recalibrateFromStatusUpdate(req.params.id, logEntry.id, scheduleEntryId, logEntry.createdAt)
+        .catch(err => console.error('Kalibrierung fehlgeschlagen:', err));
+    }
 
     res.json(status);
   } catch (e) { next(e); }
