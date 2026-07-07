@@ -367,21 +367,28 @@ export default function SchedulePage() {
                   key={entry.id}
                   style={{
                     display: 'grid', gridTemplateColumns: '48px 1fr auto', gap: 10, alignItems: 'center',
-                    padding: '8px 2px', borderBottom: '1px solid var(--c-border)',
-                    opacity: entry.type === 'INFO' ? 0.55 : isPast ? 0.45 : 1,
-                    borderLeft: isCurrent ? '3px solid var(--c-success, #16a34a)' : '3px solid transparent',
-                    background: isCurrent ? '#f8faff' : 'transparent',
+                    padding: entry.type === 'INFO' ? '10px 2px' : '8px 2px',
+                    borderBottom: entry.type === 'INFO' ? '2px solid var(--c-primary, #4338ca)' : '1px solid var(--c-border)',
+                    borderTop: entry.type === 'INFO' ? '2px solid var(--c-primary, #4338ca)' : undefined,
+                    opacity: entry.type === 'INFO' ? 1 : isPast ? 0.45 : 1,
+                    borderLeft: isCurrent ? '3px solid var(--c-success, #16a34a)' : entry.type === 'INFO' ? 'none' : '3px solid transparent',
+                    background: entry.type === 'INFO' ? 'var(--c-bg-muted, #eef2ff)' : isCurrent ? '#f8faff' : 'transparent',
                     borderRadius: isCurrent ? '0 8px 8px 0' : 0,
                   }}
                 >
                   <div>
-                    <div style={{ fontSize: 13, fontWeight: isCurrent ? 600 : 400 }}>{displayTime}</div>
+                    <div style={{ fontSize: 13, fontWeight: isCurrent || entry.type === 'INFO' ? 600 : 400 }}>{displayTime}</div>
                     {showNominalSecondary && (
                       <div style={{ fontSize: 10, color: 'var(--c-text-muted)' }}>{entry.time}</div>
                     )}
                   </div>
                   <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 13.5, fontWeight: isCurrent ? 600 : 400, fontStyle: entry.type === 'CEREMONY' ? 'italic' : 'normal' }}>
+                    <div style={{
+                      fontSize: entry.type === 'INFO' ? 13.5 : 13.5,
+                      fontWeight: isCurrent || entry.type === 'INFO' ? 600 : 400,
+                      fontStyle: entry.type === 'CEREMONY' ? 'italic' : 'normal',
+                      color: entry.type === 'INFO' ? 'var(--c-primary, #4338ca)' : undefined,
+                    }}>
                       {entry.type !== 'RACE' && <span style={{ marginRight: 5 }}>{TYPE_ICON[entry.type]}</span>}
                       {entry.type === 'INFO' ? entry.disciplineLabel : (
                         <>{entry.ak} · {entry.disciplineLabel}{entry.phase ? ` · ${entry.phase}` : ''}</>
