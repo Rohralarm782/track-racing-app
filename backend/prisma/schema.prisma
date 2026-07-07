@@ -59,6 +59,7 @@ enum LiveStatusKey {
   STARTING
   RUNNING
   FINISHED
+  STARTS_AT
 }
 
 model Event {
