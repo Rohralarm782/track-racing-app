@@ -8,7 +8,7 @@ import { inferCodeForEntry } from './scheduleImport';
 // Änderungswünschen an den Grundannahmen bitte direkt hier anpassen.
 
 const MASS_START_SETUP_MIN = 5;      // Startaufstellung
-const MASS_START_PER_ROUND_MIN = 0.5;
+const MASS_START_PER_ROUND_MIN = 20 / 60; // 20 Sek./Runde
 const MASS_START_CLEAR_MIN = 3;      // bis alle Fahrer von der Bahn sind
 
 const AF_SETUP_MIN = 3;              // Ausscheidungsfahren: eigene, kürzere Werte
@@ -48,6 +48,12 @@ const FALLBACK_ROUND_COUNT_BY_CODE: Record<string, number> = {
 };
 const DEFAULT_FALLBACK_ROUND_COUNT = 30; // Madison, Scratch, Omnium, ...
 const FALLBACK_HEAT_COUNT = 8;
+// Verfolgung/Zeitfahren-Finals bestehen strukturell IMMER aus genau 2 Läufen
+// (kleines Finale um Platz 3 + großes Finale um Platz 1) — unabhängig davon,
+// ob/was die Startliste dazu hergibt. Deutlich zuverlässiger als der
+// generische Lauf-Fallback oben, der für Qualifikationsrunden mit vielen
+// Teilnehmern gedacht ist.
+const PURSUIT_FINAL_HEAT_COUNT = 2;
 
 function typicalRaceMinutes(disciplineLabel: string): number {
   for (const [re, min] of DISTANCE_RACE_MIN) {
@@ -85,12 +91,17 @@ export function baseFormulaMinutes(
 }
 
 function unitCountFor(
-  entry: { disciplineLabel: string; massStart: boolean },
+  entry: { disciplineLabel: string; massStart: boolean; phase: string | null },
   linkedDoc: { roundCount: number | null; heatCount: number | null } | null | undefined,
 ): number {
   const known = linkedDoc ? (entry.massStart ? linkedDoc.roundCount : linkedDoc.heatCount) : null;
   if (known != null) return known;
-  if (!entry.massStart) return FALLBACK_HEAT_COUNT;
+  if (!entry.massStart) {
+    const code = inferCodeForEntry(entry.disciplineLabel);
+    const isPursuit = code === 'VF' || code === 'MV' || code === 'EV' || code === 'ZF';
+    if (isPursuit && entry.phase && /finale/i.test(entry.phase)) return PURSUIT_FINAL_HEAT_COUNT;
+    return FALLBACK_HEAT_COUNT;
+  }
   const code = inferCodeForEntry(entry.disciplineLabel);
   return (code ? FALLBACK_ROUND_COUNT_BY_CODE[code] : undefined) ?? DEFAULT_FALLBACK_ROUND_COUNT;
 }
@@ -100,7 +111,7 @@ function unitCountFor(
  * (1.0, solange noch keine Beobachtungen vorliegen).
  */
 export async function estimateMinutes(
-  entry: { ak: string; disciplineLabel: string; massStart: boolean; type: string },
+  entry: { ak: string; disciplineLabel: string; massStart: boolean; type: string; phase: string | null },
   linkedDoc: { roundCount: number | null; heatCount: number | null } | null | undefined,
 ): Promise<number | null> {
   const unitCount = unitCountFor(entry, linkedDoc);
