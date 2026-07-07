@@ -22,7 +22,7 @@ function toMinutes(hhmm: string): number {
   return (h || 0) * 60 + (m || 0);
 }
 function fromMinutes(min: number): string {
-  const norm = ((min % 1440) + 1440) % 1440;
+  const norm = ((Math.round(min) % 1440) + 1440) % 1440;
   const h = Math.floor(norm / 60);
   const m = norm % 60;
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
@@ -320,12 +320,22 @@ export default function SchedulePage() {
           <div className="card" style={{ padding: '4px 14px' }}>
             {(() => {
               const estimatedTimes = computeEstimatedTimes(dayEntries, status, currentEntryDay);
+              // Teilen sich mehrere Einträge exakt dieselbe PDF-Uhrzeit, ist das
+              // keine echte Uhrzeit pro Rennen, sondern nur "diese Rennen folgen
+              // im Anschluss" — dann lieber nur die Schätzung zeigen statt einer
+              // zweiten, irreführenden Zeile mit der (nichtssagenden) PDF-Zeit.
+              const timeCounts = new Map<string, number>();
+              for (const e of dayEntries) timeCounts.set(e.time, (timeCounts.get(e.time) ?? 0) + 1);
+
               return dayEntries.map(entry => {
                 const isCurrent = status?.scheduleEntryId === entry.id;
                 const isPast = status != null && currentEntryDay === entry.day && currentEntryOrder != null && entry.order < currentEntryOrder;
                 const estimatedTime = estimatedTimes.get(entry.id) ?? entry.time;
-                const showEstimate = Math.abs(toMinutes(estimatedTime) - toMinutes(entry.time)) > ESTIMATE_DISPLAY_THRESHOLD_MIN;
-                const displayTime = showEstimate ? estimatedTime : entry.time;
+                const isBucketTime = (timeCounts.get(entry.time) ?? 0) > 1;
+                const diffMin = Math.abs(toMinutes(estimatedTime) - toMinutes(entry.time));
+                const showEstimateAsPrimary = isBucketTime || diffMin > ESTIMATE_DISPLAY_THRESHOLD_MIN;
+                const displayTime = showEstimateAsPrimary ? estimatedTime : entry.time;
+                const showNominalSecondary = showEstimateAsPrimary && !isBucketTime;
                 const mev = entry.linkedDocument ? mevSummary(entry.linkedDocument.mevRiders) : null;
                 const heatCount = entry.linkedDocument?.heatCount ?? null;
 
@@ -343,7 +353,7 @@ export default function SchedulePage() {
                 >
                   <div>
                     <div style={{ fontSize: 13, fontWeight: isCurrent ? 600 : 400 }}>{displayTime}</div>
-                    {showEstimate && (
+                    {showNominalSecondary && (
                       <div style={{ fontSize: 10, color: 'var(--c-text-muted)' }}>{entry.time}</div>
                     )}
                   </div>
