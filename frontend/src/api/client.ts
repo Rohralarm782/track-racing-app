@@ -58,6 +58,7 @@ export type Discipline = 'SPRINT' | 'AUSDAUER' | 'ALLGEMEIN';
 export interface MevRider {
   name: string;
   lauf: number | null;
+  team: string | null;
 }
 
 export interface CommuniqueDocument {
