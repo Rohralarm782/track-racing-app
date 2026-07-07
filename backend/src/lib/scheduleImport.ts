@@ -15,17 +15,19 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const ZEITPLAN_PROMPT = `Analysiere diesen Zeitplan einer Bahnrad-Veranstaltung (kann mehrere Tage umfassen).
 Gib NUR JSON zurück (kein Markdown, kein Text davor/danach):
 
-{"entries":[{"day":1,"dayLabel":"Mittwoch","time":"17:00","ak":"U17m","disciplineLabel":"Punktefahren","phase":"Vorläufe","type":"RACE","massStart":true}]}
+{"entries":[{"day":1,"dayLabel":"Mittwoch","time":"09:00","ak":"Alle","disciplineLabel":"Warm-up für Sportlerinnen/Sportler aus Session 1","phase":null,"type":"INFO","massStart":false},{"day":1,"dayLabel":"Mittwoch","time":"10:00","ak":"U17m","disciplineLabel":"Punktefahren","phase":"1. Vorlauf","type":"RACE","massStart":true},{"day":1,"dayLabel":"Mittwoch","time":"16:10","ak":"Alle","disciplineLabel":"Warm-up für Sportlerinnen/Sportler aus Session 2","phase":null,"type":"INFO","massStart":false},{"day":1,"dayLabel":"Mittwoch","time":"17:50","ak":"U17m","disciplineLabel":"Punktefahren","phase":"Finale","type":"RACE","massStart":true}]}
+
+Das Beispiel oben zeigt bewusst ZWEI Warm-up-Einträge (09:00 für Session 1, 16:10 für Session 2) — genau dieses Muster (ein Warm-up-Hinweis pro Session, jeweils mit eigener Uhrzeit) kommt in echten Zeitplänen praktisch immer vor. Beide MÜSSEN als eigene Einträge erscheinen, nicht nur der erste.
 
 Regeln:
 - day: 1 = erster im Dokument vorkommender Veranstaltungstag, 2 = zweiter usw. (Reihenfolge im Dokument, nicht das Kalenderdatum selbst — manche Zeitplan-Dokumente haben fehlerhafte/inkonsistente Jahresangaben, das ist irrelevant, nur die Reihenfolge und Uhrzeit zählen)
 - dayLabel: der Wochentag dieses Tages als Klartext (z.B. "Mittwoch"), so wie im Dokument angegeben (z.B. aus einer Überschrift wie "Mittwoch, 02.07.2025"). Alle Einträge desselben Tages bekommen denselben dayLabel-Wert. Falls kein Wochentag erkennbar ist, weglassen.
 - time: Uhrzeit im Format "HH:MM", so wie im Dokument angegeben
-- ak: Altersklasse normalisiert (z.B. "U17m", "U15w", "Elite m"); falls ein Eintrag mehrere Altersklassen gleichzeitig betrifft (z.B. kombinierte Teamsprint-Wertung über zwei Altersklassen), alle betroffenen Altersklassen durch ein Leerzeichen getrennt in aufsteigender Reihenfolge angeben (z.B. "U17w U19w"), NICHT "Mehrere" verwenden
-- disciplineLabel: Disziplin als Klartext (z.B. "Punktefahren", "Madison", "Omnium Scratch", "3000m Mannschaftsverfolgung")
+- ak: Altersklasse normalisiert (z.B. "U17m", "U15w", "Elite m"); falls ein Eintrag mehrere Altersklassen gleichzeitig betrifft (z.B. kombinierte Teamsprint-Wertung über zwei Altersklassen), alle betroffenen Altersklassen durch ein Leerzeichen getrennt in aufsteigender Reihenfolge angeben (z.B. "U17w U19w"), NICHT "Mehrere" verwenden. Bei INFO-Einträgen (Warm-up etc.) "Alle" verwenden.
+- disciplineLabel: Disziplin als Klartext (z.B. "Punktefahren", "Madison", "Omnium Scratch", "3000m Mannschaftsverfolgung"). Bei INFO-Einträgen der volle Hinweistext (z.B. "Warm-up für Sportlerinnen/Sportler aus Session 2"), damit erkennbar bleibt, WELCHE Session gemeint ist.
 - phase: Phasen-Bezeichnung falls vorhanden (z.B. "1. Vorlauf", "Finale", "A-Lauf", "Qualifikation"), sonst weglassen
 - type: "RACE" für Wettkämpfe, "CEREMONY" für Siegerehrungen, "INFO" für Warm-Up/Bahn-Öffnung/Pausen/Ende-Hinweise
-- WICHTIG: JEDE Zeile im Dokument wird zu einem eigenen Eintrag — auch INFO-Zeilen wie Warm-up/Bahn-Öffnung, die sich fast wortgleich wiederholen (z.B. "Warm-up für Sportlerinnen/Sportler aus Session 1" UND "...aus Session 2" später im Dokument). Das sind ZWEI separate Einträge mit jeweils eigener Uhrzeit, NICHT nur einer — niemals eine wiederholte/ähnliche Zeile als Duplikat auslassen, nur weil der Text einer früheren Zeile ähnelt.
+- WICHTIG: JEDE Zeile im Dokument wird zu einem eigenen Eintrag — auch INFO-Zeilen wie Warm-up/Bahn-Öffnung, die sich fast wortgleich wiederholen (siehe Beispiel oben). Niemals eine wiederholte/ähnliche Zeile als Duplikat auslassen, nur weil der Text einer früheren Zeile ähnelt — jede Session hat typischerweise ihren EIGENEN Warm-up-Hinweis mit eigener Uhrzeit direkt vor der Session-Überschrift.
 - massStart: true bei Massenstart-Formaten (Punktefahren, Madison, Scratch, Ausscheidungsfahren, Temporunden), false bei Einzelstart-Formaten (Zeitfahren, Verfolgung, Sprint)
 - Reihenfolge der Einträge im JSON muss der zeitlichen Reihenfolge im Dokument entsprechen
 - Nur JSON, sonst nichts`;
