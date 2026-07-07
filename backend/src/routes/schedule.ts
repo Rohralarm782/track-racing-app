@@ -52,7 +52,7 @@ router.post('/events/:id/schedule', requireAdmin, async (req, res, next) => {
 // Reichert eine geladene Zeitplan-Liste um die geschätzte Dauer pro Rennen an
 // (siehe durationEstimate.ts). Separat von loadScheduleWithLinks gehalten,
 // da nicht jeder Aufrufer (z.B. autoMatch) das braucht.
-async function withEstimates<T extends { ak: string; disciplineLabel: string; massStart: boolean; type: string; linkedDocument: { roundCount: number | null; heatCount: number | null } | null }>(
+async function withEstimates<T extends { ak: string; disciplineLabel: string; massStart: boolean; type: string; phase: string | null; linkedDocument: { roundCount: number | null; heatCount: number | null } | null }>(
   entries: T[],
 ): Promise<Array<T & { estimatedMinutes: number | null }>> {
   return Promise.all(entries.map(async e => ({
