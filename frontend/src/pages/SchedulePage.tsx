@@ -41,18 +41,41 @@ function agoLabel(iso: string): string {
 // Leerzeichen getrennt wird, nicht am Bindestrich. Lauf-Nummer (falls
 // vorhanden) wird direkt am Namen angezeigt, da bei mehreren MEV-Fahrern im
 // selben Rennen jeder in einem anderen Lauf stehen kann.
+// Bei Mannschafts-Disziplinen (Teamsprint, Mannschaftsverfolgung, Madison)
+// stehen mehrere Fahrer pro Lauf, gruppiert unter einem Team-Kürzel (z.B.
+// "MEV 2"). In dem Fall ist der Team-Name aussagekräftiger als eine Liste
+// einzelner Vornamen — deshalb Team-Namen bevorzugen, sobald mindestens ein
+// Fahrer ein team-Feld hat. Pro (team, lauf) nur einmal anzeigen, auch wenn
+// mehrere MEV-Fahrer im selben Team stehen.
 function mevSummary(riders: MevRider[]): string | null {
   if (!riders || riders.length === 0) return null;
-  const parts = riders.map(r => {
-    const first = r.name.trim().split(/\s+/)[0];
-    return r.lauf != null ? `${first} (Lauf ${r.lauf})` : first;
-  });
+
+  const hasTeams = riders.some(r => r.team);
+  let parts: string[];
+
+  if (hasTeams) {
+    const seen = new Set<string>();
+    parts = [];
+    for (const r of riders) {
+      const label = r.team ?? r.name.trim().split(/\s+/)[0];
+      const key = `${label}::${r.lauf ?? ''}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      parts.push(r.lauf != null ? `${label} (Lauf ${r.lauf})` : label);
+    }
+  } else {
+    parts = riders.map(r => {
+      const first = r.name.trim().split(/\s+/)[0];
+      return r.lauf != null ? `${first} (Lauf ${r.lauf})` : first;
+    });
+  }
+
   const joined = parts.join(', ');
   if (joined.length <= 46) return joined;
   return `${riders.length} Fahrer`;
 }
 
-const CEREMONY_ESTIMATE_MIN = 3;
+const CEREMONY_ESTIMATE_MIN = 5;
 const ESTIMATE_DISPLAY_THRESHOLD_MIN = 5;
 
 // Errechnet pro Eintrag eines Tages eine geschätzte Uhrzeit, indem die
