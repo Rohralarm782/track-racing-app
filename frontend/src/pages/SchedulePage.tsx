@@ -529,11 +529,22 @@ export default function SchedulePage() {
               onChange={e => setUpdateEntryId(e.target.value)}
             >
               {raceOptions.length === 0 && <option value="">Keine Rennen an diesem Tag</option>}
-              {raceOptions.map(r => (
-                <option key={r.id} value={r.id}>
-                  {r.ak} · {r.disciplineLabel}{r.phase ? ` · ${r.phase}` : ''}
-                </option>
-              ))}
+              {(() => {
+                const items: JSX.Element[] = [];
+                dayEntries.forEach((e, idx) => {
+                  if (e.type !== 'RACE') return;
+                  const prev = idx > 0 ? dayEntries[idx - 1] : null;
+                  if (prev && prev.type === 'INFO') {
+                    items.push(<option key={`sep-${e.id}`} disabled>──────────</option>);
+                  }
+                  items.push(
+                    <option key={e.id} value={e.id}>
+                      {e.ak} · {e.disciplineLabel}{e.phase ? ` · ${e.phase}` : ''}
+                    </option>
+                  );
+                });
+                return items;
+              })()}
             </select>
           </div>
 
