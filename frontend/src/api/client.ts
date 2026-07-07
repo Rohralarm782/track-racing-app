@@ -93,7 +93,7 @@ export interface CommuniqueSource {
 // ─── Zeitplan ────────────────────────────────────────────────────────────────
 
 export type ScheduleEntryType = 'RACE' | 'CEREMONY' | 'INFO';
-export type LiveStatusKey = 'STARTING' | 'RUNNING' | 'FINISHED';
+export type LiveStatusKey = 'STARTING' | 'RUNNING' | 'FINISHED' | 'STARTS_AT';
 
 export interface ScheduleEntryLinkedDoc {
   id: string;
@@ -250,6 +250,6 @@ export const scheduleApi = {
   getStatus: (eventId: string) =>
     api.get<EventStatus | null>(`/api/events/${eventId}/status`),
 
-  setStatus: (eventId: string, scheduleEntryId: string, statusKey: LiveStatusKey, roundsLeft: number | null) =>
-    api.put<EventStatus>(`/api/events/${eventId}/status`, { scheduleEntryId, statusKey, roundsLeft }),
+  setStatus: (eventId: string, scheduleEntryId: string, statusKey: LiveStatusKey, roundsLeft: number | null, announcedTime?: string) =>
+    api.put<EventStatus>(`/api/events/${eventId}/status`, { scheduleEntryId, statusKey, roundsLeft, announcedTime }),
 };
