@@ -15,6 +15,7 @@ const STATUS_LABEL: Record<LiveStatusKey, string> = {
   STARTING: 'startet gerade',
   RUNNING: 'läuft',
   FINISHED: 'im Ziel',
+  STARTS_AT: 'startet um',
 };
 
 function toMinutes(hhmm: string): number {
@@ -135,6 +136,7 @@ export default function SchedulePage() {
   const [updateEntryId, setUpdateEntryId]   = useState('');
   const [updateStatusKey, setUpdateStatusKey] = useState<LiveStatusKey>('RUNNING');
   const [updateRounds, setUpdateRounds]     = useState(1);
+  const [updateAnnouncedTime, setUpdateAnnouncedTime] = useState('');
   const [updateBusy, setUpdateBusy]         = useState(false);
   const [rematchBusy, setRematchBusy]       = useState(false);
 
@@ -197,6 +199,7 @@ export default function SchedulePage() {
   const dayLabelFor = (d: number) => entries.find(e => e.day === d && e.dayLabel)?.dayLabel ?? `Tag ${d}`;
   const dayEntries = entries.filter(e => e.day === activeDay).sort((a, b) => a.order - b.order);
   const raceOptions = entries.filter(e => e.type === 'RACE' && e.day === activeDay);
+  const selectedUpdateEntry = entries.find(e => e.id === updateEntryId);
 
   function openUpdateModal() {
     const preselect = status?.scheduleEntryId && entries.some(e => e.id === status.scheduleEntryId)
@@ -205,6 +208,8 @@ export default function SchedulePage() {
     setUpdateEntryId(preselect);
     setUpdateStatusKey(status?.statusKey ?? 'RUNNING');
     setUpdateRounds(status?.roundsLeft ?? 1);
+    const now = new Date();
+    setUpdateAnnouncedTime(`${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`);
     setShowUpdate(true);
   }
 
@@ -215,6 +220,7 @@ export default function SchedulePage() {
       const st = await scheduleApi.setStatus(
         eventId, updateEntryId, updateStatusKey,
         updateStatusKey === 'RUNNING' ? updateRounds : null,
+        updateStatusKey === 'STARTS_AT' ? updateAnnouncedTime : undefined,
       );
       setStatus(st);
       setShowUpdate(false);
@@ -323,8 +329,14 @@ export default function SchedulePage() {
                       {status.scheduleEntry.phase ? ` · ${status.scheduleEntry.phase}` : ''}
                     </p>
                     <p className="text-sm text-muted" style={{ margin: '2px 0 0' }}>
-                      {STATUS_LABEL[status.statusKey]}
-                      {status.statusKey === 'RUNNING' && status.roundsLeft != null ? ` · noch ${status.roundsLeft} Runden` : ''}
+                      {status.statusKey === 'STARTS_AT'
+                        ? `startet um ${fromMinutes(toMinutes(status.scheduleEntry.time) + status.offsetMinutes)}`
+                        : STATUS_LABEL[status.statusKey]}
+                      {status.statusKey === 'RUNNING' && status.roundsLeft != null
+                        ? status.scheduleEntry.massStart === false
+                          ? ` · Lauf ${status.roundsLeft}${status.scheduleEntry.linkedDocument?.heatCount != null ? ` von ${status.scheduleEntry.linkedDocument.heatCount}` : ''}`
+                          : ` · noch ${status.roundsLeft} Runden`
+                        : ''}
                       {' · aktualisiert '}{agoLabel(status.updatedAt)}
                     </p>
                   </>
@@ -528,7 +540,7 @@ export default function SchedulePage() {
           <div className="form-group">
             <label className="form-label">Status</label>
             <div style={{ display: 'flex', gap: 6 }}>
-              {(['STARTING', 'RUNNING', 'FINISHED'] as LiveStatusKey[]).map(key => (
+              {(['STARTING', 'RUNNING', 'FINISHED', 'STARTS_AT'] as LiveStatusKey[]).map(key => (
                 <button
                   key={key}
                   onClick={() => setUpdateStatusKey(key)}
@@ -547,7 +559,9 @@ export default function SchedulePage() {
 
           {updateStatusKey === 'RUNNING' && (
             <div className="form-group">
-              <label className="form-label">Noch Runden</label>
+              <label className="form-label">
+                {selectedUpdateEntry?.massStart === false ? 'Aktueller Lauf' : 'Noch Runden'}
+              </label>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: '#f8faff', borderRadius: 7, padding: '8px 10px' }}>
                 <button
                   onClick={() => setUpdateRounds(r => Math.max(0, r - 1))}
@@ -558,7 +572,24 @@ export default function SchedulePage() {
                   onClick={() => setUpdateRounds(r => r + 1)}
                   style={{ width: 26, height: 26, borderRadius: 6, border: '1px solid var(--c-border)', background: 'var(--c-white)', fontSize: 14, cursor: 'pointer' }}
                 >+</button>
+                {selectedUpdateEntry?.massStart === false && selectedUpdateEntry?.linkedDocument?.heatCount != null && (
+                  <span style={{ fontSize: 13, color: 'var(--c-text-muted)' }}>
+                    von {selectedUpdateEntry.linkedDocument.heatCount}
+                  </span>
+                )}
               </div>
+            </div>
+          )}
+
+          {updateStatusKey === 'STARTS_AT' && (
+            <div className="form-group">
+              <label className="form-label">Angesagte Startzeit</label>
+              <input
+                type="time"
+                className="form-input"
+                value={updateAnnouncedTime}
+                onChange={e => setUpdateAnnouncedTime(e.target.value)}
+              />
             </div>
           )}
 
