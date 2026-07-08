@@ -1,3 +1,5 @@
+// Zielpfad im Repo: backend/src/index.ts  (ERSETZT die bestehende Datei)
+// Änderung ggü. Original: athletesRouter importiert und unter /api/athletes registriert.
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -11,6 +13,7 @@ import pursuitPlansRouter from './routes/pursuit-plans';  // ← geändert
 import communiquesRouter, { pollSource } from './routes/communiques';
 import scheduleRouter from './routes/schedule';
 import settingsRouter from './routes/settings';
+import athletesRouter from './routes/athletes'; // ← neu: Sportlerkartei
 import prisma from './prisma';
 
 dotenv.config();
@@ -38,6 +41,7 @@ app.use('/api/pursuit-plans',  pursuitPlansRouter);  // ← geändert
 app.use('/api/communiques',    communiquesRouter);
 app.use('/api',                scheduleRouter); // Zeitplan + Aktueller-Stand-Endpunkte (eigene Pfade unter /api/events/:id/schedule, /api/schedule-entries/:id)
 app.use('/api/settings',       settingsRouter);
+app.use('/api/athletes',       athletesRouter); // ← neu: Sportlerkartei
 
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);
