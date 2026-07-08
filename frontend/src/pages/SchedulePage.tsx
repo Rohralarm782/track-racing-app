@@ -173,6 +173,24 @@ export default function SchedulePage() {
     }
   }
 
+  async function handleSetManualCount(entry: ScheduleEntry) {
+    const label = entry.massStart ? 'Rundenzahl' : 'Laufzahl';
+    const input = window.prompt(`${label} für "${entry.ak} · ${entry.disciplineLabel}${entry.phase ? ' · ' + entry.phase : ''}" eintragen (leer lassen zum Entfernen):`, entry.manualUnitCount != null ? String(entry.manualUnitCount) : '');
+    if (input === null) return; // abgebrochen
+    const trimmed = input.trim();
+    const value = trimmed === '' ? null : Number(trimmed);
+    if (value !== null && (!Number.isInteger(value) || value < 0)) {
+      setError('Bitte eine ganze, nicht-negative Zahl eingeben.');
+      return;
+    }
+    try {
+      await scheduleApi.setManualUnitCount(entry.id, value);
+      await load();
+    } catch (e: any) {
+      setError(e.message ?? 'Speichern fehlgeschlagen');
+    }
+  }
+
   async function load() {
     if (!eventId) return;
     setLoading(true); setError('');
@@ -449,6 +467,15 @@ export default function SchedulePage() {
                           background: 'var(--c-bg-muted, #f3f4f6)', padding: '1px 7px', borderRadius: 10,
                         }}>
                           {heatCount} {heatCount === 1 ? 'Lauf' : 'Läufe'}
+                        </span>
+                      )}
+                      {entry.type === 'RACE' && isAdmin && entry.estimateIsFallback && (
+                        <span
+                          onClick={() => handleSetManualCount(entry)}
+                          title={`${entry.massStart ? 'Rundenzahl' : 'Laufzahl'} manuell eintragen (Schätzung beruht auf einer Rückfallgröße)`}
+                          style={{ marginLeft: 6, fontSize: 12, cursor: 'pointer', opacity: 0.6 }}
+                        >
+                          ✏️
                         </span>
                       )}
                     </div>
