@@ -8,6 +8,7 @@ import RaceDetail from './pages/RaceDetail';
 import PursuitPage from './pages/PursuitPage';
 import CommuniquesPage from './pages/CommuniquesPage';
 import SchedulePage from './pages/SchedulePage';
+import SettingsPage from './pages/SettingsPage';
 
 const router = createBrowserRouter([
   {
@@ -22,6 +23,7 @@ const router = createBrowserRouter([
       { path: 'categories/:id', element: <CategoryDetail /> },
       { path: 'races/:id',      element: <RaceDetail /> },
       { path: 'pursuit', element: <PursuitPage /> },
+      { path: 'settings', element: <SettingsPage /> },
     ],
   },
 ]);
