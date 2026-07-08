@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api } from '../api/client';
+import { api, athletesApi, type Athlete } from '../api/client';
 import { useAdmin } from '../components/Layout';
 import VerfolgungsplanungView, { PlanSaveData, fmtTime } from '../components/VerfolgungsplanungView';
 
@@ -83,6 +83,22 @@ export default function PursuitPage() {
     if (!confirm('Plan löschen?')) return;
     await api.delete(`/api/pursuit-plans/${id}`);
     setPlans(p => p.filter(x => x.id !== id));
+  }
+
+  // ── Sportlerauswahl (Einzel/Mannschaft) ───────────────────────────────────
+  // Rein lokal — die eigenständige /pursuit-Seite hängt an keinem Rennen, es
+  // gibt also nichts, woran die Auswahl im Backend hängen könnte. Dient nur
+  // der Gang-Vorauswahl aus dem Sportlerprofil (wie im Renndetail).
+  const [allAthletes, setAllAthletes] = useState<Athlete[]>([]);
+  useEffect(() => { athletesApi.list().then(setAllAthletes).catch(() => {}); }, []);
+  const [pursuitMode, setPursuitMode]         = useState<'einzel' | 'mannschaft'>('einzel');
+  const [selectedAthletes, setSelectedAthletes] = useState<Athlete[]>([]);
+  function switchPursuitMode(m: 'einzel' | 'mannschaft') {
+    setPursuitMode(m);
+    setSelectedAthletes([]);
+  }
+  function handleAthletesChange(ids: string[]) {
+    setSelectedAthletes(allAthletes.filter(a => ids.includes(a.id)));
   }
 
   // ── Timer – State ──────────────────────────────────────────────────────────
@@ -543,8 +559,31 @@ export default function PursuitPage() {
         <div style={{ flex: 1, height: 1, background: 'var(--c-border)' }} />
       </div>
 
+      {/* Einzel/Mannschaft-Umschalter */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+        <button
+          className={`btn btn-sm ${pursuitMode === 'einzel' ? 'btn-primary' : 'btn-secondary'}`}
+          onClick={() => switchPursuitMode('einzel')}
+        >
+          Einzelverfolgung
+        </button>
+        <button
+          className={`btn btn-sm ${pursuitMode === 'mannschaft' ? 'btn-primary' : 'btn-secondary'}`}
+          onClick={() => switchPursuitMode('mannschaft')}
+        >
+          Mannschaftsverfolgung
+        </button>
+      </div>
+
       {/* Rechner */}
-      <VerfolgungsplanungView isAdmin={isAdmin} onSave={isAdmin ? handleSave : undefined} />
+      <VerfolgungsplanungView
+        isAdmin={isAdmin}
+        onSave={isAdmin ? handleSave : undefined}
+        athleteMode={pursuitMode}
+        allAthletes={allAthletes}
+        selectedAthletes={selectedAthletes}
+        onAthletesChange={handleAthletesChange}
+      />
     </div>
   );
 }
