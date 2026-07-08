@@ -345,6 +345,12 @@ model ScheduleEntry {
 
   createdAt DateTime @default(now())
 
+  // Manuell eingetragene Runden-/Laufzahl für die Zeitschätzung — überschreibt
+  // sowohl eine aus der Startliste extrahierte Zahl als auch die allgemeine
+  // Rückfallgröße (siehe AppSettings). Rein informativ für durationEstimate.ts,
+  // ändert nichts an der eigentlichen Renn-Wertung.
+  manualUnitCount Int?
+
   liveStatus EventStatus?
   statusLogEntries StatusUpdateLog[]
 
@@ -406,4 +412,49 @@ model DurationEstimate {
   updatedAt        DateTime @updatedAt
 
   @@unique([ak, disciplineLabel, massStart])
+}
+
+// ─── Allgemeine Einstellungen ───────────────────────────────────────────────
+// Singleton (immer genau eine Zeile, id fest "singleton") — gilt für die
+// gesamte App, nicht pro Veranstaltung. Enthält alles, was bisher als feste
+// Konstante in durationEstimate.ts/mevDetect.ts stand, jetzt editierbar über
+// die Einstellungen-Seite, ohne dass dafür Code geändert werden muss.
+model AppSettings {
+  id String @id @default("singleton")
+
+  // Landesverband-Kürzel, nach dem in Startlisten gesucht wird (MEV-Erkennung,
+  // Lauf-Nummer, Team-Namen). Macht die App über MEV hinaus wiederverwendbar.
+  mevLv String @default("MEV")
+
+  // Massenstart-Formel: Startaufstellung + (Min./Runde × Runden) + Abräumen
+  massStartSetupMin    Float @default(5)
+  massStartPerRoundMin Float @default(0.3333333333333333) // 20 Sek.
+  massStartClearMin    Float @default(3)
+
+  // Ausscheidungsfahren: eigene, kürzere Werte (Rundenzahl = Starter×2, siehe mevDetect.ts)
+  afSetupMin    Float @default(3)
+  afPerRoundMin Float @default(0.3333333333333333)
+  afClearMin    Float @default(2)
+
+  // Verfolgung/Zeitfahren: Startaufstellung + übliche Renndauer (siehe
+  // distanceRaceMinutes), pro Lauf, mal Laufzahl
+  pursuitSetupMin Float @default(1)
+  // JSON-Objekt {"4000m": 4.5, "3000m": 3.5, "2000m": 2.5, "1000m": 1.1, "500m": 0.583, "default": 3.0}
+  distanceRaceMinutes Json @default("{\"4000m\":4.5,\"3000m\":3.5,\"2000m\":2.5,\"1000m\":1.1,\"500m\":0.583,\"default\":3.0}")
+
+  sprintPerHeatMin     Float @default(2)
+  teamsprintPerHeatMin Float @default(2)
+  keirinPerHeatMin     Float @default(4)
+
+  pauseBufferMin       Int @default(20) // Cool-down nach dem letzten Rennen eines Blocks
+  estimateThresholdMin Int @default(5)  // Schätzung nur anzeigen, wenn Abweichung > diesem Wert
+
+  // Rückfallgrößen, wenn die Startliste keine Runden-/Laufzahl hergibt
+  fallbackRoundCountPr      Int @default(50) // Punktefahren
+  fallbackRoundCountTr      Int @default(30) // Temporunden
+  fallbackRoundCountDefault Int @default(30) // Madison, Scratch, Omnium, ...
+  fallbackHeatCount         Int @default(8)  // Einzelstart generisch (z.B. Quali)
+  pursuitFinalHeatCount     Int @default(2)  // Verfolgung/Zeitfahren-Finale (strukturell fest)
+
+  updatedAt DateTime @updatedAt
 }
