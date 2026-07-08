@@ -1,3 +1,5 @@
+// Zielpfad im Repo: frontend/src/App.tsx  (ERSETZT die bestehende Datei)
+// Änderung ggü. Original: Routen für /athletes und /athletes/:id ergänzt.
 import { createBrowserRouter, RouterProvider } from 'react-router-dom';
 import Layout from './components/Layout';
 import EventList from './pages/EventList';
@@ -9,6 +11,8 @@ import PursuitPage from './pages/PursuitPage';
 import CommuniquesPage from './pages/CommuniquesPage';
 import SchedulePage from './pages/SchedulePage';
 import SettingsPage from './pages/SettingsPage';
+import AthletesPage from './pages/AthletesPage';
+import AthleteDetail from './pages/AthleteDetail';
 
 const router = createBrowserRouter([
   {
@@ -23,6 +27,8 @@ const router = createBrowserRouter([
       { path: 'categories/:id', element: <CategoryDetail /> },
       { path: 'races/:id',      element: <RaceDetail /> },
       { path: 'pursuit', element: <PursuitPage /> },
+      { path: 'athletes', element: <AthletesPage /> },
+      { path: 'athletes/:id', element: <AthleteDetail /> },
       { path: 'settings', element: <SettingsPage /> },
     ],
   },
