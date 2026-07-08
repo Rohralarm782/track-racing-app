@@ -127,10 +127,15 @@ export interface ScheduleEntry {
   linkedDocument: ScheduleEntryLinkedDoc | null;
   linkedResultDocumentId: string | null;
   linkedResultDocument: ScheduleEntryResultDoc | null;
+  // Manuell eingetragene Runden-/Laufzahl, überschreibt Startliste + Rückfallgröße.
+  manualUnitCount: number | null;
   // Geschätzte Renndauer in Minuten (Formel + Kalibrierungsfaktor, siehe
   // durationEstimate.ts) — null, wenn (noch) nicht schätzbar, z.B. weil die
   // Runden-/Laufzahl aus der Startliste fehlt.
   estimatedMinutes: number | null;
+  // true, wenn die Schätzung auf einer Rückfallgröße statt einer echten
+  // Runden-/Laufzahl beruht — Signal fürs Frontend, eine manuelle Eingabe anzubieten.
+  estimateIsFallback: boolean;
 }
 
 export interface DraftScheduleEntry {
@@ -247,9 +252,55 @@ export const scheduleApi = {
   linkResultDocument: (entryId: string, linkedResultDocumentId: string | null) =>
     api.patch<ScheduleEntry>(`/api/schedule-entries/${entryId}`, { linkedResultDocumentId }),
 
+  setManualUnitCount: (entryId: string, manualUnitCount: number | null) =>
+    api.patch<ScheduleEntry>(`/api/schedule-entries/${entryId}`, { manualUnitCount }),
+
   getStatus: (eventId: string) =>
     api.get<EventStatus | null>(`/api/events/${eventId}/status`),
 
   setStatus: (eventId: string, scheduleEntryId: string, statusKey: LiveStatusKey, roundsLeft: number | null, announcedTime?: string) =>
     api.put<EventStatus>(`/api/events/${eventId}/status`, { scheduleEntryId, statusKey, roundsLeft, announcedTime }),
+};
+
+// ─── Allgemeine Einstellungen (App-weit, nicht pro Veranstaltung) ──────────
+
+export interface AppSettings {
+  id: string;
+  mevLv: string;
+  massStartSetupMin: number;
+  massStartPerRoundMin: number;
+  massStartClearMin: number;
+  afSetupMin: number;
+  afPerRoundMin: number;
+  afClearMin: number;
+  pursuitSetupMin: number;
+  distanceRaceMinutes: Record<string, number>;
+  sprintPerHeatMin: number;
+  teamsprintPerHeatMin: number;
+  keirinPerHeatMin: number;
+  pauseBufferMin: number;
+  estimateThresholdMin: number;
+  fallbackRoundCountPr: number;
+  fallbackRoundCountTr: number;
+  fallbackRoundCountDefault: number;
+  fallbackHeatCount: number;
+  pursuitFinalHeatCount: number;
+  updatedAt: string;
+}
+
+export interface DurationEstimateRow {
+  id: string;
+  ak: string;
+  disciplineLabel: string;
+  massStart: boolean;
+  correctionFactor: number;
+  sampleCount: number;
+  updatedAt: string;
+}
+
+export const settingsApi = {
+  get: () => api.get<AppSettings>('/api/settings'),
+  update: (data: Partial<AppSettings>) => api.put<AppSettings>('/api/settings', data),
+  getCalibration: () => api.get<DurationEstimateRow[]>('/api/settings/calibration'),
+  resetCalibration: (id: string) => api.delete<void>(`/api/settings/calibration/${id}`),
 };
