@@ -5,7 +5,6 @@ import { useAdmin } from '../components/Layout';
 import StartlistImport from '../components/StartlistImport';
 import EventTabBar from '../components/EventTabBar';
 import SettingsGearButton from '../components/SettingsGearButton';
-import TimeEstimateSettings from '../components/TimeEstimateSettings';
 
 const FORMAT_LABEL: Record<string, string> = {
   INDIVIDUAL: 'Einzelrennen',
@@ -263,13 +262,11 @@ export default function EventDetail() {
               </div>
 
               <div style={{ borderTop: '1px solid var(--c-border)', paddingTop: 16, marginTop: 20 }}>
-                <p className="text-xs" style={{ fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.03em', color: 'var(--c-primary)', marginBottom: 4 }}>
-                  Zeitschätzung — App-weite Einstellungen
+                <p className="text-xs text-muted">
+                  Einstellungen zur Zeitschätzung (Formel-Werte, Kalibrierung, Landesverband-Kürzel) gelten
+                  app-weit für alle Veranstaltungen und liegen daher jetzt unter{' '}
+                  <Link to="/settings">⚙️ Einstellungen</Link> im Hauptmenü, nicht mehr hier.
                 </p>
-                <p className="text-xs text-muted" style={{ marginBottom: 14 }}>
-                  Gilt für alle Veranstaltungen, nicht nur diese hier.
-                </p>
-                <TimeEstimateSettings />
               </div>
             </>
           )}
