@@ -1,3 +1,7 @@
+// Zielpfad im Repo: backend/src/routes/races.ts  (ERSETZT die bestehende Datei)
+// Änderungen ggü. Original:
+//  1) GET /:id lädt zusätzlich `athletes` (verknüpfte Sportler aus der Kartei) mit
+//  2) neue Route PUT /:id/athletes zum Setzen der Sportlerauswahl (Verfolgungsrennen)
 import { Router } from 'express';
 import { z } from 'zod';
 import Anthropic from '@anthropic-ai/sdk';
@@ -37,6 +41,8 @@ router.get('/:id', async (req, res, next) => {
         lapEvents: { orderBy: { createdAt: 'asc' }, include: { team: true } },
         omniumScores: { include: { team: true } },
         flags: { include: { team: true } },
+        // ── neu: verknüpfte Sportler aus der eigenen Kartei (Verfolgungsrennen) ──
+        athletes: { include: { athlete: true }, orderBy: { createdAt: 'asc' } },
       },
     });
     if (!race) { res.status(404).json({ error: 'Nicht gefunden' }); return; }
@@ -76,6 +82,37 @@ router.get('/:id', async (req, res, next) => {
       dnsTeams,
       scoreboard,
     });
+  } catch (e) { next(e); }
+});
+
+// ── PUT /:id/athletes — Sportlerauswahl für ein Verfolgungsrennen setzen ─────
+// Body: { athleteIds: string[] }. Ersetzt die komplette Auswahl, behält aber
+// bereits gesetzte timeMs-Werte für Sportler, die weiterhin ausgewählt bleiben
+// (nur entfernte Zuordnungen werden gelöscht, neue werden angelegt).
+const LinkAthletesSchema = z.object({ athleteIds: z.array(z.string()) });
+
+router.put('/:id/athletes', requireAdmin, async (req, res, next) => {
+  try {
+    const parsed = LinkAthletesSchema.safeParse(req.body);
+    if (!parsed.success) { res.status(400).json(parsed.error.flatten()); return; }
+    const raceId = req.params.id;
+    const { athleteIds } = parsed.data;
+
+    const existing = await prisma.raceAthlete.findMany({ where: { raceId } });
+    const existingIds = new Set(existing.map(e => e.athleteId));
+    const toAdd = athleteIds.filter(id => !existingIds.has(id));
+
+    await prisma.$transaction([
+      prisma.raceAthlete.deleteMany({ where: { raceId, athleteId: { notIn: athleteIds } } }),
+      ...toAdd.map(athleteId => prisma.raceAthlete.create({ data: { raceId, athleteId } })),
+    ]);
+
+    const links = await prisma.raceAthlete.findMany({
+      where: { raceId },
+      include: { athlete: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    res.json(links);
   } catch (e) { next(e); }
 });
 
