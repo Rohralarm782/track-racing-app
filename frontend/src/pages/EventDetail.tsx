@@ -5,6 +5,7 @@ import { useAdmin } from '../components/Layout';
 import StartlistImport from '../components/StartlistImport';
 import EventTabBar from '../components/EventTabBar';
 import SettingsGearButton from '../components/SettingsGearButton';
+import TimeEstimateSettings from '../components/TimeEstimateSettings';
 
 const FORMAT_LABEL: Record<string, string> = {
   INDIVIDUAL: 'Einzelrennen',
@@ -259,6 +260,16 @@ export default function EventDetail() {
                 <button className="btn btn-danger btn-sm" onClick={deleteEvent}>
                   Veranstaltung löschen
                 </button>
+              </div>
+
+              <div style={{ borderTop: '1px solid var(--c-border)', paddingTop: 16, marginTop: 20 }}>
+                <p className="text-xs" style={{ fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.03em', color: 'var(--c-primary)', marginBottom: 4 }}>
+                  Zeitschätzung — App-weite Einstellungen
+                </p>
+                <p className="text-xs text-muted" style={{ marginBottom: 14 }}>
+                  Gilt für alle Veranstaltungen, nicht nur diese hier.
+                </p>
+                <TimeEstimateSettings />
               </div>
             </>
           )}
