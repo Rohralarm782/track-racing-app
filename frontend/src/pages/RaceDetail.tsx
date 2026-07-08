@@ -1,8 +1,20 @@
+// Zielpfad im Repo: frontend/src/pages/RaceDetail.tsx  (ERSETZT die bestehende Datei)
+//
+// Änderungen ggü. Original — NUR im VERFOLGUNGSRENNEN-Zweig, der Rest
+// (TEMPORUNDEN / PUNKTEFAHREN-MADISON-OMNIUM) ist unverändert:
+//  - athletesApi/raceAthletesApi/Athlete importiert, Race-Interface um
+//    `athletes` erweitert
+//  - allAthletes wird beim Laden der Seite einmal geholt
+//  - handleSavePlan entfernt (Plan-Speichern wird für Verfolgungsrennen nicht
+//    mehr angeboten, siehe VerfolgungsplanungView), stattdessen
+//    handleAthletesChange, das die Sportlerauswahl ans Backend schreibt
+//  - VerfolgungsplanungView bekommt athleteMode/allAthletes/selectedAthletes/
+//    onAthletesChange statt onSave
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { api } from '../api/client';
+import { api, athletesApi, raceAthletesApi, type Athlete } from '../api/client';
 import { useAdmin } from '../components/Layout';
-import VerfolgungsplanungView, { PlanSaveData } from '../components/VerfolgungsplanungView';
+import VerfolgungsplanungView from '../components/VerfolgungsplanungView';
 import MadisonTeamBuilder from '../components/MadisonTeamBuilder';
 
 interface Team { id: string; number: number; name: string; club?: string|null; lv?: string|null; rider2Lv?: string|null; rider1?: string|null; rider2?: string|null; color?: string|null; isFavorite?: boolean; }
@@ -27,6 +39,7 @@ interface Race {
   category: { id: string | null; name: string; format: string; teams: Team[]; event: { id: string; name: string } };
   sprints: Sprint[]; lapEvents: LapEvent[]; omniumScores: OmniumScore[];
   flags: RaceFlag[]; scoreboard: TeamStanding[]|null;
+  athletes?: Array<{ id: string; athleteId: string; timeMs: number | null; athlete: Athlete }>;
 }
 
 // Nur für Punktefahren/Omnium-Anzeige in der Tabelle
@@ -46,6 +59,10 @@ export default function RaceDetail() {
   const [race, setRace]       = useState<Race|null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState('');
+
+  // ── Sportlerkartei (für Verfolgungsrennen) ─────────────────────────────────
+  const [allAthletes, setAllAthletes] = useState<Athlete[]>([]);
+  useEffect(() => { athletesApi.list().then(setAllAthletes).catch(() => {}); }, []);
 
   async function deleteRace() {
     if (!race || !id) return;
@@ -284,11 +301,17 @@ export default function RaceDetail() {
   const canSkip=slots.findIndex((s,i)=>i>activeSlot&&s===null)!==-1;
 
   // ── VERFOLGUNGSRENNEN ─────────────────────────────────────────────────────
-  async function handleSavePlan(data: PlanSaveData) {
-    await api.post('/api/pursuit-plans', data);
+  async function handleAthletesChange(athleteIds: string[]) {
+    if (!id) return;
+    try {
+      await raceAthletesApi.set(id, athleteIds);
+      await fetchRace();
+    } catch (e: any) { setError(e.message ?? 'Fehler beim Speichern'); }
   }
 
   if (race.type === 'VERFOLGUNGSRENNEN') {
+    const pursuitAthleteMode: 'einzel' | 'mannschaft' = displayFormat === 'TEAM_PAIRS' ? 'mannschaft' : 'einzel';
+    const linkedAthletes = (race.athletes ?? []).map(l => l.athlete);
     return (
       <div className="page container">
         <div className="breadcrumb">
@@ -312,7 +335,10 @@ export default function RaceDetail() {
         <VerfolgungsplanungView
           teams={teams}
           isAdmin={isAdmin}
-          onSave={isAdmin ? handleSavePlan : undefined}
+          athleteMode={pursuitAthleteMode}
+          allAthletes={allAthletes}
+          selectedAthletes={linkedAthletes}
+          onAthletesChange={handleAthletesChange}
         />
       </div>
     );
