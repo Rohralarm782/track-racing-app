@@ -1,4 +1,19 @@
+// Zielpfad im Repo: frontend/src/components/VerfolgungsplanungView.tsx  (ERSETZT die bestehende Datei)
+//
+// Änderungen ggü. Original:
+//  - neue Props athleteMode / allAthletes / selectedAthletes / onAthletesChange
+//  - bei athleteMode "einzel": Sportler-Dropdown, Gang-Vorauswahl (Kettenblatt/
+//    Ritzel) aus dem Sportlerprofil, verfügbares-Material-Box um Profil-Werte erweitert
+//  - bei athleteMode "mannschaft": Team-Chips statt Dropdown, Material-Box und
+//    "passende übersetzungen"-Tabelle ausgeblendet (kein Gang nötig)
+//  - Rollout-Anzeige von Metern auf Zoll (Gear Inches, gerundet) umgestellt
+//  - "rundenplan"-Tabelle entfernt (redundant zu den beiden Stat-Zahlen oben,
+//    da ab Runde 2 ohnehin jede Rundenzeit gleich ist)
+//  - Speichern-Button bleibt unverändert an onSave gekoppelt — wird für
+//    Verfolgungsrennen (RaceDetail) einfach nicht mehr übergeben; "Plan im
+//    Timer verwenden" ist unverändert immer sichtbar
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { Athlete } from '../api/client';
 
 // ── Typen ──────────────────────────────────────────────────────────────────────
 interface Team {
@@ -19,6 +34,17 @@ interface Props {
   onSave?: (data: PlanSaveData) => void | Promise<void>;
   /** Externer Timer-Plan (aus gespeichertem Plan): lädt Plan und wechselt zum Timer-Tab */
   externalTimerPlan?: number[] | null;
+  /** Sportlerauswahl aktivieren: "einzel" = ein Sportler per Dropdown, Gang wird
+   *  aus dem Profil vorausgewählt. "mannschaft" = mehrere Sportler als Chips,
+   *  keine Gangauswahl. Ohne diese Prop verhält sich die Komponente wie bisher
+   *  (z.B. auf der eigenständigen /pursuit-Seite). */
+  athleteMode?: 'einzel' | 'mannschaft';
+  /** Komplette Sportlerkartei, für Dropdown/Auswahl */
+  allAthletes?: Athlete[];
+  /** Aktuell verknüpfte Sportler (aus RaceAthlete) */
+  selectedAthletes?: Athlete[];
+  /** Wird mit der neuen vollständigen Auswahl (Athlete-IDs) aufgerufen */
+  onAthletesChange?: (athleteIds: string[]) => void;
 }
 
 // ── Konstanten ─────────────────────────────────────────────────────────────────
@@ -60,10 +86,19 @@ function rollout(kb: number, rz: number, circMm = DEFAULT_CIRC_MM): number {
 function cadence(lapSec: number, trackM: number, kb: number, rz: number, circMm = DEFAULT_CIRC_MM): number {
   return (trackM / lapSec / rollout(kb, rz, circMm)) * 60;
 }
+/** Klassische Zoll-Angabe (Gear Inches) = Raddurchmesser (Zoll) × Übersetzung,
+ * gerundet auf ganze Zahl — bei Bahnrädern typischerweise 90–100". Bewusst
+ * NICHT der Rollout-Wert (Meter/Kurbelumdrehung) in Zoll umgerechnet, das
+ * ergäbe unübliche Werte um die 300". */
+function gearInches(kb: number, rz: number, circMm = DEFAULT_CIRC_MM): number {
+  const diameterInch = circMm / 25.4 / Math.PI;
+  return Math.round(diameterInch * (kb / rz));
+}
 
 // ── Hauptkomponente ────────────────────────────────────────────────────────────
 export default function VerfolgungsplanungView({
   teams = [], isAdmin = false, onSave, externalTimerPlan,
+  athleteMode, allAthletes = [], selectedAthletes = [], onAthletesChange,
 }: Props) {
   const [tab, setTab] = useState<'rechner' | 'timer'>('rechner');
   const [trackM, setTrackM]     = useState(250);
@@ -86,6 +121,25 @@ export default function VerfolgungsplanungView({
       setTab('timer');
     }
   }, [externalTimerPlan]);
+
+  // Gang-Vorauswahl aus dem Sportlerprofil (nur Einzelverfolgung)
+  const einzelAthlete = athleteMode === 'einzel' ? (selectedAthletes[0] ?? null) : null;
+  useEffect(() => {
+    if (einzelAthlete) {
+      setSelKB(new Set(einzelAthlete.kettenblaetter));
+      setSelRZ(new Set(einzelAthlete.ritzel));
+      setSelectedGear(null);
+    }
+  }, [einzelAthlete?.id]);
+
+  const kbOptionsFinal = useMemo(() => {
+    const extra = einzelAthlete?.kettenblaetter ?? [];
+    return Array.from(new Set([...KB_OPTIONS, ...extra])).sort((a, b) => a - b);
+  }, [einzelAthlete]);
+  const rzOptionsFinal = useMemo(() => {
+    const extra = einzelAthlete?.ritzel ?? [];
+    return Array.from(new Set([...RZ_OPTIONS, ...extra])).sort((a, b) => a - b);
+  }, [einzelAthlete]);
 
   const toggleKB = (kb: number) =>
     setSelKB(p => { const n = new Set(p); n.has(kb) ? n.delete(kb) : n.add(kb); return n; });
@@ -114,32 +168,25 @@ export default function VerfolgungsplanungView({
 
   const gearRows = useMemo(() => {
     if (!calc || selKB.size === 0 || selRZ.size === 0) return [];
-    const rows: Array<{ kb: number; rz: number; ro: number; cad: number }> = [];
+    const rows: Array<{ kb: number; rz: number; inches: number; cad: number }> = [];
     for (const kb of selKB) for (const rz of selRZ) {
       const cad = cadence(calc.lapSec, trackM, kb, rz);
-      if (cad >= 100 && cad <= 130) rows.push({ kb, rz, ro: rollout(kb, rz), cad });
+      if (cad >= 100 && cad <= 130) rows.push({ kb, rz, inches: gearInches(kb, rz), cad });
     }
     return rows.sort((a, b) => a.cad - b.cad);
   }, [calc, selKB, selRZ, trackM]);
 
-  const lapPlan = useMemo(() => {
-    if (!calc) return [];
-    const plan: Array<{ rnd: number; zeit: number; gesamt: number }> = [];
-    let cumul = 0;
-    for (let i = 1; i <= numRounds; i++) {
-      const t = i === 1 ? calc.anfahrt : calc.lapSec;
-      cumul += t;
-      plan.push({ rnd: i, zeit: t, gesamt: cumul });
-    }
-    return plan;
-  }, [calc, numRounds]);
-
-  const selectedRo  = selectedGear ? rollout(selectedGear.kb, selectedGear.rz) : null;
   const selectedCad = selectedGear && calc ? cadence(calc.lapSec, trackM, selectedGear.kb, selectedGear.rz) : null;
 
   function useInTimer() {
-    if (!lapPlan.length) return;
-    setTimerPlan(lapPlan.map(l => l.gesamt));
+    if (!calc) return;
+    const plan: number[] = [];
+    let cumul = 0;
+    for (let i = 1; i <= numRounds; i++) {
+      cumul += i === 1 ? calc.anfahrt : calc.lapSec;
+      plan.push(cumul);
+    }
+    setTimerPlan(plan);
     setTab('timer');
   }
 
@@ -157,6 +204,76 @@ export default function VerfolgungsplanungView({
     } finally { setSaving(false); }
   }
 
+  // ── Sportlerauswahl (Einzel/Mannschaft) ─────────────────────────────────────
+  function renderAthleteSelector() {
+    if (!athleteMode) return null;
+
+    if (athleteMode === 'einzel') {
+      return (
+        <div style={{ marginBottom: 18, maxWidth: 340 }}>
+          <label className="form-label" style={{ textTransform: 'lowercase' }}>sportler</label>
+          {isAdmin ? (
+            <select
+              className="form-select"
+              value={selectedAthletes[0]?.id ?? ''}
+              onChange={e => onAthletesChange?.(e.target.value ? [e.target.value] : [])}
+            >
+              <option value="">— Sportler wählen —</option>
+              {allAthletes.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+          ) : (
+            <div className="text-sm">{selectedAthletes[0]?.name ?? '— kein Sportler zugeordnet —'}</div>
+          )}
+        </div>
+      );
+    }
+
+    // athleteMode === 'mannschaft'
+    return (
+      <div style={{ marginBottom: 18 }}>
+        <label className="form-label" style={{ textTransform: 'lowercase' }}>sportler im team</label>
+        <div>
+          {selectedAthletes.map(a => (
+            <span key={a.id} style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              background: '#eff6ff', border: '1px solid #bfdbfe', color: '#1e40af',
+              borderRadius: 999, padding: '4px 6px 4px 12px', fontSize: 12.5, fontWeight: 500,
+              marginRight: 6, marginBottom: 6,
+            }}>
+              {a.name}
+              {isAdmin && (
+                <button
+                  onClick={() => onAthletesChange?.(selectedAthletes.filter(x => x.id !== a.id).map(x => x.id))}
+                  style={{ background: 'none', border: 'none', color: '#1e40af', cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: 0 }}
+                >
+                  ×
+                </button>
+              )}
+            </span>
+          ))}
+          {selectedAthletes.length === 0 && <span className="text-sm text-muted">Noch keine Sportler zugeordnet</span>}
+        </div>
+        {isAdmin && (
+          <select
+            className="form-select"
+            style={{ maxWidth: 220, marginTop: 4 }}
+            value=""
+            onChange={e => {
+              if (e.target.value) onAthletesChange?.([...selectedAthletes.map(a => a.id), e.target.value]);
+            }}
+          >
+            <option value="">+ Sportler hinzufügen</option>
+            {allAthletes.filter(a => !selectedAthletes.some(s => s.id === a.id)).map(a => (
+              <option key={a.id} value={a.id}>{a.name}</option>
+            ))}
+          </select>
+        )}
+      </div>
+    );
+  }
+
+  const showGearPicker = athleteMode !== 'mannschaft';
+
   // ── Render ────────────────────────────────────────────────────────────────────
   return (
     <div>
@@ -166,148 +283,143 @@ export default function VerfolgungsplanungView({
       </div>
 
       {tab === 'rechner' && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 28, alignItems: 'start' }}>
-          {/* ── Links ── */}
-          <div>
-            <div style={{ display: 'flex', gap: 12, marginBottom: 16 }}>
-              <div className="form-group" style={{ margin: 0, flex: 1 }}>
-                <label className="form-label" style={{ textTransform: 'lowercase' }}>bahnlänge</label>
-                <select className="form-select" value={trackM} onChange={e => setTrackM(+e.target.value)}>
-                  {TRACK_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                </select>
+        <>
+          {renderAthleteSelector()}
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 28, alignItems: 'start' }}>
+            {/* ── Links ── */}
+            <div>
+              <div style={{ display: 'flex', gap: 12, marginBottom: 16 }}>
+                <div className="form-group" style={{ margin: 0, flex: 1 }}>
+                  <label className="form-label" style={{ textTransform: 'lowercase' }}>bahnlänge</label>
+                  <select className="form-select" value={trackM} onChange={e => setTrackM(+e.target.value)}>
+                    {TRACK_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                </div>
+                <div className="form-group" style={{ margin: 0, flex: 1 }}>
+                  <label className="form-label" style={{ textTransform: 'lowercase' }}>runden</label>
+                  <select className="form-select" value={numRounds} onChange={e => setNumRounds(+e.target.value)}>
+                    {ROUND_OPTIONS.map(n => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                </div>
               </div>
-              <div className="form-group" style={{ margin: 0, flex: 1 }}>
-                <label className="form-label" style={{ textTransform: 'lowercase' }}>runden</label>
-                <select className="form-select" value={numRounds} onChange={e => setNumRounds(+e.target.value)}>
-                  {ROUND_OPTIONS.map(n => <option key={n} value={n}>{n}</option>)}
-                </select>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+                <button className={`btn btn-sm ${mode === 'zielzeit' ? 'btn-primary' : 'btn-secondary'}`} style={{ flex: 1 }} onClick={() => setMode('zielzeit')}>Zielzeit → Rundenzeit</button>
+                <button className={`btn btn-sm ${mode === 'rundenzeit' ? 'btn-primary' : 'btn-secondary'}`} style={{ flex: 1 }} onClick={() => setMode('rundenzeit')}>Rundenzeit → Zielzeit</button>
               </div>
-            </div>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-              <button className={`btn btn-sm ${mode === 'zielzeit' ? 'btn-primary' : 'btn-secondary'}`} style={{ flex: 1 }} onClick={() => setMode('zielzeit')}>Zielzeit → Rundenzeit</button>
-              <button className={`btn btn-sm ${mode === 'rundenzeit' ? 'btn-primary' : 'btn-secondary'}`} style={{ flex: 1 }} onClick={() => setMode('rundenzeit')}>Rundenzeit → Zielzeit</button>
-            </div>
-            <div className="form-group">
-              <label className="form-label" style={{ textTransform: 'lowercase' }}>anfahrtszeit runde 1 (s)</label>
-              <input className="form-input" type="number" step="0.1" value={anfahrtStr} onChange={e => setAnfahrtStr(e.target.value)} placeholder="23.5" />
-            </div>
-            {mode === 'zielzeit' ? (
               <div className="form-group">
-                <label className="form-label" style={{ textTransform: 'lowercase' }}>zielzeit gesamt (M:SS oder s)</label>
-                <input className="form-input" value={zielzeitStr} onChange={e => setZielzeitStr(e.target.value)} placeholder="3:45.0" />
+                <label className="form-label" style={{ textTransform: 'lowercase' }}>{athleteMode === 'mannschaft' ? 'startzeit runde 1 (s)' : 'anfahrtszeit runde 1 (s)'}</label>
+                <input className="form-input" type="number" step="0.1" value={anfahrtStr} onChange={e => setAnfahrtStr(e.target.value)} placeholder="23.5" />
               </div>
-            ) : (
-              <div className="form-group">
-                <label className="form-label" style={{ textTransform: 'lowercase' }}>rundenzeit rd. 2+ (s)</label>
-                <input className="form-input" type="number" step="0.01" value={rdzeitStr} onChange={e => setRdzeitStr(e.target.value)} placeholder="18.32" />
-              </div>
-            )}
-            <div style={{ background: '#f7f6f2', border: '1px solid var(--c-border)', borderRadius: 10, padding: '14px 16px', marginTop: 4 }}>
-              <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.04em', color: 'var(--c-text-muted)', textTransform: 'uppercase', marginBottom: 12 }}>verfügbares material</div>
-              <div style={{ marginBottom: 12 }}>
-                <div style={{ fontSize: 12, color: 'var(--c-text-muted)', marginBottom: 6 }}>kettenblatt</div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                  {KB_OPTIONS.map(kb => <MaterialBtn key={kb} label={String(kb)} active={selKB.has(kb)} onClick={() => toggleKB(kb)} />)}
+              {mode === 'zielzeit' ? (
+                <div className="form-group">
+                  <label className="form-label" style={{ textTransform: 'lowercase' }}>zielzeit gesamt (M:SS oder s)</label>
+                  <input className="form-input" value={zielzeitStr} onChange={e => setZielzeitStr(e.target.value)} placeholder="3:45.0" />
                 </div>
-              </div>
-              <div>
-                <div style={{ fontSize: 12, color: 'var(--c-text-muted)', marginBottom: 6 }}>ritzel</div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                  {RZ_OPTIONS.map(rz => <MaterialBtn key={rz} label={String(rz)} active={selRZ.has(rz)} onClick={() => toggleRZ(rz)} />)}
+              ) : (
+                <div className="form-group">
+                  <label className="form-label" style={{ textTransform: 'lowercase' }}>rundenzeit rd. 2+ (s)</label>
+                  <input className="form-input" type="number" step="0.01" value={rdzeitStr} onChange={e => setRdzeitStr(e.target.value)} placeholder="18.32" />
                 </div>
-              </div>
-            </div>
-          </div>
-
-          {/* ── Rechts ── */}
-          <div>
-            {calc ? (
-              <>
-                <div style={{ display: 'flex', gap: 24, marginBottom: 20 }}>
-                  <div>
-                    <div style={{ fontSize: 11, color: 'var(--c-text-muted)', marginBottom: 3 }}>rundenzeit rd. 2+</div>
-                    <div style={{ fontWeight: 700, fontSize: 26, letterSpacing: '-0.5px' }}>{calc.lapSec.toFixed(2)}s</div>
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 11, color: 'var(--c-text-muted)', marginBottom: 3 }}>zielzeit / distanz</div>
-                    <div style={{ fontWeight: 700, fontSize: 26, letterSpacing: '-0.5px' }}>{fmtTime(calc.totalSec)} / {(calc.distM / 1000).toFixed(1)}km</div>
-                  </div>
-                </div>
-
-                {selectedGear && selectedRo !== null && selectedCad !== null && (
-                  <div style={{ background: '#dbeafe', border: '2px solid var(--c-primary)', borderRadius: 10, padding: '12px 16px', marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div>
-                      <div style={{ fontSize: 11, color: 'var(--c-primary)', fontWeight: 600, marginBottom: 3 }}>GEWÄHLTER GANG</div>
-                      <div style={{ fontWeight: 800, fontSize: 22, letterSpacing: '-0.5px', color: 'var(--c-primary)' }}>{selectedGear.kb} / {selectedGear.rz}</div>
-                      <div style={{ fontSize: 13, color: 'var(--c-primary)', marginTop: 2 }}>Rollout {selectedRo.toFixed(2)} m · {selectedCad.toFixed(0)} rpm</div>
+              )}
+              {showGearPicker && (
+                <div style={{ background: '#f7f6f2', border: '1px solid var(--c-border)', borderRadius: 10, padding: '14px 16px', marginTop: 4 }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.04em', color: 'var(--c-text-muted)', textTransform: 'uppercase', marginBottom: 4 }}>verfügbares material</div>
+                  {einzelAthlete && (
+                    <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 8 }}>
+                      vorausgewählt aus Sportlerprofil {einzelAthlete.name} — anpassbar
                     </div>
-                    <button onClick={() => setSelectedGear(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: 'var(--c-primary)', opacity: 0.6, padding: '4px 6px' }}>✕</button>
-                  </div>
-                )}
-
-                {selKB.size > 0 && selRZ.size > 0 ? (
-                  <div style={{ marginBottom: 16 }}>
-                    <div style={{ fontSize: 12, color: 'var(--c-text-muted)', marginBottom: 6 }}>
-                      passende übersetzungen{gearRows.length > 0 && <span style={{ marginLeft: 6, fontSize: 11 }}>— Zeile klicken zum Auswählen</span>}
-                    </div>
-                    <table className="table" style={{ fontSize: 13 }}>
-                      <thead><tr><th>KB / R</th><th>Rollout</th><th>Trittfrequenz</th></tr></thead>
-                      <tbody>
-                        {gearRows.map((g, i) => {
-                          const isSel = selectedGear?.kb === g.kb && selectedGear?.rz === g.rz;
-                          return (
-                            <tr key={i} onClick={() => toggleGear(g.kb, g.rz)} style={{ cursor: 'pointer', background: isSel ? '#dbeafe' : '', fontWeight: isSel ? 700 : 400, outline: isSel ? '2px solid var(--c-primary)' : '' }}>
-                              <td>{g.kb} / {g.rz}{isSel ? ' ✓' : ''}</td>
-                              <td>{g.ro.toFixed(2)}m</td>
-                              <td>{g.cad.toFixed(0)} rpm</td>
-                            </tr>
-                          );
-                        })}
-                        {gearRows.length === 0 && <tr><td colSpan={3} style={{ color: 'var(--c-text-muted)', fontStyle: 'italic' }}>Keine Kombination zwischen 100–130 rpm</td></tr>}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <div className="alert" style={{ marginBottom: 16, fontSize: 13, background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e' }}>Kettenblatt und Ritzel aus dem verfügbaren Material auswählen</div>
-                )}
-
-                <div style={{ marginBottom: 12 }}>
-                  <div style={{ fontSize: 12, color: 'var(--c-text-muted)', marginBottom: 6 }}>rundenplan</div>
-                  <div style={{ maxHeight: 300, overflowY: 'auto', borderRadius: 8, border: '1px solid var(--c-border)' }}>
-                    <table className="table" style={{ fontSize: 13, margin: 0 }}>
-                      <thead><tr><th style={{ width: 44 }}>Rd.</th><th>Zeit</th><th>Gesamt</th></tr></thead>
-                      <tbody>
-                        {lapPlan.map(lap => (
-                          <tr key={lap.rnd} style={{ background: lap.rnd === numRounds ? '#f0fff4' : '' }}>
-                            <td style={{ color: 'var(--c-text-muted)', fontWeight: lap.rnd === numRounds ? 700 : 400 }}>{lap.rnd}</td>
-                            <td style={{ fontWeight: lap.rnd > 1 ? 600 : 400, color: lap.rnd === 1 ? 'var(--c-text-muted)' : '' }}>{fmtTime(lap.zeit)}</td>
-                            <td style={{ fontWeight: lap.rnd === numRounds ? 700 : 400 }}>{fmtTime(lap.gesamt)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <button className="btn btn-secondary" style={{ width: '100%' }} onClick={useInTimer}>Plan im Timer verwenden →</button>
-                  {isAdmin && onSave && (
-                    <>
-                      <input className="form-input" placeholder="Planname (z.B. Max · LVM U17)" value={planName} onChange={e => setPlanName(e.target.value)} style={{ fontSize: 13 }} />
-                      <button className="btn btn-primary" style={{ width: '100%' }} onClick={handleSave} disabled={saving}>
-                        {saving ? 'Speichert…' : selectedGear ? `Plan speichern (Gang ${selectedGear.kb}/${selectedGear.rz})` : 'Plan speichern (kein Gang gewählt)'}
-                      </button>
-                    </>
                   )}
+                  <div style={{ marginBottom: 12, marginTop: einzelAthlete ? 0 : 8 }}>
+                    <div style={{ fontSize: 12, color: 'var(--c-text-muted)', marginBottom: 6 }}>kettenblatt</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {kbOptionsFinal.map(kb => <MaterialBtn key={kb} label={String(kb)} active={selKB.has(kb)} onClick={() => toggleKB(kb)} />)}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 12, color: 'var(--c-text-muted)', marginBottom: 6 }}>ritzel</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {rzOptionsFinal.map(rz => <MaterialBtn key={rz} label={String(rz)} active={selRZ.has(rz)} onClick={() => toggleRZ(rz)} />)}
+                    </div>
+                  </div>
                 </div>
-              </>
-            ) : (
-              <div className="alert alert-info">
-                {mode === 'zielzeit' ? 'Anfahrtszeit und Zielzeit eingeben (z.B. 23.5 und 3:45.0)' : 'Anfahrtszeit und Rundenzeit eingeben (z.B. 23.5 und 18.32)'}
-              </div>
-            )}
+              )}
+            </div>
+
+            {/* ── Rechts ── */}
+            <div>
+              {calc ? (
+                <>
+                  <div style={{ display: 'flex', gap: 24, marginBottom: 20 }}>
+                    <div>
+                      <div style={{ fontSize: 11, color: 'var(--c-text-muted)', marginBottom: 3 }}>rundenzeit rd. 2+</div>
+                      <div style={{ fontWeight: 700, fontSize: 26, letterSpacing: '-0.5px' }}>{calc.lapSec.toFixed(2)}s</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 11, color: 'var(--c-text-muted)', marginBottom: 3 }}>zielzeit / distanz</div>
+                      <div style={{ fontWeight: 700, fontSize: 26, letterSpacing: '-0.5px' }}>{fmtTime(calc.totalSec)} / {(calc.distM / 1000).toFixed(1)}km</div>
+                    </div>
+                  </div>
+
+                  {showGearPicker && selectedGear && selectedCad !== null && (
+                    <div style={{ background: '#dbeafe', border: '2px solid var(--c-primary)', borderRadius: 10, padding: '12px 16px', marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <div style={{ fontSize: 11, color: 'var(--c-primary)', fontWeight: 600, marginBottom: 3 }}>GEWÄHLTER GANG</div>
+                        <div style={{ fontWeight: 800, fontSize: 22, letterSpacing: '-0.5px', color: 'var(--c-primary)' }}>{selectedGear.kb} / {selectedGear.rz}</div>
+                        <div style={{ fontSize: 13, color: 'var(--c-primary)', marginTop: 2 }}>{gearInches(selectedGear.kb, selectedGear.rz)}″ · {selectedCad.toFixed(0)} rpm</div>
+                      </div>
+                      <button onClick={() => setSelectedGear(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: 'var(--c-primary)', opacity: 0.6, padding: '4px 6px' }}>✕</button>
+                    </div>
+                  )}
+
+                  {showGearPicker && (
+                    selKB.size > 0 && selRZ.size > 0 ? (
+                      <div style={{ marginBottom: 16 }}>
+                        <div style={{ fontSize: 12, color: 'var(--c-text-muted)', marginBottom: 6 }}>
+                          passende übersetzungen{gearRows.length > 0 && <span style={{ marginLeft: 6, fontSize: 11 }}>— Zeile klicken zum Auswählen</span>}
+                        </div>
+                        <table className="table" style={{ fontSize: 13 }}>
+                          <thead><tr><th>KB / R</th><th>Zoll</th><th>Trittfrequenz</th></tr></thead>
+                          <tbody>
+                            {gearRows.map((g, i) => {
+                              const isSel = selectedGear?.kb === g.kb && selectedGear?.rz === g.rz;
+                              return (
+                                <tr key={i} onClick={() => toggleGear(g.kb, g.rz)} style={{ cursor: 'pointer', background: isSel ? '#dbeafe' : '', fontWeight: isSel ? 700 : 400, outline: isSel ? '2px solid var(--c-primary)' : '' }}>
+                                  <td>{g.kb} / {g.rz}{isSel ? ' ✓' : ''}</td>
+                                  <td>{g.inches}″</td>
+                                  <td>{g.cad.toFixed(0)} rpm</td>
+                                </tr>
+                              );
+                            })}
+                            {gearRows.length === 0 && <tr><td colSpan={3} style={{ color: 'var(--c-text-muted)', fontStyle: 'italic' }}>Keine Kombination zwischen 100–130 rpm</td></tr>}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <div className="alert" style={{ marginBottom: 16, fontSize: 13, background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e' }}>Kettenblatt und Ritzel aus dem verfügbaren Material auswählen</div>
+                    )
+                  )}
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <button className="btn btn-secondary" style={{ width: '100%' }} onClick={useInTimer}>Plan im Timer verwenden →</button>
+                    {isAdmin && onSave && (
+                      <>
+                        <input className="form-input" placeholder="Planname (z.B. Max · LVM U17)" value={planName} onChange={e => setPlanName(e.target.value)} style={{ fontSize: 13 }} />
+                        <button className="btn btn-primary" style={{ width: '100%' }} onClick={handleSave} disabled={saving}>
+                          {saving ? 'Speichert…' : selectedGear ? `Plan speichern (Gang ${selectedGear.kb}/${selectedGear.rz})` : 'Plan speichern (kein Gang gewählt)'}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="alert alert-info">
+                  {mode === 'zielzeit' ? 'Anfahrtszeit und Zielzeit eingeben (z.B. 23.5 und 3:45.0)' : 'Anfahrtszeit und Rundenzeit eingeben (z.B. 23.5 und 18.32)'}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        </>
       )}
 
       {tab === 'timer' && (
