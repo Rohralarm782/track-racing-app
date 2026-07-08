@@ -1,3 +1,8 @@
+// Zielpfad im Repo: frontend/src/pages/CategoryDetail.tsx  (ERSETZT die bestehende Datei)
+// Änderung ggü. Original: Format-Auswahl im "Rennen anlegen"-Formular zeigt bei
+// Typ "Verfolgungsrennen" die Labels "Einzelverfolgung"/"Mannschaftsverfolgung"
+// statt "Einzeldisziplin"/"Madison" — rein kosmetisch, der Wert (INDIVIDUAL /
+// TEAM_PAIRS) bleibt identisch, RaceDetail.tsx liest daraus den athleteMode ab.
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, type Category, type Team } from '../api/client';
@@ -428,8 +433,8 @@ export default function CategoryDetail() {
                 <div className="form-group" style={{ margin: 0 }}>
                   <label className="form-label">Format</label>
                   <select className="form-select" value={raceFormat} onChange={e => setRaceFormat(e.target.value)}>
-                    <option value="INDIVIDUAL">Einzeldisziplin</option>
-                    <option value="TEAM_PAIRS">Madison</option>
+                    <option value="INDIVIDUAL">{raceType === 'VERFOLGUNGSRENNEN' ? 'Einzelverfolgung' : 'Einzeldisziplin'}</option>
+                    <option value="TEAM_PAIRS">{raceType === 'VERFOLGUNGSRENNEN' ? 'Mannschaftsverfolgung' : 'Madison'}</option>
                   </select>
                 </div>
               </div>
