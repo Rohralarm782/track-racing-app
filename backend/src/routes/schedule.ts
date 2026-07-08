@@ -3,7 +3,8 @@ import { z } from 'zod';
 import prisma from '../prisma';
 import { requireAdmin } from '../middleware/auth';
 import { analyzeZeitplanPdf, autoMatch, loadScheduleWithLinks, ScheduleEntryInputSchema } from '../lib/scheduleImport';
-import { estimateMinutes, recalibrateFromStatusUpdate } from '../lib/durationEstimate';
+import { estimateMinutes, recalibrateFromStatusUpdate, usedFallback } from '../lib/durationEstimate';
+import { getSettings } from '../lib/settings';
 
 const router = Router();
 
@@ -51,13 +52,20 @@ router.post('/events/:id/schedule', requireAdmin, async (req, res, next) => {
 
 // Reichert eine geladene Zeitplan-Liste um die geschätzte Dauer pro Rennen an
 // (siehe durationEstimate.ts). Separat von loadScheduleWithLinks gehalten,
-// da nicht jeder Aufrufer (z.B. autoMatch) das braucht.
-async function withEstimates<T extends { ak: string; disciplineLabel: string; massStart: boolean; type: string; phase: string | null; linkedDocument: { roundCount: number | null; heatCount: number | null } | null }>(
+// da nicht jeder Aufrufer (z.B. autoMatch) das braucht. Lädt die Einstellungen
+// (Formel-Werte) EINMAL für die ganze Liste statt pro Eintrag neu.
+async function withEstimates<T extends {
+  ak: string; disciplineLabel: string; massStart: boolean; type: string; phase: string | null;
+  manualUnitCount: number | null;
+  linkedDocument: { roundCount: number | null; heatCount: number | null } | null;
+}>(
   entries: T[],
-): Promise<Array<T & { estimatedMinutes: number | null }>> {
+): Promise<Array<T & { estimatedMinutes: number | null; estimateIsFallback: boolean }>> {
+  const settings = await getSettings();
   return Promise.all(entries.map(async e => ({
     ...e,
-    estimatedMinutes: await estimateMinutes(e, e.linkedDocument),
+    estimatedMinutes: await estimateMinutes(e, e.linkedDocument, settings),
+    estimateIsFallback: usedFallback(e, e.linkedDocument),
   })));
 }
 
@@ -92,24 +100,27 @@ router.delete('/events/:id/schedule/days/:day', requireAdmin, async (req, res, n
   } catch (e) { next(e); }
 });
 
-// PATCH /api/schedule-entries/:id — manuelle Korrektur (z.B. Kommuniqué per Hand verknüpfen/lösen)
+// PATCH /api/schedule-entries/:id — manuelle Korrektur (Kommuniqué per Hand
+// verknüpfen/lösen, oder Runden-/Laufzahl von Hand eintragen)
 const PatchEntrySchema = z.object({
   linkedDocumentId: z.string().nullable().optional(),
   linkedResultDocumentId: z.string().nullable().optional(),
+  manualUnitCount: z.number().int().min(0).nullable().optional(),
 });
 
 router.patch('/schedule-entries/:id', requireAdmin, async (req, res, next) => {
   try {
     const parsed = PatchEntrySchema.safeParse(req.body);
     if (!parsed.success) { res.status(400).json(parsed.error.flatten()); return; }
-    const { linkedDocumentId, linkedResultDocumentId } = parsed.data;
-    if (linkedDocumentId === undefined && linkedResultDocumentId === undefined) {
+    const { linkedDocumentId, linkedResultDocumentId, manualUnitCount } = parsed.data;
+    if (linkedDocumentId === undefined && linkedResultDocumentId === undefined && manualUnitCount === undefined) {
       res.json(await prisma.scheduleEntry.findUnique({ where: { id: req.params.id } }));
       return;
     }
-    const data: Record<string, string | null> = {};
+    const data: Record<string, string | number | null> = {};
     if (linkedDocumentId !== undefined) data.linkedDocumentId = linkedDocumentId;
     if (linkedResultDocumentId !== undefined) data.linkedResultDocumentId = linkedResultDocumentId;
+    if (manualUnitCount !== undefined) data.manualUnitCount = manualUnitCount;
     const entry = await prisma.scheduleEntry.update({
       where: { id: req.params.id },
       data: data as any,
