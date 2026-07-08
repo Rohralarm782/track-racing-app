@@ -132,6 +132,7 @@ model Race {
   order        Int             @default(0)
   finaleActive Boolean         @default(true)
   plannedSprints Int?          // aus Ansetzung erkannte Anzahl Wertungen — die letzte wird automatisch als Finale gewertet
+  distanceM    Int?            // grobe Distanz in Metern (Verfolgungsrennen) — für Sportlerprofil-Anzeige, optional
   createdAt    DateTime        @default(now())
 
   omniumScores  OmniumScore[]
@@ -140,6 +141,7 @@ model Race {
   timeResults   TimeResult[]
   pursuitRounds PursuitRound[]
   flags         RaceFlag[]
+  athletes      RaceAthlete[]  // neu: verknüpfte Sportler aus der eigenen Kartei (Verfolgungsrennen)
 }
 
 model RaceFlag {
@@ -239,6 +241,40 @@ model PursuitPlan {
   notes      String?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+}
+
+// ─── Sportlerkartei ─────────────────────────────────────────────────────────
+// Bewusst schlank gehalten: nur die eigenen Sportler, keine automatische
+// Zuordnung zu importierten Startlisten/Meldelisten. Die Verknüpfung mit
+// einem Verfolgungsrennen läuft direkt über RaceAthlete, unabhängig vom
+// bestehenden Team-Modell (das für Verfolgungsrennen ohnehin nicht für die
+// Wertung genutzt wird — siehe RaceDetail.tsx, VERFOLGUNGSRENNEN-Zweig).
+model Athlete {
+  id             String   @id @default(cuid())
+  name           String
+  ak             String?  // Altersklasse, freier Text, z.B. "U17 m"
+  notes          String?
+  kettenblaetter Int[]    @default([]) // verfügbare Kettenblätter (Zähne) — frei kombinierbar, kein fester Satz
+  ritzel         Int[]    @default([]) // verfügbare Ritzel (Zähne) — frei kombinierbar, kein fester Satz
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  raceLinks      RaceAthlete[]
+}
+
+// Verknüpfung Sportler ↔ Verfolgungsrennen ("wer war dabei"). timeMs bleibt
+// vorerst ungenutzt (null) — die Ergebnis-Übernahme aus dem Renntimer ist ein
+// späterer Ausbauschritt, das Feld ist aber schon vorbereitet.
+model RaceAthlete {
+  id        String   @id @default(cuid())
+  raceId    String
+  race      Race     @relation(fields: [raceId], references: [id], onDelete: Cascade)
+  athleteId String
+  athlete   Athlete  @relation(fields: [athleteId], references: [id], onDelete: Cascade)
+  timeMs    Int?
+  createdAt DateTime @default(now())
+
+  @@unique([raceId, athleteId])
 }
 
 // ─── Kommuniqué-Notifier ────────────────────────────────────────────────────
