@@ -1,3 +1,8 @@
+// Zielpfad im Repo: frontend/src/api/client.ts  (ERSETZT die bestehende Datei)
+// Änderungen ggü. Original:
+//  - Race: distanceM, athletes hinzugefügt
+//  - neue Typen Athlete, AthleteRaceTime, AthleteDetail
+//  - neue athletesApi, raceAthletesApi
 const API_URL = import.meta.env.VITE_API_URL ?? '';
 
 export function getToken(): string | null { return localStorage.getItem('admin_token'); }
@@ -34,6 +39,41 @@ export interface Category {
   _count?: { teams: number };
 }
 
+// ─── Sportlerkartei ─────────────────────────────────────────────────────────
+
+export interface Athlete {
+  id: string;
+  name: string;
+  ak?: string | null;
+  notes?: string | null;
+  kettenblaetter: number[];
+  ritzel: number[];
+  createdAt: string;
+  updatedAt: string;
+  _count?: { raceLinks: number };
+}
+
+export interface AthleteRaceTime {
+  raceId: string;
+  raceName: string;
+  eventName: string | null;
+  ak: string | null;
+  distanceM: number | null;
+  timeMs: number;
+}
+
+export interface AthleteDetail extends Athlete {
+  times: AthleteRaceTime[];
+}
+
+export interface RaceAthleteLink {
+  id: string;
+  raceId: string;
+  athleteId: string;
+  timeMs: number | null;
+  athlete: Athlete;
+}
+
 export interface Race {
   id: string;
   name: string;
@@ -41,6 +81,9 @@ export interface Race {
   status: RaceStatus;
   order: number;
   ak?: string | null; // nur bei Rennen ohne Kategorie (neues Modell)
+  format?: CategoryFormat | null;
+  distanceM?: number | null; // grobe Distanz (Verfolgungsrennen), optional
+  athletes?: RaceAthleteLink[]; // verknüpfte Sportler aus der Kartei (Verfolgungsrennen)
   _count?: { teams: number };
 }
 
@@ -260,6 +303,23 @@ export const scheduleApi = {
 
   setStatus: (eventId: string, scheduleEntryId: string, statusKey: LiveStatusKey, roundsLeft: number | null, announcedTime?: string) =>
     api.put<EventStatus>(`/api/events/${eventId}/status`, { scheduleEntryId, statusKey, roundsLeft, announcedTime }),
+};
+
+// ─── Sportlerkartei ─────────────────────────────────────────────────────────
+
+export const athletesApi = {
+  list: () => api.get<Athlete[]>('/api/athletes'),
+  get: (id: string) => api.get<AthleteDetail>(`/api/athletes/${id}`),
+  create: (data: { name: string; ak?: string | null; notes?: string | null; kettenblaetter?: number[]; ritzel?: number[] }) =>
+    api.post<Athlete>('/api/athletes', data),
+  update: (id: string, data: Partial<{ name: string; ak: string | null; notes: string | null; kettenblaetter: number[]; ritzel: number[] }>) =>
+    api.patch<Athlete>(`/api/athletes/${id}`, data),
+  delete: (id: string) => api.delete<void>(`/api/athletes/${id}`),
+};
+
+export const raceAthletesApi = {
+  set: (raceId: string, athleteIds: string[]) =>
+    api.put<RaceAthleteLink[]>(`/api/races/${raceId}/athletes`, { athleteIds }),
 };
 
 // ─── Allgemeine Einstellungen (App-weit, nicht pro Veranstaltung) ──────────
