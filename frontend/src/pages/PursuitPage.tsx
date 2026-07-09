@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, athletesApi, type Athlete } from '../api/client';
+import { api, athletesApi, athleteShortName, type Athlete, type FuehrungsplanData } from '../api/client';
 import { useAdmin } from '../components/Layout';
 import VerfolgungsplanungView, { PlanSaveData, fmtTime } from '../components/VerfolgungsplanungView';
 
@@ -9,6 +9,9 @@ interface SavedPlan {
   id: string; notes: string | null; trackM: number;
   numRounds: number; anfahrtSec: number; lapSec: number;
   totalSec: number; selectedKb: number | null; selectedRz: number | null;
+  athleteMode: 'einzel' | 'mannschaft' | null;
+  athleteIds: string[];
+  fuehrungsplan: FuehrungsplanData | null;
   createdAt: string;
 }
 
@@ -63,6 +66,11 @@ export default function PursuitPage() {
   const [plans, setPlans]       = useState<SavedPlan[]>([]);
   const [loadingP, setLoadingP] = useState(true);
   const [error, setError]       = useState('');
+  // Aktuell zum Bearbeiten geöffneter Plan (null = Rechner erstellt einen neuen).
+  // key={editingPlan?.id ?? 'new'} weiter unten sorgt dafür, dass der Rechner
+  // beim Wechsel zwischen "neu" und "bearbeiten" komplett neu mountet und damit
+  // seine Vorbefüllung (initialPlan) frisch übernimmt.
+  const [editingPlan, setEditingPlan] = useState<SavedPlan | null>(null);
 
   useEffect(() => {
     api.get<SavedPlan[]>('/api/pursuit-plans')
@@ -74,8 +82,14 @@ export default function PursuitPage() {
   async function handleSave(data: PlanSaveData) {
     setError('');
     try {
-      const p = await api.post<SavedPlan>('/api/pursuit-plans', data);
-      setPlans(prev => [p, ...prev]);
+      if (editingPlan) {
+        const p = await api.patch<SavedPlan>(`/api/pursuit-plans/${editingPlan.id}`, data);
+        setPlans(prev => prev.map(x => x.id === p.id ? p : x));
+        setEditingPlan(null);
+      } else {
+        const p = await api.post<SavedPlan>('/api/pursuit-plans', data);
+        setPlans(prev => [p, ...prev]);
+      }
     } catch (e: any) { setError(e.message); }
   }
 
@@ -83,12 +97,26 @@ export default function PursuitPage() {
     if (!confirm('Plan löschen?')) return;
     await api.delete(`/api/pursuit-plans/${id}`);
     setPlans(p => p.filter(x => x.id !== id));
+    if (editingPlan?.id === id) cancelEdit();
+  }
+
+  function startEdit(plan: SavedPlan) {
+    setEditingPlan(plan);
+    setPursuitMode(plan.athleteMode ?? 'einzel');
+    setSelectedAthletes(allAthletes.filter(a => plan.athleteIds.includes(a.id)));
+    document.getElementById('rechner-anchor')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  function cancelEdit() {
+    setEditingPlan(null);
+    setPursuitMode('einzel');
+    setSelectedAthletes([]);
   }
 
   // ── Sportlerauswahl (Einzel/Mannschaft) ───────────────────────────────────
   // Rein lokal — die eigenständige /pursuit-Seite hängt an keinem Rennen, es
   // gibt also nichts, woran die Auswahl im Backend hängen könnte. Dient nur
-  // der Gang-Vorauswahl aus dem Sportlerprofil (wie im Renndetail).
+  // der Gang-Vorauswahl aus dem Sportlerprofil (wie im Renndetail) und wird
+  // beim Speichern als Teil von PlanSaveData mitgesichert.
   const [allAthletes, setAllAthletes] = useState<Athlete[]>([]);
   useEffect(() => { athletesApi.list().then(setAllAthletes).catch(() => {}); }, []);
   const [pursuitMode, setPursuitMode]         = useState<'einzel' | 'mannschaft'>('einzel');
@@ -510,8 +538,11 @@ export default function PursuitPage() {
             const hasGear = plan.selectedKb !== null && plan.selectedRz !== null;
             const ro  = hasGear ? rollout(plan.selectedKb!, plan.selectedRz!) : null;
             const cad = hasGear ? cadenceFromPlan(plan) : null;
+            const planAthletes = plan.athleteIds
+              .map(id => allAthletes.find(a => a.id === id))
+              .filter((a): a is Athlete => !!a);
             return (
-              <div key={plan.id} className="card" style={{ padding: '12px 16px' }}>
+              <div key={plan.id} className="card" style={{ padding: '12px 16px', borderColor: editingPlan?.id === plan.id ? 'var(--c-primary)' : undefined }}>
                 <div className="flex-between" style={{ marginBottom: hasGear ? 8 : 0 }}>
                   <div>
                     <div style={{ fontWeight: 600, fontSize: 15 }}>{planName(plan)}</div>
@@ -519,6 +550,12 @@ export default function PursuitPage() {
                       {plan.numRounds} Runden · {Math.round(plan.numRounds * plan.trackM)}m ·
                       Zielzeit {fmtTime(plan.totalSec)} · Rd. 2+ {plan.lapSec.toFixed(2)}s
                     </div>
+                    {planAthletes.length > 0 && (
+                      <div className="text-xs text-muted" style={{ marginTop: 2 }}>
+                        {plan.athleteMode === 'mannschaft' ? 'Team: ' : 'Sportler: '}
+                        {planAthletes.map(a => athleteShortName(a)).join(', ')}
+                      </div>
+                    )}
                     <div className="text-xs text-muted">{formatDate(plan.createdAt)}</div>
                   </div>
                   <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
@@ -526,9 +563,14 @@ export default function PursuitPage() {
                       ⏱ Timer starten
                     </button>
                     {isAdmin && (
-                      <button className="btn btn-ghost btn-sm" style={{ color: 'var(--c-danger)' }} onClick={() => deletePlan(plan.id)}>
-                        Löschen
-                      </button>
+                      <>
+                        <button className="btn btn-secondary btn-sm" onClick={() => startEdit(plan)}>
+                          Bearbeiten
+                        </button>
+                        <button className="btn btn-ghost btn-sm" style={{ color: 'var(--c-danger)' }} onClick={() => deletePlan(plan.id)}>
+                          Löschen
+                        </button>
+                      </>
                     )}
                   </div>
                 </div>
@@ -551,13 +593,20 @@ export default function PursuitPage() {
       )}
 
       {/* Trennlinie */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+      <div id="rechner-anchor" style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: editingPlan ? 12 : 20, scrollMarginTop: 70 }}>
         <div style={{ flex: 1, height: 1, background: 'var(--c-border)' }} />
         <span style={{ fontSize: 12, color: 'var(--c-text-muted)', whiteSpace: 'nowrap' }}>
-          {isAdmin ? 'Neuen Plan erstellen' : 'Rechner (lokal, ohne Speichern)'}
+          {editingPlan ? 'Plan bearbeiten' : isAdmin ? 'Neuen Plan erstellen' : 'Rechner (lokal, ohne Speichern)'}
         </span>
         <div style={{ flex: 1, height: 1, background: 'var(--c-border)' }} />
       </div>
+
+      {editingPlan && (
+        <div className="alert alert-info" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+          <span>Du bearbeitest <strong>{planName(editingPlan)}</strong> — „Änderungen speichern" überschreibt diesen Plan.</span>
+          <button className="btn btn-ghost btn-sm" onClick={cancelEdit}>Abbrechen</button>
+        </div>
+      )}
 
       {/* Einzel/Mannschaft-Umschalter */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
@@ -577,12 +626,15 @@ export default function PursuitPage() {
 
       {/* Rechner */}
       <VerfolgungsplanungView
+        key={editingPlan?.id ?? 'new'}
         isAdmin={isAdmin}
         onSave={isAdmin ? handleSave : undefined}
+        initialPlan={editingPlan}
         athleteMode={pursuitMode}
         allAthletes={allAthletes}
         selectedAthletes={selectedAthletes}
         onAthletesChange={handleAthletesChange}
+        fuehrungsplan={editingPlan?.fuehrungsplan}
       />
     </div>
   );
