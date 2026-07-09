@@ -602,12 +602,7 @@ export default function VerfolgungsplanungView({
                 );
               })}
             </div>
-            <p className="text-xs text-muted" style={{ marginTop: 10 }}>
-              <b style={{ color: 'var(--c-text)' }}>Start liegt ¼ Runde vor der Ziellinie:</b> erste und letzte Führung
-              sind ¼ Runde länger — bereits eingerechnet. Gesamt: <b style={{ color: 'var(--c-text)' }}>{fmtLaps(totalSum)}</b> Runden
-              ({numRounds} Wettkampfrunden + ½ Runde Start-/Zielversatz).
-            </p>
-
+          
             <label className="form-label" style={{ textTransform: 'lowercase', marginTop: 14 }}>
               wechsel im detail{isAdmin ? ' — antippen zum anpassen (½-runden-schritte)' : ''}
             </label>
