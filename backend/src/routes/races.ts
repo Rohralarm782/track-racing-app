@@ -2,6 +2,10 @@
 // Änderungen ggü. Original:
 //  1) GET /:id lädt zusätzlich `athletes` (verknüpfte Sportler aus der Kartei) mit
 //  2) neue Route PUT /:id/athletes zum Setzen der Sportlerauswahl (Verfolgungsrennen)
+//  3) neue Route PATCH /:id/fuehrungsplan zum Speichern des Führungsplans
+//     (Mannschaftsverfolgung) — benötigt `fuehrungsplan Json?` im Race-Model,
+//     siehe schema.prisma. `fuehrungsplan` ist ein normales Skalarfeld und wird
+//     daher bei GET /:id automatisch mitgeliefert, kein zusätzliches `include` nötig.
 import { Router } from 'express';
 import { z } from 'zod';
 import Anthropic from '@anthropic-ai/sdk';
@@ -113,6 +117,32 @@ router.put('/:id/athletes', requireAdmin, async (req, res, next) => {
       orderBy: { createdAt: 'asc' },
     });
     res.json(links);
+  } catch (e) { next(e); }
+});
+
+// ── PATCH /:id/fuehrungsplan — Führungsplan Mannschaftsverfolgung speichern ──
+// Rein für Planung/Visualisierung (kein Bezug zum Renntimer). Body wird 1:1 als
+// JSON übernommen; Struktur wird im Frontend (VerfolgungsplanungView) definiert:
+// { riderOrder: string[], riderModes: Record<string, 'back'|'dropout'>,
+//   dropoutRound: number, segments: { athleteId: string; laps: number }[] }
+const FuehrungsplanSchema = z.object({
+  riderOrder: z.array(z.string()),
+  riderModes: z.record(z.enum(['back', 'dropout'])),
+  dropoutRound: z.number(),
+  segments: z.array(z.object({ athleteId: z.string(), laps: z.number() })),
+  riderGears: z.record(z.object({ kb: z.number(), rz: z.number() }).nullable()).optional(),
+});
+
+router.patch('/:id/fuehrungsplan', requireAdmin, async (req, res, next) => {
+  try {
+    const parsed = FuehrungsplanSchema.safeParse(req.body);
+    if (!parsed.success) { res.status(400).json(parsed.error.flatten()); return; }
+    const race = await prisma.race.update({
+      where: { id: req.params.id },
+      data: { fuehrungsplan: parsed.data },
+      select: { id: true, fuehrungsplan: true },
+    });
+    res.json(race);
   } catch (e) { next(e); }
 });
 
