@@ -331,6 +331,51 @@ export default function VerfolgungsplanungView({
       return segs;
     });
   }
+  // Nächster Sportler in der Rotation nach riderId (überspringt "bleibt hinten") —
+  // Vorschlag für den Sportler eines neu eingefügten Wechsels.
+  function nextRiderAfter(riderId: string): string {
+    const activeIds = ridersOrdered.filter(r => (riderModes[r.id] ?? 'normal') !== 'back').map(r => r.id);
+    if (activeIds.length === 0) return riderId;
+    const idx = activeIds.indexOf(riderId);
+    return activeIds[(idx + 1) % activeIds.length] ?? riderId;
+  }
+  // Teilt Wechsel i in zwei auf — die zweite Hälfte bekommt automatisch den
+  // nächsten Sportler aus der Rotation zugewiesen. Start-/Zielversatz bleibt
+  // korrekt an der jeweils äußeren Position (siehe FUEHRUNG_EDGE_CORRECTION).
+  function splitFuehrungSeg(i: number) {
+    setFuehrungSegments(prev => {
+      const segs = prev.map(s => ({ ...s }));
+      const seg = segs[i];
+      if (!seg) return prev;
+      const isFirst = i === 0;
+      const isLast = i === segs.length - 1;
+      const correction = (isFirst ? FUEHRUNG_EDGE_CORRECTION : 0) + (isLast ? FUEHRUNG_EDGE_CORRECTION : 0);
+      const base = seg.laps - correction;
+      if (base < 1) return prev; // braucht mind. ½ + ½ Basis-Runden zum Teilen
+      let half = Math.round((base / 2) * 2) / 2;
+      let rest = base - half;
+      if (half < 0.5) { half = 0.5; rest = base - 0.5; }
+      if (rest < 0.5) { rest = 0.5; half = base - 0.5; }
+      const newRiderId = nextRiderAfter(seg.athleteId);
+      segs[i] = { ...seg, laps: half + (isFirst ? FUEHRUNG_EDGE_CORRECTION : 0) };
+      segs.splice(i + 1, 0, { athleteId: newRiderId, laps: rest + (isLast ? FUEHRUNG_EDGE_CORRECTION : 0) });
+      return segs;
+    });
+  }
+  // Entfernt Wechsel i — Runden gehen an den Nachbarn (nächster, oder voriger
+  // beim letzten Wechsel), der dadurch ggf. die Rand-Korrektur mit übernimmt.
+  function removeFuehrungSeg(i: number) {
+    setFuehrungSegments(prev => {
+      if (prev.length <= 1) return prev;
+      const segs = prev.map(s => ({ ...s }));
+      const seg = segs[i];
+      const j = i === segs.length - 1 ? i - 1 : i + 1;
+      if (!segs[j]) return prev;
+      segs[j] = { ...segs[j], laps: segs[j].laps + seg.laps };
+      segs.splice(i, 1);
+      return segs;
+    });
+  }
   const calc = useMemo(() => {
     const anfahrt = parseFloat(anfahrtStr.replace(',', '.'));
     if (isNaN(anfahrt) || anfahrt <= 0) return null;
@@ -543,33 +588,59 @@ export default function VerfolgungsplanungView({
                 const startR = cum;
                 cum += seg.laps;
                 const isEdge = i === 0 || i === fuehrungSegments.length - 1;
+                const correction = (i === 0 ? FUEHRUNG_EDGE_CORRECTION : 0) + (i === fuehrungSegments.length - 1 ? FUEHRUNG_EDGE_CORRECTION : 0);
+                const canSplit = (seg.laps - correction) >= 1;
+                const canRemove = fuehrungSegments.length > 1;
                 return (
-                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderBottom: i < fuehrungSegments.length - 1 ? '1px solid var(--c-border)' : 'none' }}>
-                    <div style={{
-                      width: 24, height: 24, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontSize: 11, fontWeight: 700, color: 'white', flexShrink: 0, background: riderColor(seg.athleteId),
-                    }}>{i + 1}</div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13.5, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={rider ? athleteFullName(rider) : undefined}>
-                        {rider ? athleteShortName(rider) : '–'}
-                        {isEdge && (
-                          <span style={{ display: 'inline-block', background: '#fef3c7', color: '#92400e', borderRadius: 5, padding: '1px 5px', fontSize: 10, fontWeight: 600, marginLeft: 5 }}>
-                            {i === 0 ? 'Start' : 'Ziel'}
-                          </span>
+                  <div key={i} style={{ padding: '10px 0', borderBottom: i < fuehrungSegments.length - 1 ? '1px solid var(--c-border)' : 'none' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <div style={{
+                        width: 24, height: 24, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: 11, fontWeight: 700, color: 'white', flexShrink: 0, background: riderColor(seg.athleteId),
+                      }}>{i + 1}</div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13.5, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={rider ? athleteFullName(rider) : undefined}>
+                          {rider ? athleteShortName(rider) : '–'}
+                          {isEdge && (
+                            <span style={{ display: 'inline-block', background: '#fef3c7', color: '#92400e', borderRadius: 5, padding: '1px 5px', fontSize: 10, fontWeight: 600, marginLeft: 5 }}>
+                              {i === 0 ? 'Start' : 'Ziel'}
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--c-text-muted)', marginTop: 1 }}>Runde {fmtLaps(startR)} – {fmtLaps(cum)}</div>
+                      </div>
+                      {isAdmin ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                          <button onClick={() => adjustFuehrungSeg(i, -1)}
+                            style={{ width: 30, height: 30, borderRadius: 7, border: '1px solid var(--c-border)', background: 'var(--c-white)', fontSize: 16, cursor: 'pointer' }}>−</button>
+                          <span style={{ minWidth: 24, textAlign: 'center', fontWeight: 600, fontSize: 13.5, fontVariantNumeric: 'tabular-nums' }}>{fmtLaps(seg.laps)}</span>
+                          <button onClick={() => adjustFuehrungSeg(i, 1)}
+                            style={{ width: 30, height: 30, borderRadius: 7, border: '1px solid var(--c-border)', background: 'var(--c-white)', fontSize: 16, cursor: 'pointer' }}>+</button>
+                        </div>
+                      ) : (
+                        <span style={{ fontWeight: 600, fontSize: 13.5, fontVariantNumeric: 'tabular-nums' }}>{fmtLaps(seg.laps)}</span>
+                      )}
+                    </div>
+                    {isAdmin && (
+                      <div style={{ display: 'flex', gap: 6, padding: '6px 0 0 34px' }}>
+                        <button onClick={() => splitFuehrungSeg(i)} disabled={!canSplit}
+                          style={{
+                            padding: '4px 10px', borderRadius: 12, fontSize: 11.5, fontWeight: 500, fontFamily: 'inherit',
+                            border: '1px solid var(--c-border)', background: 'var(--c-white)', color: canSplit ? 'var(--c-text-muted)' : '#d1d5db',
+                            cursor: canSplit ? 'pointer' : 'not-allowed',
+                          }}>
+                          ✂ Wechsel teilen
+                        </button>
+                        {canRemove && (
+                          <button onClick={() => removeFuehrungSeg(i)}
+                            style={{
+                              padding: '4px 10px', borderRadius: 12, fontSize: 11.5, fontWeight: 500, fontFamily: 'inherit',
+                              border: '1px solid var(--c-border)', background: 'var(--c-white)', color: 'var(--c-danger)', cursor: 'pointer',
+                            }}>
+                            ✕ entfernen
+                          </button>
                         )}
                       </div>
-                      <div style={{ fontSize: 11, color: 'var(--c-text-muted)', marginTop: 1 }}>Runde {fmtLaps(startR)} – {fmtLaps(cum)}</div>
-                    </div>
-                    {isAdmin ? (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                        <button onClick={() => adjustFuehrungSeg(i, -1)}
-                          style={{ width: 30, height: 30, borderRadius: 7, border: '1px solid var(--c-border)', background: 'var(--c-white)', fontSize: 16, cursor: 'pointer' }}>−</button>
-                        <span style={{ minWidth: 24, textAlign: 'center', fontWeight: 600, fontSize: 13.5, fontVariantNumeric: 'tabular-nums' }}>{fmtLaps(seg.laps)}</span>
-                        <button onClick={() => adjustFuehrungSeg(i, 1)}
-                          style={{ width: 30, height: 30, borderRadius: 7, border: '1px solid var(--c-border)', background: 'var(--c-white)', fontSize: 16, cursor: 'pointer' }}>+</button>
-                      </div>
-                    ) : (
-                      <span style={{ fontWeight: 600, fontSize: 13.5, fontVariantNumeric: 'tabular-nums' }}>{fmtLaps(seg.laps)}</span>
                     )}
                   </div>
                 );
