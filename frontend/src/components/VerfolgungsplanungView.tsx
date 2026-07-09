@@ -253,6 +253,8 @@ export default function VerfolgungsplanungView({
   const [riderModes, setRiderModes] = useState<Record<string, StoredRiderMode>>(() => fuehrungsplan?.riderModes ?? {});
   const [dropoutRound, setDropoutRound] = useState(() => fuehrungsplan?.dropoutRound ?? 3);
   const [fuehrungSegments, setFuehrungSegments] = useState<FuehrungSegment[]>(() => fuehrungsplan?.segments ?? []);
+  const [riderGears, setRiderGears] = useState<Record<string, { kb: number; rz: number } | null>>(() => fuehrungsplan?.riderGears ?? {});
+  const [openGearRiderId, setOpenGearRiderId] = useState<string | null>(null);
 
   const selectedIdsKey = selectedAthletes.map(a => a.id).join(',');
   useEffect(() => {
@@ -291,11 +293,34 @@ export default function VerfolgungsplanungView({
     if (fuehrungFirstRun.current) { fuehrungFirstRun.current = false; return; }
     if (fuehrungSaveTimer.current) clearTimeout(fuehrungSaveTimer.current);
     fuehrungSaveTimer.current = setTimeout(() => {
-      onFuehrungsplanChange({ riderOrder, riderModes, dropoutRound, segments: fuehrungSegments });
+      onFuehrungsplanChange({ riderOrder, riderModes, dropoutRound, segments: fuehrungSegments, riderGears });
     }, FUEHRUNG_SAVE_DEBOUNCE_MS);
     return () => { if (fuehrungSaveTimer.current) clearTimeout(fuehrungSaveTimer.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [riderOrder, riderModes, dropoutRound, fuehrungSegments]);
+  }, [riderOrder, riderModes, dropoutRound, fuehrungSegments, riderGears]);
+
+  // Gang pro Sportler (nur Mannschaftsverfolgung) — gleiche Formel/Zielbereich
+  // (100–130 rpm) wie bei Einzelverfolgung, da das ganze Team im selben Tempo
+  // fährt; nur die Übersetzung ist individuell.
+  function riderGearOptions(athlete: Athlete) {
+    return {
+      kb: Array.from(new Set([...KB_OPTIONS, ...athlete.kettenblaetter])).sort((a, b) => a - b),
+      rz: Array.from(new Set([...RZ_OPTIONS, ...athlete.ritzel])).sort((a, b) => a - b),
+    };
+  }
+  function riderGearCombos(athlete: Athlete) {
+    if (!calc) return [];
+    const { kb, rz } = riderGearOptions(athlete);
+    const rows: { kb: number; rz: number; cad: number }[] = [];
+    for (const k of kb) for (const r of rz) {
+      const cad = cadence(calc.lapSec, trackM, k, r);
+      if (cad >= 100 && cad <= 130) rows.push({ kb: k, rz: r, cad });
+    }
+    return rows.sort((a, b) => a.cad - b.cad);
+  }
+  function setRiderGear(athleteId: string, kb: number, rz: number) {
+    setRiderGears(prev => ({ ...prev, [athleteId]: { kb, rz } }));
+  }
 
   function moveRider(i: number, dir: -1 | 1) {
     setRiderOrder(prev => {
@@ -434,7 +459,7 @@ export default function VerfolgungsplanungView({
             ? selectedAthletes.map(a => a.id)
             : [],
         fuehrungsplan: athleteMode === 'mannschaft'
-          ? { riderOrder, riderModes, dropoutRound, segments: fuehrungSegments }
+          ? { riderOrder, riderModes, dropoutRound, segments: fuehrungSegments, riderGears }
           : null,
       });
       setPlanName('');
@@ -647,17 +672,65 @@ export default function VerfolgungsplanungView({
               });
             })()}
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 14, paddingTop: 12, borderTop: '1px dashed var(--c-border)' }}>
+            <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px dashed var(--c-border)' }}>
+              <label className="form-label" style={{ textTransform: 'lowercase' }}>sportler — führung &amp; gang</label>
               {ridersOrdered.filter(a => riderModes[a.id] !== 'back').map(a => {
                 const lapSum = fuehrungSegments.filter(s => s.athleteId === a.id).reduce((s, x) => s + x.laps, 0);
                 const segCount = fuehrungSegments.filter(s => s.athleteId === a.id).length;
+                const gear = riderGears[a.id] ?? null;
+                const isOpen = openGearRiderId === a.id;
+                const combos = isAdmin && isOpen ? riderGearCombos(a) : [];
+                const opts = isAdmin && isOpen ? riderGearOptions(a) : null;
                 return (
-                  <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
-                    <span style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, background: riderColor(a.id) }} />
-                    <span style={{ flex: 1 }} title={athleteFullName(a)}>{athleteShortName(a)}</span>
-                    <span style={{ color: 'var(--c-text-muted)', fontSize: 12 }}>
-                      <b style={{ color: 'var(--c-text)' }}>{fmtLaps(lapSum)}</b> Runden · <b style={{ color: 'var(--c-text)' }}>{segCount}</b>× vorne
-                    </span>
+                  <div key={a.id} style={{ borderBottom: '1px solid var(--c-border)' }}>
+                    <div
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, padding: '8px 0', cursor: isAdmin ? 'pointer' : 'default' }}
+                      onClick={() => isAdmin && setOpenGearRiderId(isOpen ? null : a.id)}
+                    >
+                      <span style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, background: riderColor(a.id) }} />
+                      <span style={{ flex: 1 }} title={athleteFullName(a)}>{athleteShortName(a)}</span>
+                      <span style={{ color: 'var(--c-text-muted)', fontSize: 11.5 }}>
+                        <b style={{ color: 'var(--c-text)' }}>{fmtLaps(lapSum)}</b> Rd. · <b style={{ color: 'var(--c-text)' }}>{segCount}</b>× vorne
+                      </span>
+                      <span style={{
+                        fontSize: 11.5, fontWeight: gear ? 700 : 500, borderRadius: 6, padding: '3px 8px', whiteSpace: 'nowrap',
+                        background: gear ? 'var(--c-primary)' : '#f3f4f6', color: gear ? 'white' : 'var(--c-text-muted)',
+                      }}>
+                        {gear ? `${gear.kb}/${gear.rz}` : 'kein Gang'}
+                      </span>
+                      {isAdmin && <span style={{ fontSize: 10, color: 'var(--c-text-muted)' }}>{isOpen ? '▲' : '▼'}</span>}
+                    </div>
+                    {isOpen && isAdmin && opts && (
+                      <div style={{ padding: '2px 0 14px 18px' }}>
+                        <div style={{ fontSize: 11, color: 'var(--c-text-muted)', marginBottom: 6 }}>kettenblatt</div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+                          {opts.kb.map(kb => (
+                            <MaterialBtn key={kb} label={String(kb)} active={gear?.kb === kb} onClick={() => setRiderGear(a.id, kb, gear?.rz ?? opts.rz[0])} />
+                          ))}
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--c-text-muted)', marginBottom: 6 }}>ritzel</div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+                          {opts.rz.map(rz => (
+                            <MaterialBtn key={rz} label={String(rz)} active={gear?.rz === rz} onClick={() => setRiderGear(a.id, gear?.kb ?? opts.kb[0], rz)} />
+                          ))}
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--c-text-muted)', marginBottom: 6 }}>passende übersetzungen (100–130 rpm)</div>
+                        <table className="table" style={{ fontSize: 12.5 }}>
+                          <thead><tr><th>KB</th><th>R</th><th>rpm</th></tr></thead>
+                          <tbody>
+                            {combos.map((c, i) => {
+                              const isSel = gear?.kb === c.kb && gear?.rz === c.rz;
+                              return (
+                                <tr key={i} onClick={() => setRiderGear(a.id, c.kb, c.rz)} style={{ cursor: 'pointer', background: isSel ? '#dbeafe' : '', fontWeight: isSel ? 700 : 400 }}>
+                                  <td>{c.kb}{isSel ? ' ✓' : ''}</td><td>{c.rz}</td><td>{c.cad.toFixed(0)}</td>
+                                </tr>
+                              );
+                            })}
+                            {combos.length === 0 && <tr><td colSpan={3} style={{ color: 'var(--c-text-muted)', fontStyle: 'italic' }}>Keine Kombination im Bereich</td></tr>}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
                   </div>
                 );
               })}
