@@ -43,7 +43,8 @@ export interface Category {
 
 export interface Athlete {
   id: string;
-  name: string;
+  vorname: string;
+  nachname: string;
   ak?: string | null;
   notes?: string | null;
   kettenblaetter: number[];
@@ -52,6 +53,11 @@ export interface Athlete {
   updatedAt: string;
   _count?: { raceLinks: number };
 }
+
+/** Kurzanzeige (z.B. Chips, Dropdowns während des Rennens): nur Vorname. */
+export function athleteShortName(a: Athlete): string { return a.vorname; }
+/** Vollständiger Name (z.B. Sportlerkartei, Formulare, Disambiguierung). */
+export function athleteFullName(a: Athlete): string { return `${a.vorname} ${a.nachname}`.trim(); }
 
 export interface AthleteRaceTime {
   raceId: string;
@@ -74,6 +80,15 @@ export interface RaceAthleteLink {
   athlete: Athlete;
 }
 
+// ─── Führungsplan Mannschaftsverfolgung (nur Planung/Visualisierung) ────────
+
+export interface FuehrungsplanData {
+  riderOrder: string[];
+  riderModes: Record<string, 'back' | 'dropout'>;
+  dropoutRound: number;
+  segments: { athleteId: string; laps: number }[];
+}
+
 export interface Race {
   id: string;
   name: string;
@@ -84,6 +99,7 @@ export interface Race {
   format?: CategoryFormat | null;
   distanceM?: number | null; // grobe Distanz (Verfolgungsrennen), optional
   athletes?: RaceAthleteLink[]; // verknüpfte Sportler aus der Kartei (Verfolgungsrennen)
+  fuehrungsplan?: FuehrungsplanData | null; // Führungsplan Mannschaftsverfolgung
   _count?: { teams: number };
 }
 
@@ -310,9 +326,9 @@ export const scheduleApi = {
 export const athletesApi = {
   list: () => api.get<Athlete[]>('/api/athletes'),
   get: (id: string) => api.get<AthleteDetail>(`/api/athletes/${id}`),
-  create: (data: { name: string; ak?: string | null; notes?: string | null; kettenblaetter?: number[]; ritzel?: number[] }) =>
+  create: (data: { vorname: string; nachname: string; ak?: string | null; notes?: string | null; kettenblaetter?: number[]; ritzel?: number[] }) =>
     api.post<Athlete>('/api/athletes', data),
-  update: (id: string, data: Partial<{ name: string; ak: string | null; notes: string | null; kettenblaetter: number[]; ritzel: number[] }>) =>
+  update: (id: string, data: Partial<{ vorname: string; nachname: string; ak: string | null; notes: string | null; kettenblaetter: number[]; ritzel: number[] }>) =>
     api.patch<Athlete>(`/api/athletes/${id}`, data),
   delete: (id: string) => api.delete<void>(`/api/athletes/${id}`),
 };
@@ -320,6 +336,11 @@ export const athletesApi = {
 export const raceAthletesApi = {
   set: (raceId: string, athleteIds: string[]) =>
     api.put<RaceAthleteLink[]>(`/api/races/${raceId}/athletes`, { athleteIds }),
+};
+
+export const raceFuehrungsplanApi = {
+  set: (raceId: string, data: FuehrungsplanData) =>
+    api.patch<{ id: string; fuehrungsplan: FuehrungsplanData }>(`/api/races/${raceId}/fuehrungsplan`, data),
 };
 
 // ─── Allgemeine Einstellungen (App-weit, nicht pro Veranstaltung) ──────────
