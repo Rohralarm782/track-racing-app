@@ -134,7 +134,7 @@ function generateFuehrungSegments(
     let len = Math.min(FUEHRUNG_PULL_LEN, numRounds - roundsUsed);
     if (dropoutId !== null && athleteId === dropoutId) {
       const remaining = dropoutRound - dropoutSoFar;
-      if (remaining <= 1e-9) { active = active.filter(id => id !== dropoutId); idx = 0; continue; }
+      if (remaining <= 1e-9) { active = active.filter(id => id !== dropoutId); continue; }
       len = Math.min(len, remaining);
     }
     len = Math.round(len * 2) / 2;
@@ -143,7 +143,7 @@ function generateFuehrungSegments(
     roundsUsed += len;
     if (dropoutId !== null && athleteId === dropoutId) {
       dropoutSoFar += len;
-      if (dropoutSoFar >= dropoutRound - 1e-9) { active = active.filter(id => id !== dropoutId); idx = 0; continue; }
+      if (dropoutSoFar >= dropoutRound - 1e-9) { active = active.filter(id => id !== dropoutId); continue; }
     }
     idx++;
   }
