@@ -1,4 +1,7 @@
-// Zielpfad im Repo: backend/src/routes/athletes.ts  (NEUE DATEI)
+// Zielpfad im Repo: backend/src/routes/athletes.ts  (ERSETZT die bestehende Datei)
+// Änderungen ggü. Original:
+//  - Athlete.name aufgeteilt in vorname/nachname (siehe schema.prisma) —
+//    AthleteSchema, Sortierung und Suche entsprechend angepasst
 import { Router } from 'express';
 import { z } from 'zod';
 import prisma from '../prisma';
@@ -10,7 +13,7 @@ const router = Router();
 router.get('/', async (_req, res, next) => {
   try {
     const athletes = await prisma.athlete.findMany({
-      orderBy: { name: 'asc' },
+      orderBy: [{ vorname: 'asc' }, { nachname: 'asc' }],
       include: { _count: { select: { raceLinks: true } } },
     });
     res.json(athletes);
@@ -50,7 +53,8 @@ router.get('/:id', async (req, res, next) => {
 });
 
 const AthleteSchema = z.object({
-  name: z.string().min(1),
+  vorname: z.string().min(1),
+  nachname: z.string().min(1),
   ak: z.string().optional().nullable(),
   notes: z.string().optional().nullable(),
   kettenblaetter: z.array(z.number().int().positive()).default([]),
