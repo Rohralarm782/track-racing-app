@@ -12,6 +12,12 @@
 //  - Speichern-Button bleibt unverändert an onSave gekoppelt — wird für
 //    Verfolgungsrennen (RaceDetail) einfach nicht mehr übergeben; "Plan im
 //    Timer verwenden" ist unverändert immer sichtbar
+//  - RenntimerView komplett ersetzt: bisher eine simple durchlaufende
+//    Stoppuhr (Vollbild-LAP-Button), jetzt die tatsächlich korrekte,
+//    tap-basierte Implementierung aus PursuitPage.tsx (view='race'/'display')
+//    portiert — großer RUNDE-Knopf, ½-Runde, Auto-Wechsel, Undo, CSV-Export,
+//    und Vollbild-Athletenanzeige mit riesiger Rundenzeit nach jedem Tap.
+//    externalTimerPlan-Prop entfernt (war ungenutzt, kein Aufrufer im Repo).
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Athlete } from '../api/client';
 
@@ -20,6 +26,7 @@ interface Team {
   id: string; number: number; name: string;
   rider1?: string | null; rider2?: string | null; isFavorite?: boolean;
 }
+interface TEvent { ts: number; type: 'start' | 'lap' | 'half'; }
 
 export interface PlanSaveData {
   trackM: number; numRounds: number; anfahrtSec: number;
@@ -32,8 +39,6 @@ interface Props {
   teams?: Team[];
   isAdmin?: boolean;
   onSave?: (data: PlanSaveData) => void | Promise<void>;
-  /** Externer Timer-Plan (aus gespeichertem Plan): lädt Plan und wechselt zum Timer-Tab */
-  externalTimerPlan?: number[] | null;
   /** Sportlerauswahl aktivieren: "einzel" = ein Sportler per Dropdown, Gang wird
    *  aus dem Profil vorausgewählt. "mannschaft" = mehrere Sportler als Chips,
    *  keine Gangauswahl. Ohne diese Prop verhält sich die Komponente wie bisher
@@ -57,6 +62,71 @@ const ROUND_OPTIONS = [6, 8, 10, 12, 14, 16];
 const KB_OPTIONS = [50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60];
 const RZ_OPTIONS = [13, 14, 15, 16, 17, 18];
 const DEFAULT_CIRC_MM = 2100;
+const TOLERANCE   = 0.2; // s Toleranz für Farbwechsel im Renntimer
+const DISPLAY_SEC = 8;   // s Athletenanzeige nach jeder Runde
+
+// ── Führungsplan (Mannschaftsverfolgung) ────────────────────────────────────────
+// Rein lokal, dient nur der Planung/Visualisierung — kein Backend-Feld, kein
+// Bezug zum Renntimer. Reihenfolge hier ist unabhängig von der Team-Mitgliedschaft
+// (selectedAthletes/onAthletesChange bleiben unverändert für Hinzufügen/Entfernen).
+type RiderMode = 'normal' | 'back' | 'dropout';
+interface FuehrungSegment { athleteId: string; laps: number; }
+
+const FUEHRUNG_PULL_LEN = 2;        // Start-Rundenzahl je Wechsel (kein UI-Regler mehr, nur Startwert für Neuberechnung)
+const FUEHRUNG_EDGE_CORRECTION = 0.25; // Start liegt ¼ Runde vor der Ziellinie → erster/letzter Wechsel je ¼ Runde länger
+const FUEHRUNG_MAX_ITER = 200;
+const FUEHRUNG_COLORS = ['#1d4ed8', '#16a34a', '#d97706', '#7c3aed', '#db2777', '#0891b2'];
+
+function fmtLaps(n: number): string {
+  const rounded = Math.round(n * 4) / 4;
+  const whole = Math.floor(rounded + 1e-9);
+  const frac = rounded - whole;
+  let fracStr = '';
+  if (Math.abs(frac - 0.25) < 0.01) fracStr = '¼';
+  else if (Math.abs(frac - 0.5) < 0.01) fracStr = '½';
+  else if (Math.abs(frac - 0.75) < 0.01) fracStr = '¾';
+  if (!fracStr) return `${whole}`;
+  return whole > 0 ? `${whole}${fracStr}` : fracStr;
+}
+
+/** Erzeugt die Wechselfolge: rotiert reihum durch alle Sportler außer "bleibt
+ * hinten", der als "steigt aus" markierte Sportler fällt nach dropoutRound
+ * kumulierten Runden aus der Rotation. Start-/Zielversatz wird auf den ersten
+ * und letzten Wechsel addiert (Summe wird numRounds + 0,5). */
+function generateFuehrungSegments(
+  riderIds: string[],
+  modes: Record<string, RiderMode>,
+  dropoutRound: number,
+  numRounds: number,
+): FuehrungSegment[] {
+  let active = riderIds.filter(id => modes[id] !== 'back');
+  const dropoutId = riderIds.find(id => modes[id] === 'dropout') ?? null;
+  let idx = 0, roundsUsed = 0, dropoutSoFar = 0, iter = 0;
+  const out: FuehrungSegment[] = [];
+  while (roundsUsed < numRounds - 1e-9 && active.length > 0 && iter++ < FUEHRUNG_MAX_ITER) {
+    const athleteId = active[idx % active.length];
+    let len = Math.min(FUEHRUNG_PULL_LEN, numRounds - roundsUsed);
+    if (dropoutId !== null && athleteId === dropoutId) {
+      const remaining = dropoutRound - dropoutSoFar;
+      if (remaining <= 1e-9) { active = active.filter(id => id !== dropoutId); idx = 0; continue; }
+      len = Math.min(len, remaining);
+    }
+    len = Math.round(len * 2) / 2;
+    if (len <= 0) { idx++; continue; }
+    out.push({ athleteId, laps: len });
+    roundsUsed += len;
+    if (dropoutId !== null && athleteId === dropoutId) {
+      dropoutSoFar += len;
+      if (dropoutSoFar >= dropoutRound - 1e-9) { active = active.filter(id => id !== dropoutId); idx = 0; continue; }
+    }
+    idx++;
+  }
+  if (out.length > 0) {
+    out[0].laps += FUEHRUNG_EDGE_CORRECTION;
+    out[out.length - 1].laps += FUEHRUNG_EDGE_CORRECTION;
+  }
+  return out;
+}
 
 // ── Hilfsfunktionen ────────────────────────────────────────────────────────────
 function parseTime(s: string): number | null {
@@ -73,11 +143,11 @@ export function fmtTime(secs: number): string {
   return `${m}:${(s < 10 ? '0' : '')}${s.toFixed(2)}`;
 }
 
-/** Millisekunden → "1:02.45" */
-function fmtMs(ms: number): string { return fmtTime(ms / 1000); }
-
-function fmtDiff(sec: number): string {
-  return `${sec >= 0 ? '+' : ''}${sec.toFixed(2)}s`;
+function diffStyle(diff: number | null): { border: string; text: string; label: string } {
+  if (diff === null) return { border: 'var(--c-border)', text: 'var(--c-text-muted)', label: '–' };
+  if (diff >  TOLERANCE) return { border: 'var(--c-success)', text: 'var(--c-success)', label: `▲ +${diff.toFixed(2)}s` };
+  if (diff < -TOLERANCE) return { border: 'var(--c-danger)',  text: 'var(--c-danger)',  label: `▼ ${diff.toFixed(2)}s`  };
+  return { border: 'var(--c-primary)', text: 'var(--c-primary)', label: `= ${diff >= 0 ? '+' : ''}${diff.toFixed(2)}s` };
 }
 
 function rollout(kb: number, rz: number, circMm = DEFAULT_CIRC_MM): number {
@@ -97,7 +167,7 @@ function gearInches(kb: number, rz: number, circMm = DEFAULT_CIRC_MM): number {
 
 // ── Hauptkomponente ────────────────────────────────────────────────────────────
 export default function VerfolgungsplanungView({
-  teams = [], isAdmin = false, onSave, externalTimerPlan,
+  teams = [], isAdmin = false, onSave,
   athleteMode, allAthletes = [], selectedAthletes = [], onAthletesChange,
 }: Props) {
   const [tab, setTab] = useState<'rechner' | 'timer'>('rechner');
@@ -112,15 +182,6 @@ export default function VerfolgungsplanungView({
   const [selectedGear, setSelectedGear] = useState<{ kb: number; rz: number } | null>(null);
   const [planName, setPlanName] = useState('');
   const [saving, setSaving]     = useState(false);
-  const [timerPlan, setTimerPlan] = useState<number[] | null>(null);
-
-  // Externer Timer-Plan (von gespeichertem Plan)
-  useEffect(() => {
-    if (externalTimerPlan && externalTimerPlan.length > 0) {
-      setTimerPlan([...externalTimerPlan]);
-      setTab('timer');
-    }
-  }, [externalTimerPlan]);
 
   // Gang-Vorauswahl aus dem Sportlerprofil (nur Einzelverfolgung)
   const einzelAthlete = athleteMode === 'einzel' ? (selectedAthletes[0] ?? null) : null;
@@ -149,6 +210,73 @@ export default function VerfolgungsplanungView({
     setSelectedGear(g => (g?.kb === kb && g?.rz === rz) ? null : { kb, rz });
   }
 
+  // ── Führungsplan (nur Mannschaftsverfolgung) ────────────────────────────────
+  const [riderOrder, setRiderOrder] = useState<string[]>([]);
+  const [riderModes, setRiderModes] = useState<Record<string, RiderMode>>({});
+  const [dropoutRound, setDropoutRound] = useState(3);
+  const [fuehrungSegments, setFuehrungSegments] = useState<FuehrungSegment[]>([]);
+
+  const selectedIdsKey = selectedAthletes.map(a => a.id).join(',');
+  useEffect(() => {
+    if (athleteMode !== 'mannschaft') return;
+    const ids = selectedAthletes.map(a => a.id);
+    setRiderOrder(prev => {
+      const kept = prev.filter(id => ids.includes(id));
+      const added = ids.filter(id => !kept.includes(id));
+      return [...kept, ...added];
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [athleteMode, selectedIdsKey]);
+
+  const ridersOrdered = useMemo(
+    () => riderOrder.map(id => selectedAthletes.find(a => a.id === id)).filter((a): a is Athlete => !!a),
+    [riderOrder, selectedAthletes]
+  );
+  const riderColor = (athleteId: string) => {
+    const i = riderOrder.indexOf(athleteId);
+    return FUEHRUNG_COLORS[(i < 0 ? 0 : i) % FUEHRUNG_COLORS.length];
+  };
+
+  useEffect(() => {
+    if (athleteMode !== 'mannschaft') return;
+    setFuehrungSegments(generateFuehrungSegments(riderOrder, riderModes, dropoutRound, numRounds));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [athleteMode, riderOrder.join(','), JSON.stringify(riderModes), dropoutRound, numRounds]);
+
+  function moveRider(i: number, dir: -1 | 1) {
+    setRiderOrder(prev => {
+      const j = i + dir;
+      if (j < 0 || j >= prev.length) return prev;
+      const next = [...prev];
+      [next[i], next[j]] = [next[j], next[i]];
+      return next;
+    });
+  }
+  function setRiderMode(athleteId: string, newMode: RiderMode) {
+    setRiderModes(prev => {
+      const next = { ...prev };
+      if (newMode === 'dropout') {
+        for (const k of Object.keys(next)) if (next[k] === 'dropout') delete next[k];
+      }
+      if (newMode === 'normal') delete next[athleteId]; else next[athleteId] = newMode;
+      return next;
+    });
+  }
+  function adjustFuehrungSeg(i: number, delta: 1 | -1) {
+    setFuehrungSegments(prev => {
+      const segs = prev.map(s => ({ ...s }));
+      const j = (i === segs.length - 1) ? i - 1 : i + 1;
+      if (j < 0 || !segs[i] || !segs[j]) return prev;
+      if (delta > 0) {
+        if (segs[j].laps <= 0.5) return prev;
+        segs[i].laps += 0.5; segs[j].laps -= 0.5;
+      } else {
+        if (segs[i].laps <= 0.5) return prev;
+        segs[i].laps -= 0.5; segs[j].laps += 0.5;
+      }
+      return segs;
+    });
+  }
   const calc = useMemo(() => {
     const anfahrt = parseFloat(anfahrtStr.replace(',', '.'));
     if (isNaN(anfahrt) || anfahrt <= 0) return null;
@@ -180,15 +308,15 @@ export default function VerfolgungsplanungView({
 
   function useInTimer() {
     if (!calc) return;
-    const plan: number[] = [];
-    let cumul = 0;
-    for (let i = 1; i <= numRounds; i++) {
-      cumul += i === 1 ? calc.anfahrt : calc.lapSec;
-      plan.push(cumul);
-    }
-    setTimerPlan(plan);
     setTab('timer');
   }
+
+  // Anzeigename für den Renntimer (Sportler/Team, falls zugeordnet)
+  const timerLabel = athleteMode === 'einzel'
+    ? (einzelAthlete?.name ?? 'Verfolgungsrennen')
+    : athleteMode === 'mannschaft'
+      ? (selectedAthletes.length > 0 ? selectedAthletes.map(a => a.name).join(' & ') : 'Verfolgungsrennen')
+      : 'Verfolgungsrennen';
 
   async function handleSave() {
     if (!calc || !onSave) return;
@@ -229,34 +357,86 @@ export default function VerfolgungsplanungView({
     }
 
     // athleteMode === 'mannschaft'
+    const totalSum = fuehrungSegments.reduce((s, x) => s + x.laps, 0);
     return (
       <div style={{ marginBottom: 18 }}>
         <label className="form-label" style={{ textTransform: 'lowercase' }}>sportler im team</label>
-        <div>
-          {selectedAthletes.map(a => (
-            <span key={a.id} style={{
-              display: 'inline-flex', alignItems: 'center', gap: 6,
-              background: '#eff6ff', border: '1px solid #bfdbfe', color: '#1e40af',
-              borderRadius: 999, padding: '4px 6px 4px 12px', fontSize: 12.5, fontWeight: 500,
-              marginRight: 6, marginBottom: 6,
-            }}>
-              {a.name}
+
+        {ridersOrdered.map((a, i) => {
+          const segCount = fuehrungSegments.filter(s => s.athleteId === a.id).length;
+          const lapSum = fuehrungSegments.filter(s => s.athleteId === a.id).reduce((s, x) => s + x.laps, 0);
+          const rMode: RiderMode = riderModes[a.id] ?? 'normal';
+          const statsText = rMode === 'back' ? 'bleibt hinten' : `${segCount}× · ${fmtLaps(lapSum)} Rd.`;
+          return (
+            <div key={a.id} style={{ padding: '9px 0', borderBottom: i < ridersOrdered.length - 1 ? '1px solid var(--c-border)' : 'none' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                {isAdmin && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                    <button
+                      onClick={() => moveRider(i, -1)} disabled={i === 0}
+                      style={{ width: 24, height: 18, border: '1px solid var(--c-border)', background: 'var(--c-white)', borderRadius: 4, fontSize: 9, lineHeight: 1, cursor: 'pointer', color: 'var(--c-text-muted)', padding: 0, opacity: i === 0 ? 0.25 : 1 }}
+                    >▲</button>
+                    <button
+                      onClick={() => moveRider(i, 1)} disabled={i === ridersOrdered.length - 1}
+                      style={{ width: 24, height: 18, border: '1px solid var(--c-border)', background: 'var(--c-white)', borderRadius: 4, fontSize: 9, lineHeight: 1, cursor: 'pointer', color: 'var(--c-text-muted)', padding: 0, opacity: i === ridersOrdered.length - 1 ? 0.25 : 1 }}
+                    >▼</button>
+                  </div>
+                )}
+                <span style={{ width: 14, height: 14, borderRadius: '50%', flexShrink: 0, background: rMode === 'back' ? '#d1d5db' : riderColor(a.id) }} />
+                <span style={{ flex: 1, fontSize: 14, fontWeight: 500, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</span>
+                <span style={{ fontSize: 11, color: 'var(--c-text-muted)', whiteSpace: 'nowrap' }}>{statsText}</span>
+                {isAdmin && (
+                  <button
+                    onClick={() => onAthletesChange?.(selectedAthletes.filter(x => x.id !== a.id).map(x => x.id))}
+                    style={{ background: 'none', border: 'none', color: 'var(--c-text-muted)', cursor: 'pointer', fontSize: 15, lineHeight: 1, padding: 0 }}
+                  >×</button>
+                )}
+              </div>
               {isAdmin && (
-                <button
-                  onClick={() => onAthletesChange?.(selectedAthletes.filter(x => x.id !== a.id).map(x => x.id))}
-                  style={{ background: 'none', border: 'none', color: '#1e40af', cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: 0 }}
-                >
-                  ×
-                </button>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '8px 0 0 58px' }}>
+                  {([
+                    ['normal', 'normal', 'var(--c-primary)', '#eff6ff'],
+                    ['back', 'bleibt hinten', '#6b7280', '#f3f4f6'],
+                    ['dropout', 'steigt aus', 'var(--c-danger)', '#fee2e2'],
+                  ] as const).map(([m, label, color, bg]) => (
+                    <button
+                      key={m}
+                      onClick={() => setRiderMode(a.id, m)}
+                      style={{
+                        padding: '6px 11px', borderRadius: 14, fontSize: 12, fontWeight: rMode === m ? 600 : 500,
+                        cursor: 'pointer', fontFamily: 'inherit',
+                        border: `1px solid ${rMode === m ? color : 'var(--c-border)'}`,
+                        background: rMode === m ? bg : 'var(--c-white)',
+                        color: rMode === m ? color : 'var(--c-text-muted)',
+                      }}
+                    >{label}</button>
+                  ))}
+                </div>
               )}
-            </span>
-          ))}
-          {selectedAthletes.length === 0 && <span className="text-sm text-muted">Noch keine Sportler zugeordnet</span>}
-        </div>
+              {isAdmin && rMode === 'dropout' && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0 0 58px' }}>
+                  <span style={{ fontSize: 12.5, color: 'var(--c-text-muted)' }}>
+                    steigt aus nach Runde
+                    <span style={{ display: 'block', fontSize: 11.5, marginTop: 1 }}>danach fahren nur noch die übrigen weiter</span>
+                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                    <button onClick={() => setDropoutRound(r => Math.max(0.5, r - 0.5))}
+                      style={{ width: 30, height: 30, borderRadius: 7, border: '1px solid var(--c-border)', background: 'var(--c-white)', fontSize: 16, cursor: 'pointer' }}>−</button>
+                    <span style={{ minWidth: 26, textAlign: 'center', fontWeight: 600, fontSize: 13.5, fontVariantNumeric: 'tabular-nums' }}>{fmtLaps(dropoutRound)}</span>
+                    <button onClick={() => setDropoutRound(r => Math.min(numRounds - 0.5, r + 0.5))}
+                      style={{ width: 30, height: 30, borderRadius: 7, border: '1px solid var(--c-border)', background: 'var(--c-white)', fontSize: 16, cursor: 'pointer' }}>+</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {selectedAthletes.length === 0 && <div className="text-sm text-muted" style={{ padding: '9px 0' }}>Noch keine Sportler zugeordnet</div>}
+
         {isAdmin && (
           <select
             className="form-select"
-            style={{ maxWidth: 220, marginTop: 4 }}
+            style={{ maxWidth: 220, marginTop: 10 }}
             value=""
             onChange={e => {
               if (e.target.value) onAthletesChange?.([...selectedAthletes.map(a => a.id), e.target.value]);
@@ -267,6 +447,87 @@ export default function VerfolgungsplanungView({
               <option key={a.id} value={a.id}>{a.name}</option>
             ))}
           </select>
+        )}
+
+        {ridersOrdered.length >= 2 && fuehrungSegments.length > 0 && (
+          <div className="card" style={{ marginTop: 14 }}>
+            <label className="form-label" style={{ textTransform: 'lowercase' }}>führungsplan — vorschau</label>
+            <div style={{ display: 'flex', height: 34, borderRadius: 7, overflow: 'hidden', boxShadow: 'inset 0 0 0 1px var(--c-border)' }}>
+              {fuehrungSegments.map((seg, i) => (
+                <div key={i} style={{
+                  flex: seg.laps, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  background: riderColor(seg.athleteId), color: 'white', fontWeight: 600, fontSize: 10.5,
+                  fontVariantNumeric: 'tabular-nums',
+                }}>
+                  {fmtLaps(seg.laps)}
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-muted" style={{ marginTop: 10 }}>
+              <b style={{ color: 'var(--c-text)' }}>Start liegt ¼ Runde vor der Ziellinie:</b> erste und letzte Führung
+              sind ¼ Runde länger — bereits eingerechnet. Gesamt: <b style={{ color: 'var(--c-text)' }}>{fmtLaps(totalSum)}</b> Runden
+              ({numRounds} Wettkampfrunden + ½ Runde Start-/Zielversatz).
+            </p>
+
+            <label className="form-label" style={{ textTransform: 'lowercase', marginTop: 14 }}>
+              wechsel im detail{isAdmin ? ' — antippen zum anpassen (½-runden-schritte)' : ''}
+            </label>
+            {(() => {
+              let cum = 0;
+              return fuehrungSegments.map((seg, i) => {
+                const rider = ridersOrdered.find(a => a.id === seg.athleteId);
+                const startR = cum;
+                cum += seg.laps;
+                const isEdge = i === 0 || i === fuehrungSegments.length - 1;
+                return (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderBottom: i < fuehrungSegments.length - 1 ? '1px solid var(--c-border)' : 'none' }}>
+                    <div style={{
+                      width: 24, height: 24, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: 11, fontWeight: 700, color: 'white', flexShrink: 0, background: riderColor(seg.athleteId),
+                    }}>{i + 1}</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13.5, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {rider?.name ?? '–'}
+                        {isEdge && (
+                          <span style={{ display: 'inline-block', background: '#fef3c7', color: '#92400e', borderRadius: 5, padding: '1px 5px', fontSize: 10, fontWeight: 600, marginLeft: 5 }}>
+                            {i === 0 ? 'Start' : 'Ziel'}
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--c-text-muted)', marginTop: 1 }}>Runde {fmtLaps(startR)} – {fmtLaps(cum)}</div>
+                    </div>
+                    {isAdmin ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                        <button onClick={() => adjustFuehrungSeg(i, -1)}
+                          style={{ width: 30, height: 30, borderRadius: 7, border: '1px solid var(--c-border)', background: 'var(--c-white)', fontSize: 16, cursor: 'pointer' }}>−</button>
+                        <span style={{ minWidth: 24, textAlign: 'center', fontWeight: 600, fontSize: 13.5, fontVariantNumeric: 'tabular-nums' }}>{fmtLaps(seg.laps)}</span>
+                        <button onClick={() => adjustFuehrungSeg(i, 1)}
+                          style={{ width: 30, height: 30, borderRadius: 7, border: '1px solid var(--c-border)', background: 'var(--c-white)', fontSize: 16, cursor: 'pointer' }}>+</button>
+                      </div>
+                    ) : (
+                      <span style={{ fontWeight: 600, fontSize: 13.5, fontVariantNumeric: 'tabular-nums' }}>{fmtLaps(seg.laps)}</span>
+                    )}
+                  </div>
+                );
+              });
+            })()}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 14, paddingTop: 12, borderTop: '1px dashed var(--c-border)' }}>
+              {ridersOrdered.filter(a => riderModes[a.id] !== 'back').map(a => {
+                const lapSum = fuehrungSegments.filter(s => s.athleteId === a.id).reduce((s, x) => s + x.laps, 0);
+                const segCount = fuehrungSegments.filter(s => s.athleteId === a.id).length;
+                return (
+                  <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                    <span style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, background: riderColor(a.id) }} />
+                    <span style={{ flex: 1 }}>{a.name}</span>
+                    <span style={{ color: 'var(--c-text-muted)', fontSize: 12 }}>
+                      <b style={{ color: 'var(--c-text)' }}>{fmtLaps(lapSum)}</b> Runden · <b style={{ color: 'var(--c-text)' }}>{segCount}</b>× vorne
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         )}
       </div>
     );
@@ -423,13 +684,22 @@ export default function VerfolgungsplanungView({
       )}
 
       {tab === 'timer' && (
-        <RenntimerView
-          lapPlan={timerPlan}
-          numRounds={numRounds}
-          trackM={trackM}
-          onBack={() => setTab('rechner')}
-          teams={teams}
-        />
+        calc ? (
+          <RenntimerView
+            anfahrtSec={calc.anfahrt}
+            lapSec={calc.lapSec}
+            numRounds={numRounds}
+            planLabel={timerLabel}
+            onBack={() => setTab('rechner')}
+          />
+        ) : (
+          <div className="alert alert-info">
+            Kein Plan berechnet – im Rechner-Tab Anfahrtszeit und Zielzeit/Rundenzeit eingeben.
+            <div style={{ marginTop: 12 }}>
+              <button className="btn btn-secondary btn-sm" onClick={() => setTab('rechner')}>← Zurück zum Rechner</button>
+            </div>
+          </div>
+        )
       )}
     </div>
   );
@@ -445,201 +715,362 @@ function MaterialBtn({ label, active, onClick }: { label: string; active: boolea
 }
 
 // ── RenntimerView ─────────────────────────────────────────────────────────────
-function RenntimerView({ lapPlan, numRounds, trackM, onBack }: {
-  lapPlan: number[] | null; numRounds: number; trackM: number; onBack: () => void; teams: Team[];
+// Tap-basierter Renntimer (portiert aus PursuitPage.tsx view='race'/'display'):
+// Coach tippt bei jeder Zieldurchfahrt auf den RUNDE-Knopf, die Rundenzeit wird
+// aus den Zeitstempeln retroperspektiv berechnet — kein durchlaufender Countdown.
+// Nach jedem Tap wechselt die Anzeige für DISPLAY_SEC Sekunden auf eine
+// Vollbild-Athletenanzeige mit riesiger Rundenzeit.
+function RenntimerView({ anfahrtSec, lapSec, numRounds, planLabel, onBack }: {
+  anfahrtSec: number; lapSec: number; numRounds: number; planLabel: string; onBack: () => void;
 }) {
-  const [status, setStatus]   = useState<'idle' | 'running' | 'finished'>('idle');
-  const [startPerf, setStartPerf] = useState(0);
-  const [elapsedMs, setElapsedMs] = useState(0);
-  const [splits, setSplits]   = useState<number[]>([]); // cumulative ms at each LAP
-  const [halfMs, setHalfMs]   = useState<number | null>(null);
-  const [fullscreen, setFullscreen] = useState(false);
-  const rafRef = useRef<number>(0);
+  const [screen, setScreen]   = useState<'race' | 'display'>('race');
+  const [events, setEvents]   = useState<TEvent[]>([]);
+  const [autoAlt, setAutoAlt] = useState(false);
+  const [nextIsHalf, setNextIsHalf] = useState(false);
+  const [countdown, setCountdown]   = useState(0);
+  const [finished, setFinished]     = useState(false);
+  const [btnArmed, setBtnArmed]     = useState(false); // Finger liegt auf Button
 
-  // Animation loop
-  useEffect(() => {
-    if (status !== 'running') return;
-    const tick = () => { setElapsedMs(performance.now() - startPerf); rafRef.current = requestAnimationFrame(tick); };
-    rafRef.current = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(rafRef.current);
-  }, [status, startPerf]);
+  const eventsRef     = useRef<TEvent[]>([]);
+  const autoAltRef    = useRef(false);
+  const nextIsHalfRef = useRef(false);
+  const dispTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cdInterval = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const totalLaps   = lapPlan?.length ?? numRounds;
-  const completedLaps = splits.length;
-  const currentLap  = completedLaps + 1;
-  const nextTargetSec = lapPlan ? (lapPlan[completedLaps] ?? null) : null;
+  function syncEvs(evs: TEvent[]) { eventsRef.current = evs; setEvents(evs); }
+  function setAuto(v: boolean)    { autoAltRef.current    = v; setAutoAlt(v); }
+  function setNxtH(v: boolean)    { nextIsHalfRef.current = v; setNextIsHalf(v); }
 
-  // Diff at last completed lap
-  const lastDiff = completedLaps > 0 && lapPlan
-    ? splits[completedLaps - 1] / 1000 - lapPlan[completedLaps - 1]
+  // ── Berechnete Werte ─────────────────────────────────────────────────────
+  const lapEvs   = events.filter(e => e.type === 'lap');
+  const startEvt = events.find(e => e.type === 'start');
+  const lapCount = lapEvs.length;
+
+  const lastLapT = lapCount > 0
+    ? (lapEvs[lapCount - 1].ts - (lapCount > 1 ? lapEvs[lapCount - 2].ts : (startEvt?.ts ?? 0))) / 1000
     : null;
+  const totalT = lapCount > 0 && startEvt
+    ? (lapEvs[lapCount - 1].ts - startEvt.ts) / 1000 : null;
 
-  // Pace color (±0.2s green, ±1.0s yellow, else red)
-  const diff = lastDiff ?? (nextTargetSec !== null ? elapsedMs / 1000 - nextTargetSec : null);
-  const paceColor = diff === null ? '#64748b' : Math.abs(diff) <= 0.2 ? '#22c55e' : Math.abs(diff) <= 1.0 ? '#f59e0b' : '#ef4444';
-  const paceBg    = diff === null ? 'white' : Math.abs(diff) <= 0.2 ? '#f0fff4' : Math.abs(diff) <= 1.0 ? '#fffbeb' : '#fef2f2';
+  const planLapT = lapCount > 0 ? (lapCount === 1 ? anfahrtSec : lapSec) : null;
+  const planCumT = lapCount > 0 ? anfahrtSec + lapSec * (lapCount - 1) : null;
+  const delta = planLapT !== null && lastLapT !== null ? planLapT - lastLapT : null;
+  const style = diffStyle(delta);
 
-  // Half-lap projection
-  const halfProjectedMs = halfMs !== null ? (() => {
-    const prevCumMs = splits.length > 0 ? splits[splits.length - 1] : 0;
-    return (halfMs - prevCumMs) * 2 + prevCumMs;
-  })() : null;
+  // ── Verlauf ──────────────────────────────────────────────────────────────
+  const lapHistory = useMemo(() => {
+    const start = events.find(e => e.type === 'start');
+    const laps  = events.filter(e => e.type === 'lap');
+    const halfs = events.filter(e => e.type === 'half');
+    if (!start || laps.length === 0) return [];
+    return [...laps].reverse().slice(0, 6).map((lap, ri) => {
+      const i = laps.length - 1 - ri;
+      const prevTs = i > 0 ? laps[i - 1].ts : start.ts;
+      const lt = (lap.ts - prevTs) / 1000;
+      const pLt = i === 0 ? anfahrtSec : lapSec;
+      const diff = pLt - lt;
+      const hBetween = halfs.filter(h => h.ts > prevTs && h.ts < lap.ts);
+      const half = hBetween.length > 0
+        ? { h1: (hBetween[0].ts - prevTs) / 1000, h2: (lap.ts - hBetween[0].ts) / 1000 }
+        : null;
+      return { lapNum: i + 1, lt, diff, half };
+    });
+  }, [events, anfahrtSec, lapSec]);
 
-  function start() {
-    cancelAnimationFrame(rafRef.current);
-    const now = performance.now();
-    setStartPerf(now); setElapsedMs(0); setSplits([]); setHalfMs(null); setStatus('running');
-  }
-
-  function lap() {
-    if (status !== 'running') return;
-    const now = performance.now() - startPerf;
-    const newSplits = [...splits, now];
-    setSplits(newSplits); setHalfMs(null);
-    if (newSplits.length >= totalLaps) {
-      cancelAnimationFrame(rafRef.current);
-      setElapsedMs(now); setStatus('finished');
+  // ── Aktionen ─────────────────────────────────────────────────────────────
+  function mainTap() {
+    if (finished) return;
+    if (eventsRef.current.length === 0) {
+      syncEvs([{ ts: performance.now(), type: 'start' }]);
+      if (autoAltRef.current) setNxtH(true);
+      return;
+    }
+    if (autoAltRef.current) {
+      const wasHalf = nextIsHalfRef.current;
+      setNxtH(!wasHalf);
+      wasHalf ? recHalf() : recLap();
+    } else {
+      recLap();
     }
   }
 
-  function undoLap() {
-    if (splits.length === 0) return;
-    setSplits(prev => prev.slice(0, -1));
-    if (status === 'finished') setStatus('running');
+  function recLap() {
+    const ev: TEvent = { ts: performance.now(), type: 'lap' };
+    const newEvs = [...eventsRef.current, ev];
+    eventsRef.current = newEvs;
+    const done = newEvs.filter(e => e.type === 'lap').length;
+    setEvents(newEvs);
+    if (done >= numRounds) { setFinished(true); return; }
+    // Zur Athletenanzeige wechseln
+    clearTimeout(dispTimer.current!);
+    clearInterval(cdInterval.current!);
+    setScreen('display');
+    setCountdown(DISPLAY_SEC);
+    let rem = DISPLAY_SEC;
+    cdInterval.current = setInterval(() => { rem--; setCountdown(rem); if (rem <= 0) clearInterval(cdInterval.current!); }, 1000);
+    dispTimer.current = setTimeout(() => setScreen('race'), DISPLAY_SEC * 1000);
   }
 
-  function reset() {
-    cancelAnimationFrame(rafRef.current);
-    setStatus('idle'); setSplits([]); setHalfMs(null); setElapsedMs(0);
+  function recHalf() {
+    const newEvs = [...eventsRef.current, { ts: performance.now(), type: 'half' as const }];
+    eventsRef.current = newEvs;
+    setEvents(newEvs);
   }
 
-  // Per-lap breakdown
-  const lapDetails = splits.map((cumMs, i) => {
-    const lapMs  = i === 0 ? cumMs : cumMs - splits[i - 1];
-    const lapSec = lapMs / 1000;
-    const tgt    = lapPlan ? (i === 0 ? lapPlan[0] : lapPlan[i] - lapPlan[i - 1]) : null;
-    return { n: i + 1, lapSec, tgt, diff: tgt !== null ? lapSec - tgt : null, cumSec: cumMs / 1000 };
-  });
+  function manualHalf() {
+    if (eventsRef.current.length === 0 || finished) return;
+    recHalf();
+  }
 
-  // ── Vollbild ────────────────────────────────────────────────────────────────
-  if (fullscreen) {
+  function undoLast() {
+    if (eventsRef.current.length <= 1) return;
+    const last = eventsRef.current[eventsRef.current.length - 1];
+    const newEvs = eventsRef.current.slice(0, -1);
+    if (autoAltRef.current && (last.type === 'lap' || last.type === 'half'))
+      setNxtH(!nextIsHalfRef.current);
+    syncEvs(newEvs);
+    if (finished) setFinished(false);
+  }
+
+  function togAuto() {
+    const v = !autoAltRef.current;
+    setAuto(v);
+    if (v) setNxtH(true);
+  }
+
+  function resetTimer() {
+    clearTimeout(dispTimer.current!);
+    clearInterval(cdInterval.current!);
+    eventsRef.current = []; setEvents([]);
+    autoAltRef.current = false; setAutoAlt(false);
+    nextIsHalfRef.current = false; setNextIsHalf(false);
+    setFinished(false);
+    setScreen('race');
+  }
+
+  function doExport() {
+    const start = eventsRef.current.find(e => e.type === 'start');
+    if (!start) return;
+    const laps  = eventsRef.current.filter(e => e.type === 'lap');
+    const halfs = eventsRef.current.filter(e => e.type === 'half');
+    const rows = ['Runde;Zeit (s);Halbrunde 1 (s);Halbrunde 2 (s);Kumuliert (s);Plan (s);Differenz (s)'];
+    laps.forEach((lap, i) => {
+      const prevTs = i > 0 ? laps[i - 1].ts : start.ts;
+      const lt  = ((lap.ts - prevTs) / 1000).toFixed(3);
+      const cum = ((lap.ts - start.ts) / 1000).toFixed(3);
+      const pLtNum = i === 0 ? anfahrtSec : lapSec;
+      const pLt = pLtNum.toFixed(3);
+      const df  = (pLtNum - parseFloat(lt)).toFixed(3);
+      const hEvs = halfs.filter(h => h.ts > prevTs && h.ts < lap.ts);
+      const h1 = hEvs.length > 0 ? ((hEvs[0].ts - prevTs) / 1000).toFixed(3) : '';
+      const h2 = hEvs.length > 0 ? ((lap.ts - hEvs[0].ts) / 1000).toFixed(3) : '';
+      rows.push(`${i + 1};${lt};${h1};${h2};${cum};${pLt};${df}`);
+    });
+    const a = document.createElement('a');
+    a.href = `data:text/csv;charset=utf-8,\uFEFF${encodeURIComponent(rows.join('\n'))}`;
+    a.download = `verfolgung_${planLabel.replace(/\s/g, '_')}.csv`;
+    a.click();
+  }
+
+  // ── Athletenanzeige (Vollbild) ───────────────────────────────────────────
+  if (screen === 'display') {
     return (
-      <div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: status === 'idle' ? '#1e293b' : paceBg, border: `8px solid ${paceColor}`, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'space-between', padding: 24, boxSizing: 'border-box' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
-          <div style={{ fontWeight: 700, fontSize: 22, color: '#1e293b' }}>
-            {status === 'running' ? `Runde ${currentLap} / ${totalLaps}` : status === 'finished' ? '✓ Ziel' : 'Bereit'}
-          </div>
-          {lastDiff !== null && <div style={{ fontWeight: 700, fontSize: 22, color: paceColor }}>{fmtDiff(lastDiff)}</div>}
-          <button onClick={() => setFullscreen(false)} style={{ background: 'none', border: '1px solid #94a3b8', borderRadius: 6, padding: '6px 14px', cursor: 'pointer', fontSize: 14 }}>✕</button>
+      <div style={{
+        position: 'fixed', inset: 0, zIndex: 50,
+        background: 'var(--c-white)',
+        border: `16px solid ${style.border}`,
+        display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center',
+        textAlign: 'center',
+        transition: 'border-color 0.25s',
+      }}>
+        <div className="text-sm text-muted" style={{ marginBottom: 8 }}>
+          {planLabel} · Runde {lapCount} / {numRounds}
         </div>
-        <div style={{ fontWeight: 900, fontSize: 88, letterSpacing: '-4px', color: '#1e293b', lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
-          {fmtMs(elapsedMs)}
+        <div style={{
+          fontSize: 'clamp(80px, 22vw, 40vh)',
+          fontWeight: 500, lineHeight: 1,
+          fontVariantNumeric: 'tabular-nums',
+          letterSpacing: '-0.02em',
+          color: 'var(--c-text)',
+        }}>
+          {lastLapT !== null ? `${lastLapT.toFixed(2)}s` : '–'}
         </div>
-        {status === 'running' && (
-          <div style={{ width: '100%', display: 'flex', gap: 12 }}>
-            <button onClick={lap} style={{ flex: 1, height: 80, background: paceColor, border: 'none', borderRadius: 12, fontSize: 24, fontWeight: 700, color: 'white', cursor: 'pointer' }}>LAP</button>
-            <button onClick={() => setHalfMs(performance.now() - startPerf)} style={{ width: 72, height: 80, background: '#64748b', border: 'none', borderRadius: 12, fontSize: 16, fontWeight: 600, color: 'white', cursor: 'pointer' }}>½</button>
+        <div style={{ fontSize: 'clamp(24px, 8vw, 14vh)', fontWeight: 500, marginTop: 16, color: style.text }}>
+          {style.label}
+        </div>
+        {countdown > 0 && (
+          <div className="text-xs text-muted" style={{ marginTop: 20 }}>
+            Zurück in {countdown}s
           </div>
         )}
-        {status === 'idle' && (
-          <button onClick={start} style={{ width: '100%', height: 80, background: '#3b82f6', border: 'none', borderRadius: 12, fontSize: 24, fontWeight: 700, color: 'white', cursor: 'pointer' }}>▶ START</button>
-        )}
-        {status === 'finished' && (
-          <div style={{ display: 'flex', gap: 12, width: '100%' }}>
-            <button onClick={start} style={{ flex: 1, height: 64, background: '#3b82f6', border: 'none', borderRadius: 12, fontSize: 18, fontWeight: 700, color: 'white', cursor: 'pointer' }}>▶ Nochmal</button>
-            <button onClick={reset} style={{ flex: 1, height: 64, background: 'none', border: '1px solid #94a3b8', borderRadius: 12, fontSize: 18, fontWeight: 600, color: '#1e293b', cursor: 'pointer' }}>■ Reset</button>
-          </div>
-        )}
+        <button
+          className="btn btn-ghost btn-sm"
+          style={{ position: 'absolute', bottom: 24 }}
+          onClick={() => { clearTimeout(dispTimer.current!); clearInterval(cdInterval.current!); setScreen('race'); }}
+        >
+          ← Trainer
+        </button>
       </div>
     );
   }
 
-  // ── Normal ──────────────────────────────────────────────────────────────────
+  // ── Renntimer (Trainer) ──────────────────────────────────────────────────
+  const mainLabel = events.length === 0
+    ? 'RUNDE ⏱ (Start)'
+    : autoAlt ? (nextIsHalf ? '½ RUNDE →' : 'RUNDE ⏱') : 'RUNDE ⏱';
+
+  const finDiff = totalT !== null
+    ? (anfahrtSec + lapSec * (numRounds - 1)) - totalT
+    : null;
+  const finStyle = diffStyle(finDiff);
+
   return (
     <div>
-      {!lapPlan && (
-        <div className="alert alert-info mb-4">Kein Plan übergeben – im Rechner-Tab „Plan im Timer verwenden →" klicken.</div>
-      )}
-
-      {/* Idle */}
-      {status === 'idle' && lapPlan && (
-        <div className="card mb-4">
-          <div style={{ fontSize: 13, color: 'var(--c-text-muted)', marginBottom: 16 }}>
-            {totalLaps} Runden · {(totalLaps * trackM / 1000).toFixed(1)} km · Zielzeit {fmtMs(lapPlan[lapPlan.length - 1] * 1000)}
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={start} style={{ flex: 1, height: 60, background: 'var(--c-primary)', border: 'none', borderRadius: 10, fontSize: 18, fontWeight: 700, color: 'white', cursor: 'pointer' }}>▶ START</button>
-            <button onClick={() => setFullscreen(true)} style={{ height: 60, padding: '0 16px', background: 'none', border: '1px solid var(--c-border)', borderRadius: 10, fontSize: 13, cursor: 'pointer' }}>⛶ Vollbild</button>
-          </div>
-        </div>
-      )}
-
-      {/* Running / Finished */}
-      {status !== 'idle' && (
+      <div className="flex-between mb-4">
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-            <div style={{ fontWeight: 600, fontSize: 14 }}>
-              {status === 'finished' ? `✓ Fertig — ${fmtMs(elapsedMs)}` : `Runde ${currentLap} / ${totalLaps}`}
-            </div>
-            {status === 'running' && (
-              <button onClick={() => setFullscreen(true)} style={{ background: 'none', border: '1px solid var(--c-border)', borderRadius: 6, padding: '4px 10px', cursor: 'pointer', fontSize: 12 }}>⛶ Vollbild</button>
-            )}
-          </div>
-
-          {/* Zeitanzeige */}
-          <div style={{ background: paceBg, border: `3px solid ${paceColor}`, borderRadius: 12, padding: '20px', marginBottom: 12, textAlign: 'center' }}>
-            <div style={{ fontWeight: 900, fontSize: 56, letterSpacing: '-2px', fontVariantNumeric: 'tabular-nums', lineHeight: 1 }}>
-              {fmtMs(elapsedMs)}
-            </div>
-            {nextTargetSec !== null && status === 'running' && (
-              <div style={{ marginTop: 6, fontSize: 13, color: 'var(--c-text-muted)' }}>
-                Ziel: {fmtTime(nextTargetSec)}
-                {lastDiff !== null && <span style={{ marginLeft: 12, fontWeight: 700, color: paceColor }}>{fmtDiff(lastDiff)}</span>}
-              </div>
-            )}
-            {halfProjectedMs !== null && (
-              <div style={{ marginTop: 4, fontSize: 12, color: 'var(--c-text-muted)' }}>
-                ½ → hochgerechnet: {fmtMs(halfProjectedMs)}
-              </div>
-            )}
-          </div>
-
-          {/* Buttons */}
-          {status === 'running' && (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 56px 56px', gap: 8, marginBottom: 10 }}>
-              <button onClick={lap} style={{ height: 64, background: 'var(--c-primary)', border: 'none', borderRadius: 10, fontSize: 20, fontWeight: 700, color: 'white', cursor: 'pointer' }}>LAP</button>
-              <button onClick={() => setHalfMs(performance.now() - startPerf)} style={{ height: 64, background: '#64748b', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 600, color: 'white', cursor: 'pointer' }}>½</button>
-              <button onClick={undoLap} disabled={splits.length === 0} style={{ height: 64, background: 'none', border: '1px solid var(--c-border)', borderRadius: 10, fontSize: 20, cursor: 'pointer', opacity: splits.length === 0 ? 0.3 : 1 }}>↩</button>
-            </div>
-          )}
-          <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-            <button onClick={reset} className="btn btn-ghost btn-sm" style={{ fontSize: 12 }}>■ Abbrechen</button>
-            {status === 'finished' && <button onClick={start} className="btn btn-primary btn-sm" style={{ fontSize: 12 }}>▶ Nochmal</button>}
-          </div>
-
-          {/* Rundendetails */}
-          {lapDetails.length > 0 && (
-            <div style={{ borderRadius: 8, border: '1px solid var(--c-border)', overflow: 'hidden' }}>
-              <table className="table" style={{ fontSize: 12, margin: 0 }}>
-                <thead><tr><th style={{ width: 36 }}>Rd.</th><th>Zeit</th><th>Ziel</th><th>Diff</th><th>Gesamt</th></tr></thead>
-                <tbody>
-                  {[...lapDetails].reverse().map(l => {
-                    const dc = l.diff === null ? '' : Math.abs(l.diff) <= 0.2 ? '#22c55e' : Math.abs(l.diff) <= 1 ? '#f59e0b' : '#ef4444';
-                    return (
-                      <tr key={l.n}>
-                        <td>{l.n}</td>
-                        <td style={{ fontWeight: 600 }}>{l.lapSec.toFixed(2)}s</td>
-                        <td style={{ color: 'var(--c-text-muted)' }}>{l.tgt?.toFixed(2) ?? '—'}s</td>
-                        <td style={{ color: dc, fontWeight: 600 }}>{l.diff !== null ? fmtDiff(l.diff) : '—'}</td>
-                        <td style={{ color: 'var(--c-text-muted)' }}>{fmtTime(l.cumSec)}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <h2 style={{ margin: 0, fontSize: 20 }}>{planLabel}</h2>
+          <p className="text-sm text-muted" style={{ margin: '2px 0 0' }}>
+            {numRounds} Runden · Plan {fmtTime(anfahrtSec + lapSec * (numRounds - 1))}
+          </p>
         </div>
+      </div>
+
+      {/* Ziel-Anzeige */}
+      {finished && (
+        <div className="card mb-4" style={{ textAlign: 'center', padding: 24 }}>
+          <h3 style={{ marginBottom: 8 }}>Zielzeit</h3>
+          <div style={{ fontSize: 52, fontWeight: 500, fontVariantNumeric: 'tabular-nums', marginBottom: 8 }}>
+            {totalT !== null ? fmtTime(totalT) : '–'}
+          </div>
+          {finDiff !== null && (
+            <div style={{ fontSize: 20, color: finStyle.text, marginBottom: 16 }}>
+              {finStyle.label} vs Plan ({fmtTime(anfahrtSec + lapSec * (numRounds - 1))})
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+            <button className="btn btn-secondary" onClick={doExport}>CSV exportieren</button>
+            <button className="btn btn-ghost" onClick={resetTimer}>▶ Nochmal</button>
+          </div>
+        </div>
+      )}
+
+      {!finished && (
+        <>
+          {/* Zwischenstand */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+            <div className="card" style={{ padding: '11px 14px' }}>
+              <div className="text-xs text-muted">{planLabel}</div>
+              <div style={{ fontSize: 20, fontWeight: 500, margin: '3px 0' }}>
+                Runde {lapCount || '–'} / {numRounds}
+              </div>
+              <div className="text-sm text-muted">
+                Gesamt: <span style={{ color: 'var(--c-text)', fontWeight: 500 }}>
+                  {totalT !== null ? fmtTime(totalT) : '–'}
+                </span>
+              </div>
+              {planCumT !== null && (
+                <div className="text-sm text-muted">
+                  Plan: <span style={{ fontWeight: 500 }}>{fmtTime(planCumT)}</span>
+                  {totalT !== null && (
+                    <span style={{ marginLeft: 6, color: diffStyle(planCumT - totalT).text, fontWeight: 500 }}>
+                      {diffStyle(planCumT - totalT).label}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="card" style={{
+              padding: '11px 14px', textAlign: 'center',
+              background: delta !== null
+                ? delta > TOLERANCE ? '#dcfce7' : delta < -TOLERANCE ? '#fee2e2' : '#dbeafe'
+                : undefined,
+            }}>
+              <div className="text-xs text-muted" style={{ marginBottom: 3 }}>letzte runde</div>
+              <div style={{ fontSize: 36, fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>
+                {lastLapT !== null ? `${lastLapT.toFixed(2)}s` : '–'}
+              </div>
+              <div style={{ fontSize: 14, fontWeight: 500, color: style.text }}>{style.label}</div>
+            </div>
+          </div>
+
+          {/* Haupt-Tipp-Knopf — löst beim Loslassen aus (onPointerUp) */}
+          <button
+            onPointerDown={e => {
+              e.preventDefault();
+              (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+              setBtnArmed(true);
+            }}
+            onPointerUp={() => {
+              if (!btnArmed) return;
+              setBtnArmed(false);
+              mainTap();
+            }}
+            onPointerCancel={() => setBtnArmed(false)}
+            onContextMenu={e => e.preventDefault()}
+            style={{
+              width: '100%',
+              height: 'clamp(100px, 22vh, 160px)',
+              fontSize: 'clamp(20px, 4vw, 26px)',
+              fontWeight: 500,
+              borderRadius: 12,
+              cursor: 'pointer',
+              marginBottom: 8,
+              border: `3px solid var(--c-primary)`,
+              color: btnArmed ? 'white' : 'var(--c-primary)',
+              background: btnArmed ? 'var(--c-primary)' : '#dbeafe',
+              fontFamily: 'inherit',
+              transition: 'background 0.08s, color 0.08s',
+              userSelect: 'none',
+              WebkitUserSelect: 'none',
+              touchAction: 'none',
+            }}
+          >
+            {btnArmed ? '↑ Loslassen zum Auslösen' : mainLabel}
+          </button>
+
+          {/* Nebensteuerung */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 6, marginBottom: 14 }}>
+            <button className="btn btn-secondary btn-sm" onClick={manualHalf}
+              style={{ opacity: autoAlt ? 0.35 : 1, pointerEvents: autoAlt ? 'none' : 'auto' }}>
+              ½ Runde
+            </button>
+            <button className="btn btn-secondary btn-sm" onClick={togAuto}
+              style={{
+                background: autoAlt ? '#dcfce7' : undefined,
+                borderColor: autoAlt ? 'var(--c-success)' : undefined,
+                color: autoAlt ? 'var(--c-success)' : undefined,
+              }}>
+              Auto: {autoAlt ? 'EIN' : 'AUS'}
+            </button>
+            <button className="btn btn-secondary btn-sm" disabled={events.length <= 1} onClick={undoLast}>
+              ↩ Undo
+            </button>
+            <button className="btn btn-ghost btn-sm" onClick={resetTimer}>
+              Reset
+            </button>
+          </div>
+
+          {/* Verlauf */}
+          {lapHistory.length > 0 && (
+            <div style={{ fontSize: 12 }}>
+              {lapHistory.map(({ lapNum, lt, diff, half }) => {
+                const ds = diffStyle(diff);
+                return (
+                  <div key={lapNum} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid var(--c-border)' }}>
+                    <span className="text-muted">Rd. {lapNum}</span>
+                    <span style={{ fontWeight: 500 }}>
+                      {lt.toFixed(2)}s
+                      {half && <span className="text-muted" style={{ fontSize: 11, marginLeft: 6 }}>({half.h1.toFixed(2)} | {half.h2.toFixed(2)})</span>}
+                    </span>
+                    <span style={{ color: ds.text }}>{diff !== null ? ds.label : ''}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
       )}
 
       <button className="btn btn-ghost btn-sm" style={{ marginTop: 16 }} onClick={onBack}>← Zurück zum Rechner</button>
