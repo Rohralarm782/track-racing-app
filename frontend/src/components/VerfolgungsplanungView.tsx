@@ -41,12 +41,21 @@ export interface PlanSaveData {
   lapSec: number; totalSec: number;
   selectedKb: number | null; selectedRz: number | null;
   notes: string | null;
+  athleteMode: 'einzel' | 'mannschaft' | null;
+  athleteIds: string[];
+  fuehrungsplan: FuehrungsplanData | null;
 }
 
 interface Props {
   teams?: Team[];
   isAdmin?: boolean;
   onSave?: (data: PlanSaveData) => void | Promise<void>;
+  /** Vorbefüllt den Rechner beim Bearbeiten eines gespeicherten Plans (gleiche
+   *  Form wie PlanSaveData — z.B. direkt einen zuvor geladenen SavedPlan
+   *  übergeben). Beim Wechsel auf einen anderen Plan die Komponente über einen
+   *  geänderten `key`-Prop neu mounten, sonst greift die Vorbefüllung nur beim
+   *  allerersten Rendern. */
+  initialPlan?: PlanSaveData | null;
   /** Sportlerauswahl aktivieren: "einzel" = ein Sportler per Dropdown, Gang wird
    *  aus dem Profil vorausgewählt. "mannschaft" = mehrere Sportler als Chips,
    *  keine Gangauswahl. Ohne diese Prop verhält sich die Komponente wie bisher
@@ -184,30 +193,36 @@ function gearInches(kb: number, rz: number, circMm = DEFAULT_CIRC_MM): number {
 
 // ── Hauptkomponente ────────────────────────────────────────────────────────────
 export default function VerfolgungsplanungView({
-  teams = [], isAdmin = false, onSave,
+  teams = [], isAdmin = false, onSave, initialPlan,
   athleteMode, allAthletes = [], selectedAthletes = [], onAthletesChange,
   fuehrungsplan, onFuehrungsplanChange,
 }: Props) {
   const [tab, setTab] = useState<'rechner' | 'timer'>('rechner');
-  const [trackM, setTrackM]     = useState(250);
-  const [numRounds, setNumRounds] = useState(12);
+  const [trackM, setTrackM]     = useState(() => initialPlan?.trackM ?? 250);
+  const [numRounds, setNumRounds] = useState(() => initialPlan?.numRounds ?? 12);
   const [mode, setMode]         = useState<'zielzeit' | 'rundenzeit'>('zielzeit');
-  const [anfahrtStr, setAnfahrtStr]   = useState('23.5');
-  const [zielzeitStr, setZielzeitStr] = useState('3:45.0');
+  const [anfahrtStr, setAnfahrtStr]   = useState(() => initialPlan ? String(initialPlan.anfahrtSec) : '23.5');
+  const [zielzeitStr, setZielzeitStr] = useState(() => initialPlan ? fmtTime(initialPlan.totalSec) : '3:45.0');
   const [rdzeitStr, setRdzeitStr]     = useState('18.32');
-  const [selKB, setSelKB] = useState<Set<number>>(new Set());
-  const [selRZ, setSelRZ] = useState<Set<number>>(new Set());
-  const [selectedGear, setSelectedGear] = useState<{ kb: number; rz: number } | null>(null);
-  const [planName, setPlanName] = useState('');
+  const [selKB, setSelKB] = useState<Set<number>>(() => new Set(initialPlan?.selectedKb != null ? [initialPlan.selectedKb] : []));
+  const [selRZ, setSelRZ] = useState<Set<number>>(() => new Set(initialPlan?.selectedRz != null ? [initialPlan.selectedRz] : []));
+  const [selectedGear, setSelectedGear] = useState<{ kb: number; rz: number } | null>(() =>
+    initialPlan?.selectedKb != null && initialPlan?.selectedRz != null
+      ? { kb: initialPlan.selectedKb, rz: initialPlan.selectedRz } : null);
+  const [planName, setPlanName] = useState(() => initialPlan?.notes ?? '');
   const [saving, setSaving]     = useState(false);
 
-  // Gang-Vorauswahl aus dem Sportlerprofil (nur Einzelverfolgung)
+  // Gang-Vorauswahl aus dem Sportlerprofil (nur Einzelverfolgung). Beim ersten
+  // Mount mit initialPlan (Bearbeiten-Modus) soll die dort vorbefüllte Auswahl
+  // nicht sofort wieder auf null zurückgesetzt werden.
   const einzelAthlete = athleteMode === 'einzel' ? (selectedAthletes[0] ?? null) : null;
+  const skipNextGearReset = useRef(initialPlan?.selectedKb != null && initialPlan?.selectedRz != null);
   useEffect(() => {
     if (einzelAthlete) {
       setSelKB(new Set(einzelAthlete.kettenblaetter));
       setSelRZ(new Set(einzelAthlete.ritzel));
-      setSelectedGear(null);
+      if (skipNextGearReset.current) skipNextGearReset.current = false;
+      else setSelectedGear(null);
     }
   }, [einzelAthlete?.id]);
 
@@ -367,6 +382,15 @@ export default function VerfolgungsplanungView({
         anfahrtSec: calc.anfahrt, lapSec: calc.lapSec, totalSec: calc.totalSec,
         selectedKb: selectedGear?.kb ?? null, selectedRz: selectedGear?.rz ?? null,
         notes: planName.trim() || null,
+        athleteMode: athleteMode ?? null,
+        athleteIds: athleteMode === 'einzel'
+          ? (einzelAthlete ? [einzelAthlete.id] : [])
+          : athleteMode === 'mannschaft'
+            ? selectedAthletes.map(a => a.id)
+            : [],
+        fuehrungsplan: athleteMode === 'mannschaft'
+          ? { riderOrder, riderModes, dropoutRound, segments: fuehrungSegments }
+          : null,
       });
       setPlanName('');
     } finally { setSaving(false); }
@@ -707,7 +731,13 @@ export default function VerfolgungsplanungView({
                       <>
                         <input className="form-input" placeholder="Planname (z.B. Max · LVM U17)" value={planName} onChange={e => setPlanName(e.target.value)} style={{ fontSize: 13 }} />
                         <button className="btn btn-primary" style={{ width: '100%' }} onClick={handleSave} disabled={saving}>
-                          {saving ? 'Speichert…' : selectedGear ? `Plan speichern (Gang ${selectedGear.kb}/${selectedGear.rz})` : 'Plan speichern (kein Gang gewählt)'}
+                          {saving
+                            ? 'Speichert…'
+                            : initialPlan
+                              ? 'Änderungen speichern'
+                              : showGearPicker
+                                ? (selectedGear ? `Plan speichern (Gang ${selectedGear.kb}/${selectedGear.rz})` : 'Plan speichern (kein Gang gewählt)')
+                                : 'Plan speichern'}
                         </button>
                       </>
                     )}
