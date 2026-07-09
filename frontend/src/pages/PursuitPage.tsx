@@ -617,16 +617,21 @@ export default function PursuitPage() {
 
                     {fp && fp.segments.length > 0 && (
                       <>
-                        <div style={{ display: 'flex', height: 28, borderRadius: 6, overflow: 'hidden', boxShadow: 'inset 0 0 0 1px var(--c-border)', marginTop: 10, marginBottom: 8 }}>
-                          {fp.segments.map((seg, i) => (
-                            <div key={i} style={{
-                              flex: seg.laps, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                              background: riderColorFor(seg.athleteId), color: 'white', fontWeight: 600, fontSize: 10,
-                              fontVariantNumeric: 'tabular-nums',
-                            }}>
-                              {fmtLaps(seg.laps)}
-                            </div>
-                          ))}
+                        <div style={{ display: 'flex', height: 42, borderRadius: 6, overflow: 'hidden', boxShadow: 'inset 0 0 0 1px var(--c-border)', marginTop: 10, marginBottom: 8 }}>
+                          {fp.segments.map((seg, i) => {
+                            const segRider = planAthletes.find(a => a.id === seg.athleteId);
+                            return (
+                              <div key={i} style={{
+                                flex: seg.laps, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                                background: riderColorFor(seg.athleteId), color: 'white', padding: '0 2px', minWidth: 0,
+                              }}>
+                                <span style={{ fontSize: 9, fontWeight: 500, opacity: 0.9, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>
+                                  {segRider ? athleteShortName(segRider) : ''}
+                                </span>
+                                <span style={{ fontWeight: 700, fontSize: 11, fontVariantNumeric: 'tabular-nums' }}>{fmtLaps(seg.laps)}</span>
+                              </div>
+                            );
+                          })}
                         </div>
                         <div>
                           {(() => {
