@@ -18,8 +18,16 @@
 //    portiert — großer RUNDE-Knopf, ½-Runde, Auto-Wechsel, Undo, CSV-Export,
 //    und Vollbild-Athletenanzeige mit riesiger Rundenzeit nach jedem Tap.
 //    externalTimerPlan-Prop entfernt (war ungenutzt, kein Aufrufer im Repo).
+//  - Führungsplan (Mannschaftsverfolgung) wird jetzt persistiert: neue Props
+//    fuehrungsplan/onFuehrungsplanChange, State wird beim Mounten aus dem
+//    übergebenen Plan initialisiert (lazy useState) und bei Änderungen mit
+//    600ms Debounce über onFuehrungsplanChange gespeichert (RaceDetail.tsx
+//    schreibt das über raceFuehrungsplanApi ans Backend). Auf der
+//    eigenständigen /pursuit-Seite bleibt es mangels Rennen weiterhin
+//    rein lokal (Props einfach nicht übergeben).
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { Athlete } from '../api/client';
+import type { Athlete, FuehrungsplanData } from '../api/client';
+import { athleteShortName, athleteFullName } from '../api/client';
 
 // ── Typen ──────────────────────────────────────────────────────────────────────
 interface Team {
@@ -50,6 +58,12 @@ interface Props {
   selectedAthletes?: Athlete[];
   /** Wird mit der neuen vollständigen Auswahl (Athlete-IDs) aufgerufen */
   onAthletesChange?: (athleteIds: string[]) => void;
+  /** Gespeicherter Führungsplan (Mannschaftsverfolgung), z.B. aus race.fuehrungsplan.
+   *  Ohne Prop (z.B. auf /pursuit) bleibt der Plan rein lokal/ungespeichert. */
+  fuehrungsplan?: FuehrungsplanData | null;
+  /** Wird ~600ms nach der letzten Änderung am Führungsplan aufgerufen (intern
+   *  bereits debounced) — Aufrufer muss nicht selbst debouncen. */
+  onFuehrungsplanChange?: (data: FuehrungsplanData) => void;
 }
 
 // ── Konstanten ─────────────────────────────────────────────────────────────────
@@ -66,15 +80,18 @@ const TOLERANCE   = 0.2; // s Toleranz für Farbwechsel im Renntimer
 const DISPLAY_SEC = 8;   // s Athletenanzeige nach jeder Runde
 
 // ── Führungsplan (Mannschaftsverfolgung) ────────────────────────────────────────
-// Rein lokal, dient nur der Planung/Visualisierung — kein Backend-Feld, kein
-// Bezug zum Renntimer. Reihenfolge hier ist unabhängig von der Team-Mitgliedschaft
+// Reihenfolge/Modi/Wechsel sind unabhängig von der Team-Mitgliedschaft
 // (selectedAthletes/onAthletesChange bleiben unverändert für Hinzufügen/Entfernen).
-type RiderMode = 'normal' | 'back' | 'dropout';
+// "normal" wird nie gespeichert (fehlender Eintrag = normal), daher ist der
+// gespeicherte Typ StoredRiderMode enger als das Anzeige-/Auswahl-RiderMode.
+type StoredRiderMode = 'back' | 'dropout';
+type RiderMode = 'normal' | StoredRiderMode;
 interface FuehrungSegment { athleteId: string; laps: number; }
 
 const FUEHRUNG_PULL_LEN = 2;        // Start-Rundenzahl je Wechsel (kein UI-Regler mehr, nur Startwert für Neuberechnung)
 const FUEHRUNG_EDGE_CORRECTION = 0.25; // Start liegt ¼ Runde vor der Ziellinie → erster/letzter Wechsel je ¼ Runde länger
 const FUEHRUNG_MAX_ITER = 200;
+const FUEHRUNG_SAVE_DEBOUNCE_MS = 600;
 const FUEHRUNG_COLORS = ['#1d4ed8', '#16a34a', '#d97706', '#7c3aed', '#db2777', '#0891b2'];
 
 function fmtLaps(n: number): string {
@@ -95,7 +112,7 @@ function fmtLaps(n: number): string {
  * und letzten Wechsel addiert (Summe wird numRounds + 0,5). */
 function generateFuehrungSegments(
   riderIds: string[],
-  modes: Record<string, RiderMode>,
+  modes: Record<string, StoredRiderMode>,
   dropoutRound: number,
   numRounds: number,
 ): FuehrungSegment[] {
@@ -169,6 +186,7 @@ function gearInches(kb: number, rz: number, circMm = DEFAULT_CIRC_MM): number {
 export default function VerfolgungsplanungView({
   teams = [], isAdmin = false, onSave,
   athleteMode, allAthletes = [], selectedAthletes = [], onAthletesChange,
+  fuehrungsplan, onFuehrungsplanChange,
 }: Props) {
   const [tab, setTab] = useState<'rechner' | 'timer'>('rechner');
   const [trackM, setTrackM]     = useState(250);
@@ -211,10 +229,15 @@ export default function VerfolgungsplanungView({
   }
 
   // ── Führungsplan (nur Mannschaftsverfolgung) ────────────────────────────────
-  const [riderOrder, setRiderOrder] = useState<string[]>([]);
-  const [riderModes, setRiderModes] = useState<Record<string, RiderMode>>({});
-  const [dropoutRound, setDropoutRound] = useState(3);
-  const [fuehrungSegments, setFuehrungSegments] = useState<FuehrungSegment[]>([]);
+  // State wird einmalig (lazy) aus der fuehrungsplan-Prop initialisiert, falls
+  // vorhanden (z.B. race.fuehrungsplan) — sonst wie bisher leer/aus der
+  // Sportlerauswahl abgeleitet. Änderungen werden mit Debounce über
+  // onFuehrungsplanChange nach oben gemeldet; ohne diese Prop (z.B. /pursuit)
+  // bleibt alles rein lokal wie zuvor.
+  const [riderOrder, setRiderOrder] = useState<string[]>(() => fuehrungsplan?.riderOrder ?? []);
+  const [riderModes, setRiderModes] = useState<Record<string, StoredRiderMode>>(() => fuehrungsplan?.riderModes ?? {});
+  const [dropoutRound, setDropoutRound] = useState(() => fuehrungsplan?.dropoutRound ?? 3);
+  const [fuehrungSegments, setFuehrungSegments] = useState<FuehrungSegment[]>(() => fuehrungsplan?.segments ?? []);
 
   const selectedIdsKey = selectedAthletes.map(a => a.id).join(',');
   useEffect(() => {
@@ -242,6 +265,22 @@ export default function VerfolgungsplanungView({
     setFuehrungSegments(generateFuehrungSegments(riderOrder, riderModes, dropoutRound, numRounds));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [athleteMode, riderOrder.join(','), JSON.stringify(riderModes), dropoutRound, numRounds]);
+
+  // Speichert Führungsplan-Änderungen mit Debounce (überspringt den ersten
+  // Durchlauf nach dem Mounten, sonst würde beim Öffnen der Seite sofort ein
+  // Request rausgehen, obwohl noch nichts geändert wurde).
+  const fuehrungFirstRun = useRef(true);
+  const fuehrungSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (athleteMode !== 'mannschaft' || !onFuehrungsplanChange) return;
+    if (fuehrungFirstRun.current) { fuehrungFirstRun.current = false; return; }
+    if (fuehrungSaveTimer.current) clearTimeout(fuehrungSaveTimer.current);
+    fuehrungSaveTimer.current = setTimeout(() => {
+      onFuehrungsplanChange({ riderOrder, riderModes, dropoutRound, segments: fuehrungSegments });
+    }, FUEHRUNG_SAVE_DEBOUNCE_MS);
+    return () => { if (fuehrungSaveTimer.current) clearTimeout(fuehrungSaveTimer.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [riderOrder, riderModes, dropoutRound, fuehrungSegments]);
 
   function moveRider(i: number, dir: -1 | 1) {
     setRiderOrder(prev => {
@@ -311,11 +350,12 @@ export default function VerfolgungsplanungView({
     setTab('timer');
   }
 
-  // Anzeigename für den Renntimer (Sportler/Team, falls zugeordnet)
+  // Anzeigename für den Renntimer (Sportler/Team, falls zugeordnet) — bewusst
+  // Kurzname (nur Vorname), da während des Rennens auf einen Blick lesbar sein soll
   const timerLabel = athleteMode === 'einzel'
-    ? (einzelAthlete?.name ?? 'Verfolgungsrennen')
+    ? (einzelAthlete ? athleteShortName(einzelAthlete) : 'Verfolgungsrennen')
     : athleteMode === 'mannschaft'
-      ? (selectedAthletes.length > 0 ? selectedAthletes.map(a => a.name).join(' & ') : 'Verfolgungsrennen')
+      ? (selectedAthletes.length > 0 ? selectedAthletes.map(a => athleteShortName(a)).join(' & ') : 'Verfolgungsrennen')
       : 'Verfolgungsrennen';
 
   async function handleSave() {
@@ -347,10 +387,10 @@ export default function VerfolgungsplanungView({
               onChange={e => onAthletesChange?.(e.target.value ? [e.target.value] : [])}
             >
               <option value="">— Sportler wählen —</option>
-              {allAthletes.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+              {allAthletes.map(a => <option key={a.id} value={a.id}>{athleteFullName(a)}</option>)}
             </select>
           ) : (
-            <div className="text-sm">{selectedAthletes[0]?.name ?? '— kein Sportler zugeordnet —'}</div>
+            <div className="text-sm">{selectedAthletes[0] ? athleteFullName(selectedAthletes[0]) : '— kein Sportler zugeordnet —'}</div>
           )}
         </div>
       );
@@ -383,7 +423,7 @@ export default function VerfolgungsplanungView({
                   </div>
                 )}
                 <span style={{ width: 14, height: 14, borderRadius: '50%', flexShrink: 0, background: rMode === 'back' ? '#d1d5db' : riderColor(a.id) }} />
-                <span style={{ flex: 1, fontSize: 14, fontWeight: 500, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</span>
+                <span style={{ flex: 1, fontSize: 14, fontWeight: 500, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={athleteFullName(a)}>{athleteShortName(a)}</span>
                 <span style={{ fontSize: 11, color: 'var(--c-text-muted)', whiteSpace: 'nowrap' }}>{statsText}</span>
                 {isAdmin && (
                   <button
@@ -444,7 +484,7 @@ export default function VerfolgungsplanungView({
           >
             <option value="">+ Sportler hinzufügen</option>
             {allAthletes.filter(a => !selectedAthletes.some(s => s.id === a.id)).map(a => (
-              <option key={a.id} value={a.id}>{a.name}</option>
+              <option key={a.id} value={a.id}>{athleteFullName(a)}</option>
             ))}
           </select>
         )}
@@ -486,8 +526,8 @@ export default function VerfolgungsplanungView({
                       fontSize: 11, fontWeight: 700, color: 'white', flexShrink: 0, background: riderColor(seg.athleteId),
                     }}>{i + 1}</div>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13.5, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {rider?.name ?? '–'}
+                      <div style={{ fontSize: 13.5, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={rider ? athleteFullName(rider) : undefined}>
+                        {rider ? athleteShortName(rider) : '–'}
                         {isEdge && (
                           <span style={{ display: 'inline-block', background: '#fef3c7', color: '#92400e', borderRadius: 5, padding: '1px 5px', fontSize: 10, fontWeight: 600, marginLeft: 5 }}>
                             {i === 0 ? 'Start' : 'Ziel'}
@@ -519,7 +559,7 @@ export default function VerfolgungsplanungView({
                 return (
                   <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
                     <span style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, background: riderColor(a.id) }} />
-                    <span style={{ flex: 1 }}>{a.name}</span>
+                    <span style={{ flex: 1 }} title={athleteFullName(a)}>{athleteShortName(a)}</span>
                     <span style={{ color: 'var(--c-text-muted)', fontSize: 12 }}>
                       <b style={{ color: 'var(--c-text)' }}>{fmtLaps(lapSum)}</b> Runden · <b style={{ color: 'var(--c-text)' }}>{segCount}</b>× vorne
                     </span>
@@ -588,7 +628,7 @@ export default function VerfolgungsplanungView({
                   <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.04em', color: 'var(--c-text-muted)', textTransform: 'uppercase', marginBottom: 4 }}>verfügbares material</div>
                   {einzelAthlete && (
                     <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 8 }}>
-                      vorausgewählt aus Sportlerprofil {einzelAthlete.name} — anpassbar
+                      vorausgewählt aus Sportlerprofil {athleteShortName(einzelAthlete)} — anpassbar
                     </div>
                   )}
                   <div style={{ marginBottom: 12, marginTop: einzelAthlete ? 0 : 8 }}>
