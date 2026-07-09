@@ -304,8 +304,8 @@ export default function VerfolgungsplanungView({
   // fährt; nur die Übersetzung ist individuell.
   function riderGearOptions(athlete: Athlete) {
     return {
-      kb: Array.from(new Set([...KB_OPTIONS, ...athlete.kettenblaetter])).sort((a, b) => a - b),
-      rz: Array.from(new Set([...RZ_OPTIONS, ...athlete.ritzel])).sort((a, b) => a - b),
+      kb: [...athlete.kettenblaetter].sort((a, b) => a - b),
+      rz: [...athlete.ritzel].sort((a, b) => a - b),
     };
   }
   function riderGearCombos(athlete: Athlete) {
@@ -702,33 +702,31 @@ export default function VerfolgungsplanungView({
                     </div>
                     {isOpen && isAdmin && opts && (
                       <div style={{ padding: '2px 0 14px 18px' }}>
-                        <div style={{ fontSize: 11, color: 'var(--c-text-muted)', marginBottom: 6 }}>kettenblatt</div>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
-                          {opts.kb.map(kb => (
-                            <MaterialBtn key={kb} label={String(kb)} active={gear?.kb === kb} onClick={() => setRiderGear(a.id, kb, gear?.rz ?? opts.rz[0])} />
-                          ))}
-                        </div>
-                        <div style={{ fontSize: 11, color: 'var(--c-text-muted)', marginBottom: 6 }}>ritzel</div>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
-                          {opts.rz.map(rz => (
-                            <MaterialBtn key={rz} label={String(rz)} active={gear?.rz === rz} onClick={() => setRiderGear(a.id, gear?.kb ?? opts.kb[0], rz)} />
-                          ))}
-                        </div>
-                        <div style={{ fontSize: 11, color: 'var(--c-text-muted)', marginBottom: 6 }}>passende übersetzungen (100–130 rpm)</div>
-                        <table className="table" style={{ fontSize: 12.5 }}>
-                          <thead><tr><th>KB</th><th>R</th><th>rpm</th></tr></thead>
-                          <tbody>
-                            {combos.map((c, i) => {
-                              const isSel = gear?.kb === c.kb && gear?.rz === c.rz;
-                              return (
-                                <tr key={i} onClick={() => setRiderGear(a.id, c.kb, c.rz)} style={{ cursor: 'pointer', background: isSel ? '#dbeafe' : '', fontWeight: isSel ? 700 : 400 }}>
-                                  <td>{c.kb}{isSel ? ' ✓' : ''}</td><td>{c.rz}</td><td>{c.cad.toFixed(0)}</td>
-                                </tr>
-                              );
-                            })}
-                            {combos.length === 0 && <tr><td colSpan={3} style={{ color: 'var(--c-text-muted)', fontStyle: 'italic' }}>Keine Kombination im Bereich</td></tr>}
-                          </tbody>
-                        </table>
+                        {opts.kb.length === 0 || opts.rz.length === 0 ? (
+                          <div className="text-xs text-muted">
+                            Keine Ausstattung im Sportlerprofil hinterlegt — <a href={`/athletes/${a.id}`} target="_blank" rel="noreferrer">dort ergänzen</a>.
+                          </div>
+                        ) : (
+                          <>
+                            <div style={{ fontSize: 11, color: 'var(--c-text-muted)', marginBottom: 6 }}>
+                              vorauswahl aus sportlerprofil (100–130 rpm)
+                            </div>
+                            <table className="table" style={{ fontSize: 12.5 }}>
+                              <thead><tr><th>KB</th><th>R</th><th>rpm</th></tr></thead>
+                              <tbody>
+                                {combos.map((c, i) => {
+                                  const isSel = gear?.kb === c.kb && gear?.rz === c.rz;
+                                  return (
+                                    <tr key={i} onClick={() => setRiderGear(a.id, c.kb, c.rz)} style={{ cursor: 'pointer', background: isSel ? '#dbeafe' : '', fontWeight: isSel ? 700 : 400 }}>
+                                      <td>{c.kb}{isSel ? ' ✓' : ''}</td><td>{c.rz}</td><td>{c.cad.toFixed(0)}</td>
+                                    </tr>
+                                  );
+                                })}
+                                {combos.length === 0 && <tr><td colSpan={3} style={{ color: 'var(--c-text-muted)', fontStyle: 'italic' }}>Keine Kombination im Bereich</td></tr>}
+                              </tbody>
+                            </table>
+                          </>
+                        )}
                       </div>
                     )}
                   </div>
