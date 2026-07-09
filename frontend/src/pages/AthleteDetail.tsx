@@ -1,7 +1,9 @@
-// Zielpfad im Repo: frontend/src/pages/AthleteDetail.tsx  (NEUE DATEI)
+// Zielpfad im Repo: frontend/src/pages/AthleteDetail.tsx  (ERSETZT die bestehende Datei)
+// Änderungen ggü. Original: Name-Feld in Vorname/Nachname aufgeteilt (siehe
+// schema.prisma) — Anzeige nutzt athleteFullName, Bearbeiten hat zwei Felder.
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { athletesApi, type AthleteDetail as AthleteDetailType } from '../api/client';
+import { athletesApi, athleteFullName, type AthleteDetail as AthleteDetailType } from '../api/client';
 import { useAdmin } from '../components/Layout';
 
 function fmtRough(ms: number): string {
@@ -27,11 +29,12 @@ export default function AthleteDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState('');
 
-  // ── Bearbeiten Name/AK ──────────────────────────────────────────────────
-  const [editing, setEditing] = useState(false);
-  const [name, setName]       = useState('');
-  const [ak, setAk]           = useState('');
-  const [saving, setSaving]   = useState(false);
+  // ── Bearbeiten Vorname/Nachname/AK ────────────────────────────────────────
+  const [editing, setEditing]   = useState(false);
+  const [vorname, setVorname]   = useState('');
+  const [nachname, setNachname] = useState('');
+  const [ak, setAk]             = useState('');
+  const [saving, setSaving]     = useState(false);
 
   // ── Gear-Eingabe ─────────────────────────────────────────────────────────
   const [newKb, setNewKb] = useState('');
@@ -46,14 +49,14 @@ export default function AthleteDetail() {
 
   function startEdit() {
     if (!athlete) return;
-    setName(athlete.name); setAk(athlete.ak ?? ''); setEditing(true);
+    setVorname(athlete.vorname); setNachname(athlete.nachname); setAk(athlete.ak ?? ''); setEditing(true);
   }
 
   async function saveEdit() {
-    if (!id || !name.trim()) return;
+    if (!id || !vorname.trim() || !nachname.trim()) return;
     setSaving(true); setError('');
     try {
-      await athletesApi.update(id, { name: name.trim(), ak: ak.trim() || null });
+      await athletesApi.update(id, { vorname: vorname.trim(), nachname: nachname.trim(), ak: ak.trim() || null });
       setEditing(false);
       load();
     } catch (e: any) { setError(e.message ?? 'Fehler'); }
@@ -62,7 +65,7 @@ export default function AthleteDetail() {
 
   async function deleteAthlete() {
     if (!id || !athlete) return;
-    if (!confirm(`Sportlerprofil "${athlete.name}" wirklich löschen?`)) return;
+    if (!confirm(`Sportlerprofil "${athleteFullName(athlete)}" wirklich löschen?`)) return;
     try {
       await athletesApi.delete(id);
       navigate('/athletes');
@@ -99,20 +102,21 @@ export default function AthleteDetail() {
   return (
     <div className="page container">
       <div className="breadcrumb">
-        <Link to="/athletes">Sportler</Link><span>›</span>{athlete.name}
+        <Link to="/athletes">Sportler</Link><span>›</span>{athleteFullName(athlete)}
       </div>
 
       {error && <div className="alert alert-error mb-3">{error}</div>}
 
       <div className="flex-between mb-4">
         {editing ? (
-          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 10, flex: 1, marginRight: 12 }}>
-            <input className="form-input" value={name} onChange={e => setName(e.target.value)} placeholder="Name" autoFocus />
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 100px', gap: 10, flex: 1, marginRight: 12 }}>
+            <input className="form-input" value={vorname} onChange={e => setVorname(e.target.value)} placeholder="Vorname" autoFocus />
+            <input className="form-input" value={nachname} onChange={e => setNachname(e.target.value)} placeholder="Nachname" />
             <input className="form-input" value={ak} onChange={e => setAk(e.target.value)} placeholder="AK" />
           </div>
         ) : (
           <h1>
-            {athlete.name}{' '}
+            {athleteFullName(athlete)}{' '}
             {athlete.ak && <span className="badge badge-blue" style={{ verticalAlign: 2 }}>{athlete.ak}</span>}
           </h1>
         )}
@@ -121,7 +125,7 @@ export default function AthleteDetail() {
             {editing ? (
               <>
                 <button className="btn btn-ghost btn-sm" onClick={() => setEditing(false)}>Abbrechen</button>
-                <button className="btn btn-primary btn-sm" onClick={saveEdit} disabled={saving || !name.trim()}>
+                <button className="btn btn-primary btn-sm" onClick={saveEdit} disabled={saving || !vorname.trim() || !nachname.trim()}>
                   {saving ? '…' : 'Speichern'}
                 </button>
               </>
