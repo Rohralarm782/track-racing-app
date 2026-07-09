@@ -133,6 +133,7 @@ model Race {
   finaleActive Boolean         @default(true)
   plannedSprints Int?          // aus Ansetzung erkannte Anzahl Wertungen — die letzte wird automatisch als Finale gewertet
   distanceM    Int?            // grobe Distanz in Metern (Verfolgungsrennen) — für Sportlerprofil-Anzeige, optional
+  fuehrungsplan Json?          // neu: Führungsplan Mannschaftsverfolgung (Reihenfolge/Modi/Wechsel), nur Planung/Visualisierung
   createdAt    DateTime        @default(now())
 
   omniumScores  OmniumScore[]
@@ -251,7 +252,8 @@ model PursuitPlan {
 // Wertung genutzt wird — siehe RaceDetail.tsx, VERFOLGUNGSRENNEN-Zweig).
 model Athlete {
   id             String   @id @default(cuid())
-  name           String
+  vorname        String
+  nachname       String
   ak             String?  // Altersklasse, freier Text, z.B. "U17 m"
   notes          String?
   kettenblaetter Int[]    @default([]) // verfügbare Kettenblätter (Zähne) — frei kombinierbar, kein fester Satz
