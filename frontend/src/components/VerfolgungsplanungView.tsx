@@ -586,16 +586,21 @@ export default function VerfolgungsplanungView({
         {ridersOrdered.length >= 2 && fuehrungSegments.length > 0 && (
           <div className="card" style={{ marginTop: 14 }}>
             <label className="form-label" style={{ textTransform: 'lowercase' }}>führungsplan — vorschau</label>
-            <div style={{ display: 'flex', height: 34, borderRadius: 7, overflow: 'hidden', boxShadow: 'inset 0 0 0 1px var(--c-border)' }}>
-              {fuehrungSegments.map((seg, i) => (
-                <div key={i} style={{
-                  flex: seg.laps, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  background: riderColor(seg.athleteId), color: 'white', fontWeight: 600, fontSize: 10.5,
-                  fontVariantNumeric: 'tabular-nums',
-                }}>
-                  {fmtLaps(seg.laps)}
-                </div>
-              ))}
+            <div style={{ display: 'flex', height: 46, borderRadius: 7, overflow: 'hidden', boxShadow: 'inset 0 0 0 1px var(--c-border)' }}>
+              {fuehrungSegments.map((seg, i) => {
+                const rider = ridersOrdered.find(a => a.id === seg.athleteId);
+                return (
+                  <div key={i} style={{
+                    flex: seg.laps, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                    background: riderColor(seg.athleteId), color: 'white', padding: '0 2px', minWidth: 0,
+                  }}>
+                    <span style={{ fontSize: 9.5, fontWeight: 500, opacity: 0.9, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>
+                      {rider ? athleteShortName(rider) : ''}
+                    </span>
+                    <span style={{ fontWeight: 700, fontSize: 12, fontVariantNumeric: 'tabular-nums' }}>{fmtLaps(seg.laps)}</span>
+                  </div>
+                );
+              })}
             </div>
             <p className="text-xs text-muted" style={{ marginTop: 10 }}>
               <b style={{ color: 'var(--c-text)' }}>Start liegt ¼ Runde vor der Ziellinie:</b> erste und letzte Führung
