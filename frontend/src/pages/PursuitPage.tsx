@@ -55,6 +55,20 @@ function formatDate(iso: string) {
   return new Date(iso).toLocaleString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
+// ── Führungsplan-Vorschau (read-only, für die Plan-Karte) ───────────────────
+const FUEHRUNG_COLORS = ['#1d4ed8', '#16a34a', '#d97706', '#7c3aed', '#db2777', '#0891b2'];
+function fmtLaps(n: number): string {
+  const rounded = Math.round(n * 4) / 4;
+  const whole = Math.floor(rounded + 1e-9);
+  const frac = rounded - whole;
+  let fracStr = '';
+  if (Math.abs(frac - 0.25) < 0.01) fracStr = '¼';
+  else if (Math.abs(frac - 0.5) < 0.01) fracStr = '½';
+  else if (Math.abs(frac - 0.75) < 0.01) fracStr = '¾';
+  if (!fracStr) return `${whole}`;
+  return whole > 0 ? `${whole}${fracStr}` : fracStr;
+}
+
 type View = 'plans' | 'race' | 'display';
 
 // ── Hauptkomponente ────────────────────────────────────────────────────────────
@@ -71,6 +85,14 @@ export default function PursuitPage() {
   // beim Wechsel zwischen "neu" und "bearbeiten" komplett neu mountet und damit
   // seine Vorbefüllung (initialPlan) frisch übernimmt.
   const [editingPlan, setEditingPlan] = useState<SavedPlan | null>(null);
+  const [expandedPlanIds, setExpandedPlanIds] = useState<Set<string>>(new Set());
+  function togglePlanExpanded(id: string) {
+    setExpandedPlanIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
 
   useEffect(() => {
     api.get<SavedPlan[]>('/api/pursuit-plans')
@@ -541,45 +563,111 @@ export default function PursuitPage() {
             const planAthletes = plan.athleteIds
               .map(id => allAthletes.find(a => a.id === id))
               .filter((a): a is Athlete => !!a);
+            const fp = plan.fuehrungsplan;
+            const isExpanded = expandedPlanIds.has(plan.id);
+            const riderColorFor = (athleteId: string) => {
+              const i = fp?.riderOrder.indexOf(athleteId) ?? -1;
+              return FUEHRUNG_COLORS[(i < 0 ? 0 : i) % FUEHRUNG_COLORS.length];
+            };
             return (
-              <div key={plan.id} className="card" style={{ padding: '12px 16px', borderColor: editingPlan?.id === plan.id ? 'var(--c-primary)' : undefined }}>
-                <div className="flex-between" style={{ marginBottom: hasGear ? 8 : 0 }}>
-                  <div>
-                    <div style={{ fontWeight: 600, fontSize: 15 }}>{planName(plan)}</div>
-                    <div className="text-sm text-muted" style={{ marginTop: 2 }}>
-                      {plan.numRounds} Runden · {Math.round(plan.numRounds * plan.trackM)}m ·
-                      Zielzeit {fmtTime(plan.totalSec)} · Rd. 2+ {plan.lapSec.toFixed(2)}s
-                    </div>
-                    {planAthletes.length > 0 && (
-                      <div className="text-xs text-muted" style={{ marginTop: 2 }}>
-                        {plan.athleteMode === 'mannschaft' ? 'Team: ' : 'Sportler: '}
-                        {planAthletes.map(a => athleteShortName(a)).join(', ')}
-                      </div>
-                    )}
-                    <div className="text-xs text-muted">{formatDate(plan.createdAt)}</div>
-                  </div>
-                  <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
-                    <button className="btn btn-primary btn-sm" onClick={() => startWith(plan)}>
-                      ⏱ Timer starten
-                    </button>
-                    {isAdmin && (
-                      <>
-                        <button className="btn btn-secondary btn-sm" onClick={() => startEdit(plan)}>
-                          Bearbeiten
-                        </button>
-                        <button className="btn btn-ghost btn-sm" style={{ color: 'var(--c-danger)' }} onClick={() => deletePlan(plan.id)}>
-                          Löschen
-                        </button>
-                      </>
-                    )}
-                  </div>
+              <div key={plan.id} className="card" style={{ padding: '12px 14px', borderColor: editingPlan?.id === plan.id ? 'var(--c-primary)' : undefined }}>
+                <div style={{ fontWeight: 600, fontSize: 14.5 }}>{planName(plan)}</div>
+                <div className="text-sm text-muted" style={{ marginTop: 2 }}>
+                  {plan.numRounds} Runden · {Math.round(plan.numRounds * plan.trackM)}m ·
+                  {' '}{fmtTime(plan.totalSec)} · Rd. 2+ {plan.lapSec.toFixed(2)}s
                 </div>
+
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 9 }}>
+                  <button className="btn btn-secondary btn-sm" onClick={() => togglePlanExpanded(plan.id)}>
+                    👁 {isExpanded ? 'Ausblenden' : 'Anzeigen'}
+                  </button>
+                  <button className="btn btn-primary btn-sm" onClick={() => startWith(plan)}>
+                    ⏱ Timer
+                  </button>
+                  {isAdmin && (
+                    <>
+                      <button className="btn btn-secondary btn-sm" onClick={() => startEdit(plan)}>
+                        ✏️ Bearbeiten
+                      </button>
+                      <button className="btn btn-ghost btn-sm" style={{ color: 'var(--c-danger)' }} onClick={() => deletePlan(plan.id)}>
+                        🗑
+                      </button>
+                    </>
+                  )}
+                </div>
+
                 {hasGear && (
-                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: 12, background: 'var(--c-primary)', borderRadius: 6, padding: '5px 12px', marginTop: 6 }}>
+                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: 12, background: 'var(--c-primary)', borderRadius: 6, padding: '5px 12px', marginTop: 8 }}>
                     <span style={{ fontWeight: 800, fontSize: 18, color: 'white', letterSpacing: '-0.5px' }}>{plan.selectedKb} / {plan.selectedRz}</span>
                     <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.85)', borderLeft: '1px solid rgba(255,255,255,0.3)', paddingLeft: 10 }}>
                       Rollout {ro!.toFixed(2)} m · {cad!.toFixed(0)} rpm
                     </span>
+                  </div>
+                )}
+
+                {isExpanded && (
+                  <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px dashed var(--c-border)' }}>
+                    {planAthletes.length > 0 && (
+                      <div className="text-xs text-muted">
+                        {plan.athleteMode === 'mannschaft' ? 'Team: ' : 'Sportler: '}
+                        {planAthletes.map(a => athleteShortName(a)).join(', ')}
+                      </div>
+                    )}
+                    <div className="text-xs text-muted" style={{ marginTop: 3 }}>{formatDate(plan.createdAt)}</div>
+
+                    {fp && fp.segments.length > 0 && (
+                      <>
+                        <div style={{ display: 'flex', height: 28, borderRadius: 6, overflow: 'hidden', boxShadow: 'inset 0 0 0 1px var(--c-border)', marginTop: 10, marginBottom: 8 }}>
+                          {fp.segments.map((seg, i) => (
+                            <div key={i} style={{
+                              flex: seg.laps, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              background: riderColorFor(seg.athleteId), color: 'white', fontWeight: 600, fontSize: 10,
+                              fontVariantNumeric: 'tabular-nums',
+                            }}>
+                              {fmtLaps(seg.laps)}
+                            </div>
+                          ))}
+                        </div>
+                        <div>
+                          {(() => {
+                            let cum = 0;
+                            return fp.segments.map((seg, i) => {
+                              const rider = planAthletes.find(a => a.id === seg.athleteId);
+                              const start = cum; cum += seg.laps;
+                              return (
+                                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderBottom: i < fp.segments.length - 1 ? '1px solid var(--c-border)' : 'none' }}>
+                                  <div style={{ width: 17, height: 17, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, fontWeight: 700, color: 'white', flexShrink: 0, background: riderColorFor(seg.athleteId) }}>{i + 1}</div>
+                                  <span style={{ fontSize: 12.5, fontWeight: 500, flex: 1 }}>{rider ? athleteShortName(rider) : '–'}</span>
+                                  <span style={{ fontSize: 10.5, color: 'var(--c-text-muted)' }}>Rd. {fmtLaps(start)}–{fmtLaps(cum)}</span>
+                                  <span style={{ fontSize: 12.5, fontWeight: 600, minWidth: 30, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtLaps(seg.laps)}</span>
+                                </div>
+                              );
+                            });
+                          })()}
+                        </div>
+
+                        <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px dashed var(--c-border)' }}>
+                          {planAthletes.filter(a => fp.riderModes[a.id] !== 'back').map(a => {
+                            const lapSum = fp.segments.filter(s => s.athleteId === a.id).reduce((s, x) => s + x.laps, 0);
+                            const segCount = fp.segments.filter(s => s.athleteId === a.id).length;
+                            const gear = fp.riderGears?.[a.id] ?? null;
+                            return (
+                              <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '4px 0', fontSize: 12.5 }}>
+                                <span style={{ width: 9, height: 9, borderRadius: '50%', flexShrink: 0, background: riderColorFor(a.id) }} />
+                                <span style={{ flex: 1 }}>{athleteShortName(a)}</span>
+                                <span style={{ color: 'var(--c-text-muted)', fontSize: 11.5 }}>{fmtLaps(lapSum)} Rd. · {segCount}× vorne</span>
+                                <span style={{
+                                  fontSize: 11, fontWeight: gear ? 700 : 500, borderRadius: 5, padding: '2px 7px', marginLeft: 8, whiteSpace: 'nowrap',
+                                  background: gear ? 'var(--c-primary)' : '#f3f4f6', color: gear ? 'white' : 'var(--c-text-muted)',
+                                }}>
+                                  {gear ? `${gear.kb}/${gear.rz}` : 'kein Gang'}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
