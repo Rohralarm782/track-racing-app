@@ -87,6 +87,9 @@ export interface FuehrungsplanData {
   riderModes: Record<string, 'back' | 'dropout'>;
   dropoutRound: number;
   segments: { athleteId: string; laps: number }[];
+  /** Gang pro Sportler (Mannschaftsverfolgung) — optional, alte gespeicherte
+   *  Pläne haben das Feld noch nicht. */
+  riderGears?: Record<string, { kb: number; rz: number } | null>;
 }
 
 export interface Race {
