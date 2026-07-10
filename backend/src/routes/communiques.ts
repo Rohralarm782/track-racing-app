@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { Prisma } from '@prisma/client';
 import prisma from '../prisma';
 import { requireAdmin } from '../middleware/auth';
 import { listShareFiles, fetchShareFile } from '../lib/webdav';
@@ -65,6 +66,8 @@ const SubscribeSchema = z.object({
   keys: z.object({ p256dh: z.string(), auth: z.string() }),
   akFilter: z.array(z.string()).default(['Alle']),
   disciplineFilter: z.array(z.string()).default(['Alle']),
+  // Pro-AK-Disziplinauswahl, z.B. { "U17m": ["SPRINT"] }; null = alte Logik
+  matrixFilter: z.record(z.array(z.string())).nullable().optional(),
 });
 
 router.post('/:eventId/subscribe', async (req, res, next) => {
@@ -75,11 +78,15 @@ router.post('/:eventId/subscribe', async (req, res, next) => {
     const source = await prisma.communiqueSource.findUnique({ where: { eventId: req.params.eventId } });
     if (!source) { res.status(404).json({ error: 'Keine Quelle hinterlegt' }); return; }
 
-    const { endpoint, keys, akFilter, disciplineFilter } = parsed.data;
+    const { endpoint, keys, akFilter, disciplineFilter, matrixFilter } = parsed.data;
+    const matrixValue = matrixFilter ?? Prisma.DbNull;
     const sub = await prisma.pushSubscription.upsert({
       where: { endpoint },
-      create: { sourceId: source.id, endpoint, p256dh: keys.p256dh, auth: keys.auth, akFilter, disciplineFilter },
-      update: { akFilter, disciplineFilter },
+      create: {
+        sourceId: source.id, endpoint, p256dh: keys.p256dh, auth: keys.auth,
+        akFilter, disciplineFilter, matrixFilter: matrixValue,
+      },
+      update: { akFilter, disciplineFilter, matrixFilter: matrixValue },
     });
     res.status(201).json(sub);
   } catch (e) { next(e); }
@@ -124,11 +131,17 @@ router.get('/:eventId/file/:documentId', async (req, res, next) => {
 });
 
 // PATCH /api/communiques/:eventId/documents/:documentId/pin — Anheften umschalten
-router.patch('/:eventId/documents/:documentId/pin', async (req, res, next) => {
+router.patch('/:eventId/documents/:documentId/pin', requireAdmin, async (req, res, next) => {
   try {
     const { pinned } = req.body as { pinned?: boolean };
+    // Sicherstellen, dass das Dokument wirklich zu diesem Event gehört
+    const existing = await prisma.communiqueDocument.findFirst({
+      where: { id: req.params.documentId, source: { eventId: req.params.eventId } },
+      select: { id: true },
+    });
+    if (!existing) { res.status(404).json({ error: 'Dokument nicht gefunden' }); return; }
     const doc = await prisma.communiqueDocument.update({
-      where: { id: req.params.documentId },
+      where: { id: existing.id },
       data: { isPinned: !!pinned },
     });
     res.json(doc);
