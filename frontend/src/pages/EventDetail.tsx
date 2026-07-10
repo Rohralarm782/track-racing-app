@@ -40,6 +40,10 @@ export default function EventDetail() {
   const [showImport, setShowImport]   = useState(false);
   const [catName, setCatName]         = useState('');
   const [catFormat, setCatFormat]     = useState<'INDIVIDUAL' | 'TEAM_PAIRS'>('INDIVIDUAL');
+  // Inline-Bearbeitung einer bestehenden Kategorie
+  const [editCatId, setEditCatId]     = useState<string | null>(null);
+  const [editName, setEditName]       = useState('');
+  const [editFormat, setEditFormat]   = useState<'INDIVIDUAL' | 'TEAM_PAIRS'>('INDIVIDUAL');
   const [saving, setSaving]           = useState(false);
   const [error, setError]             = useState('');
   const { isAdmin }                   = useAdmin();
@@ -91,6 +95,35 @@ export default function EventDetail() {
       load();
     } catch (e: any) {
       setError(e.message ?? 'Löschen fehlgeschlagen');
+    }
+  }
+
+  function startEditCategory(cat: { id: string; name: string; format: 'INDIVIDUAL' | 'TEAM_PAIRS' }) {
+    setEditCatId(cat.id);
+    setEditName(cat.name);
+    setEditFormat(cat.format);
+    setError('');
+  }
+
+  function cancelEditCategory() {
+    setEditCatId(null);
+    setEditName('');
+    setError('');
+  }
+
+  async function saveEditCategory(catId: string) {
+    if (!editName.trim()) return;
+    setSaving(true);
+    setError('');
+    try {
+      await api.patch(`/api/categories/${catId}`, { name: editName.trim(), format: editFormat });
+      setEditCatId(null);
+      setEditName('');
+      load();
+    } catch (e: any) {
+      setError(e.message ?? 'Speichern fehlgeschlagen');
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -276,26 +309,74 @@ export default function EventDetail() {
                   </p>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                     {event.categories.map(cat => (
-                      <div
-                        key={cat.id}
-                        className="flex-between"
-                        style={{ border: '1px solid var(--c-border)', borderRadius: 8, padding: '8px 10px', gap: 8 }}
-                      >
-                        <div style={{ minWidth: 0 }}>
-                          <div style={{ fontWeight: 600, fontSize: 14 }}>{cat.name}</div>
-                          <div className="text-xs text-muted">
-                            {FORMAT_LABEL[cat.format] ?? cat.format} · {cat._count.teams} Teilnehmer · {cat.races.length} Rennen
+                      editCatId === cat.id ? (
+                        <div
+                          key={cat.id}
+                          style={{ border: '1px solid #bfdbfe', background: '#f0f7ff', borderRadius: 8, padding: '10px' }}
+                        >
+                          {error && <div className="alert alert-error" style={{ marginBottom: 8 }}>{error}</div>}
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+                            <div className="form-group" style={{ margin: 0 }}>
+                              <label className="form-label">Name</label>
+                              <input
+                                className="form-input"
+                                type="text"
+                                value={editName}
+                                onChange={e => setEditName(e.target.value)}
+                                onKeyDown={e => { if (e.key === 'Enter') saveEditCategory(cat.id); if (e.key === 'Escape') cancelEditCategory(); }}
+                                autoFocus
+                              />
+                            </div>
+                            <div className="form-group" style={{ margin: 0 }}>
+                              <label className="form-label">Format</label>
+                              <select
+                                className="form-select"
+                                value={editFormat}
+                                onChange={e => setEditFormat(e.target.value as 'INDIVIDUAL' | 'TEAM_PAIRS')}
+                              >
+                                <option value="INDIVIDUAL">Einzelrennen</option>
+                                <option value="TEAM_PAIRS">Madison / Mannschaft</option>
+                              </select>
+                            </div>
+                          </div>
+                          <div className="flex-between">
+                            <button className="btn btn-ghost btn-sm" onClick={cancelEditCategory}>Abbrechen</button>
+                            <button className="btn btn-primary btn-sm" onClick={() => saveEditCategory(cat.id)} disabled={saving || !editName.trim()}>
+                              {saving ? 'Speichert…' : 'Speichern'}
+                            </button>
                           </div>
                         </div>
-                        <button
-                          className="btn btn-ghost btn-sm"
-                          title="Kategorie löschen"
-                          onClick={() => deleteCategory(cat.id, cat.name, cat._count.teams)}
-                          style={{ flexShrink: 0, color: 'var(--c-danger, #dc2626)' }}
+                      ) : (
+                        <div
+                          key={cat.id}
+                          className="flex-between"
+                          style={{ border: '1px solid var(--c-border)', borderRadius: 8, padding: '8px 10px', gap: 8 }}
                         >
-                          🗑
-                        </button>
-                      </div>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontWeight: 600, fontSize: 14 }}>{cat.name}</div>
+                            <div className="text-xs text-muted">
+                              {FORMAT_LABEL[cat.format] ?? cat.format} · {cat._count.teams} Teilnehmer · {cat.races.length} Rennen
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', gap: 2, flexShrink: 0 }}>
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              title="Kategorie bearbeiten"
+                              onClick={() => startEditCategory(cat)}
+                            >
+                              ✏️
+                            </button>
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              title="Kategorie löschen"
+                              onClick={() => deleteCategory(cat.id, cat.name, cat._count.teams)}
+                              style={{ color: 'var(--c-danger, #dc2626)' }}
+                            >
+                              🗑
+                            </button>
+                          </div>
+                        </div>
+                      )
                     ))}
                   </div>
                 </div>
