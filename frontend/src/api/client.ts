@@ -280,12 +280,17 @@ export const communiquesApi = {
   getVapidPublicKey: () =>
     api.get<{ key: string }>('/api/communiques/vapid-public-key'),
 
-  subscribe: (eventId: string, subscription: PushSubscriptionJSON, akFilter: string[], disciplineFilter: string[]) =>
+  subscribe: (
+    eventId: string, subscription: PushSubscriptionJSON,
+    akFilter: string[], disciplineFilter: string[],
+    matrixFilter?: Record<string, string[]> | null,
+  ) =>
     api.post(`/api/communiques/${eventId}/subscribe`, {
       endpoint: subscription.endpoint,
       keys: subscription.keys,
       akFilter,
       disciplineFilter,
+      matrixFilter: matrixFilter ?? null,
     }),
 
   unsubscribe: (endpoint: string) =>
