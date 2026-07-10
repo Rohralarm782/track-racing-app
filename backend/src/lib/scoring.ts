@@ -85,12 +85,10 @@ export function computePunktefahren(
       if (a.isDsq !== b.isDsq) return a.isDsq ? 1 : -1;
       if (a.isDsq && b.isDsq) return 0;
       if (b.total !== a.total) return b.total - a.total;
-      if (finaleSprint) {
-        const aF = a.finalePosition ?? 99;
-        const bF = b.finalePosition ?? 99;
-        if (aF !== bF) return aF - bF;
-      }
-      return 0;
+      // Bei Punktgleichheit entscheidet die Platzierung in der Schlusswertung.
+      const aF = a.finalePosition ?? 99;
+      const bF = b.finalePosition ?? 99;
+      return aF - bF;
     });
 }
 
