@@ -339,8 +339,12 @@ model PushSubscription {
   endpoint  String           @unique
   p256dh    String
   auth      String
-  akFilter  String[]         @default(["Alle"]) // leer/["Alle"] = alle Klassen
-  disciplineFilter String[]  @default(["Alle"]) // leer/["Alle"] = Sprint + Ausdauer
+  akFilter  String[]         @default(["Alle"]) // leer/["Alle"] = alle Klassen (alte Filterlogik)
+  disciplineFilter String[]  @default(["Alle"]) // leer/["Alle"] = Sprint + Ausdauer (alte Filterlogik)
+  // Pro-AK-Disziplinauswahl, z.B. { "U17m": ["SPRINT"], "U19m": ["AUSDAUER"] }.
+  // null = alte Filterlogik (akFilter/disciplineFilter) gilt weiter — so
+  // funktionieren bereits abonnierte Geräte ohne Re-Subscribe.
+  matrixFilter Json?
   createdAt DateTime         @default(now())
 }
 
