@@ -70,4 +70,7 @@ async function pollAllSources() {
   }
 }
 
+// Einmal direkt beim Start pollen (sonst fehlen neue PDFs nach jedem
+// Deploy/Cold-Start bis zu 90 Sekunden), danach im Intervall.
+pollAllSources();
 setInterval(pollAllSources, POLL_INTERVAL_MS);
