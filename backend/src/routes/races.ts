@@ -348,7 +348,7 @@ router.post('/:id/sprints', requireAdmin, async (req, res, next) => {
     // letzte Wertung automatisch als Finale gewertet — unabhängig davon, was
     // die Anfrage selbst mitgibt (Ansetzung ist die verlässlichere Quelle).
     const isFinale = race?.plannedSprints != null
-      ? number >= race.plannedSprints
+      ? number === race.plannedSprints
       : parsed.data.isFinale;
     const sprint = await prisma.$transaction(async (tx) => {
       const s = await tx.sprint.create({ data: { raceId, number, isFinale } });
