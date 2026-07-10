@@ -50,6 +50,28 @@ function persistReadIds(sourceId: string, ids: Set<string>) {
   localStorage.setItem(`communique_read_${sourceId}`, JSON.stringify([...ids]));
 }
 
+// ── Benachrichtigungs-Auswahl (pro Gerät) ───────────────────────────────────
+// Unabhängig vom Listen-Filter: bestimmt, für welche AK/Disziplin-Kombinationen
+// dieses Gerät Push-Benachrichtigungen erhält. `all: true` = alle Dokumente,
+// sonst gilt die Matrix, z.B. { "U17m": ["SPRINT"], "U19m": ["AUSDAUER"] }.
+type NotifPrefs = { all: boolean; matrix: Record<string, string[]> };
+
+function loadNotifPrefs(eventId: string): NotifPrefs {
+  try {
+    const raw = localStorage.getItem(`communique_notif_${eventId}`);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (typeof parsed?.all === 'boolean' && parsed?.matrix && typeof parsed.matrix === 'object') {
+        return { all: parsed.all, matrix: parsed.matrix };
+      }
+    }
+  } catch { /* fällt auf Default zurück */ }
+  return { all: true, matrix: {} };
+}
+function persistNotifPrefs(eventId: string, prefs: NotifPrefs) {
+  localStorage.setItem(`communique_notif_${eventId}`, JSON.stringify(prefs));
+}
+
 // Kommuniqués sind block-nummeriert (z.B. "K198", "K198B", "K231") — diese
 // Reihenfolge entspricht dem Ablaufprogramm, nicht zwingend der zeitlichen
 // Veröffentlichungsreihenfolge. Für die Nummer-Sortierung parsen wir Zahl +
@@ -91,6 +113,12 @@ export default function CommuniquesPage() {
   const [pushEnabled, setPushEnabled]       = useState(false);
   const [pushBusy, setPushBusy]             = useState(false);
   const [bannerDismissed, setBannerDismissed] = useState(false);
+
+  // Benachrichtigungs-Auswahl (pro AK: Sprint/Ausdauer), pro Gerät gespeichert
+  const [notifPrefs, setNotifPrefs] = useState<NotifPrefs>(
+    () => (eventId ? loadNotifPrefs(eventId) : { all: true, matrix: {} })
+  );
+  const [notifOpen, setNotifOpen] = useState(false);
 
   // Gelesen-Status (lokal pro Browser)
   const [readIdsState, setReadIdsState] = useState<Set<string>>(new Set());
@@ -226,7 +254,11 @@ export default function CommuniquesPage() {
           applicationServerKey: urlBase64ToUint8Array(key) as BufferSource,
         });
       }
-      await communiquesApi.subscribe(eventId, sub.toJSON() as PushSubscriptionJSON, [...selectedAKs], [...selectedDisciplines]);
+      await communiquesApi.subscribe(
+        eventId, sub.toJSON() as PushSubscriptionJSON,
+        ['Alle'], ['Alle'],
+        notifPrefs.all ? null : notifPrefs.matrix,
+      );
       setPushEnabled(true);
       setBannerDismissed(true);
     } catch (e: any) {
@@ -251,14 +283,35 @@ export default function CommuniquesPage() {
     }
   }
 
-  async function updatePushScope(nextAKs: Set<string>, nextDisciplines: Set<string>) {
+  // Benachrichtigungs-Auswahl ändern: lokal speichern und — falls Push aktiv —
+  // die Subscription auf dem Server aktualisieren.
+  async function applyNotifPrefs(next: NotifPrefs) {
+    setNotifPrefs(next);
+    if (eventId) persistNotifPrefs(eventId, next);
     if (!eventId || !pushEnabled) return;
     try {
       const reg = await navigator.serviceWorker.getRegistration();
       const sub = await reg?.pushManager.getSubscription();
       if (!sub) return;
-      await communiquesApi.subscribe(eventId, sub.toJSON() as PushSubscriptionJSON, [...nextAKs], [...nextDisciplines]);
+      await communiquesApi.subscribe(
+        eventId, sub.toJSON() as PushSubscriptionJSON,
+        ['Alle'], ['Alle'],
+        next.all ? null : next.matrix,
+      );
     } catch { /* nicht kritisch, nächste Änderung versucht es erneut */ }
+  }
+
+  function toggleNotifAll() {
+    applyNotifPrefs(notifPrefs.all ? { all: false, matrix: notifPrefs.matrix } : { all: true, matrix: {} });
+  }
+
+  function toggleNotifDisc(ak: string, disc: string) {
+    const matrix: Record<string, string[]> = { ...notifPrefs.matrix };
+    const current = new Set(matrix[ak] ?? []);
+    if (current.has(disc)) current.delete(disc); else current.add(disc);
+    if (current.size === 0) delete matrix[ak];
+    else matrix[ak] = [...current];
+    applyNotifPrefs({ all: false, matrix });
   }
 
   function toggleAK(ak: string) {
@@ -272,7 +325,6 @@ export default function CommuniquesPage() {
         if (next.has(ak)) next.delete(ak); else next.add(ak);
         if (next.size === 0) next = new Set(['Alle']);
       }
-      updatePushScope(next, selectedDisciplines);
       return next;
     });
   }
@@ -288,7 +340,6 @@ export default function CommuniquesPage() {
         if (next.has(disc)) next.delete(disc); else next.add(disc);
         if (next.size === 0) next = new Set(['Alle']);
       }
-      updatePushScope(selectedAKs, next);
       return next;
     });
   }
@@ -611,15 +662,88 @@ export default function CommuniquesPage() {
           </div>
 
           {pushEnabled && (
-            <div className="flex-between text-xs text-muted" style={{ padding: '6px 2px 14px' }}>
-              <span>
-                🔔 Benachrichtigungen für{' '}
-                <strong>{selectedAKs.has('Alle') ? 'alle Klassen' : [...selectedAKs].join(', ')}</strong>
-                {' · '}
-                <strong>{selectedDisciplines.has('Alle') ? 'Sprint + Ausdauer' : [...selectedDisciplines].map(d => DISCIPLINE_LABELS[d]).join(', ')}</strong>
-                {' '}(+ allgemeine Dokumente)
-              </span>
-              <button className="btn btn-ghost btn-sm" onClick={disablePush}>Deaktivieren</button>
+            <div style={{ border: '1px solid var(--c-border)', borderRadius: 12, padding: '10px 12px', margin: '4px 0 14px', background: 'var(--c-white)' }}>
+              <div
+                className="flex-between"
+                style={{ cursor: 'pointer', gap: 8 }}
+                onClick={() => setNotifOpen(o => !o)}
+              >
+                <span className="text-xs" style={{ lineHeight: 1.5 }}>
+                  🔔 Benachrichtigungen:{' '}
+                  {notifPrefs.all ? (
+                    <strong>alle Dokumente</strong>
+                  ) : Object.keys(notifPrefs.matrix).length === 0 ? (
+                    <strong style={{ color: '#b45309' }}>keine Auswahl aktiv</strong>
+                  ) : (
+                    <strong>
+                      {Object.entries(notifPrefs.matrix)
+                        .map(([ak, discs]) => `${ak} ${discs.map(d => DISCIPLINE_LABELS[d] ?? d).join('+')}`)
+                        .join(' · ')}
+                    </strong>
+                  )}
+                </span>
+                <span style={{ fontSize: 12, color: 'var(--c-text)', flexShrink: 0 }}>{notifOpen ? '▲' : '▼ Anpassen'}</span>
+              </div>
+
+              {notifOpen && (
+                <div style={{ marginTop: 10 }}>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+                    <button
+                      onClick={toggleNotifAll}
+                      style={{
+                        padding: '5px 12px', borderRadius: 20, fontSize: 12.5, cursor: 'pointer', fontWeight: 500,
+                        border: notifPrefs.all ? '1px solid #111' : '1px solid var(--c-border)',
+                        background: notifPrefs.all ? '#111' : 'var(--c-white)',
+                        color: notifPrefs.all ? '#fff' : 'var(--c-text)',
+                      }}
+                    >
+                      Alle Dokumente
+                    </button>
+                  </div>
+
+                  {AK_OPTIONS.map(ak => {
+                    const sel = new Set(notifPrefs.matrix[ak] ?? []);
+                    const anySel = notifPrefs.all || sel.size > 0;
+                    return (
+                      <div
+                        key={ak}
+                        className="flex-between"
+                        style={{ padding: '7px 2px', borderTop: '1px solid var(--c-border)', gap: 8 }}
+                      >
+                        <span style={{ fontSize: 13, fontWeight: anySel ? 600 : 500, color: anySel ? 'var(--c-text)' : 'var(--c-muted, #6b7280)' }}>
+                          {ak}
+                        </span>
+                        <span style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                          {(['SPRINT', 'AUSDAUER'] as const).map(disc => {
+                            const active = notifPrefs.all || sel.has(disc);
+                            return (
+                              <button
+                                key={disc}
+                                onClick={() => toggleNotifDisc(ak, disc)}
+                                style={{
+                                  padding: '4px 11px', borderRadius: 20, fontSize: 12, cursor: 'pointer', fontWeight: 500,
+                                  border: active ? '1px solid var(--c-primary)' : '1px solid var(--c-border)',
+                                  background: active ? '#eff6ff' : 'var(--c-white)',
+                                  color: active ? 'var(--c-primary-hover)' : 'var(--c-text)',
+                                }}
+                              >
+                                {DISCIPLINE_LABELS[disc]}
+                              </button>
+                            );
+                          })}
+                        </span>
+                      </div>
+                    );
+                  })}
+
+                  <div className="flex-between" style={{ paddingTop: 10, borderTop: '1px solid var(--c-border)', gap: 8 }}>
+                    <span className="text-xs text-muted" style={{ lineHeight: 1.4 }}>
+                      Allgemeine Dokumente (z.B. Zeitplan) kommen immer mit, solange eine Auswahl aktiv ist.
+                    </span>
+                    <button className="btn btn-ghost btn-sm" onClick={disablePush} style={{ flexShrink: 0 }}>Deaktivieren</button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -705,17 +829,21 @@ export default function CommuniquesPage() {
                         {relativeTime(d.remoteModifiedAt)} · {d.ak}{d.discipline !== 'ALLGEMEIN' ? ` · ${DISCIPLINE_LABELS[d.discipline]}` : ''}
                       </div>
                     </div>
-                    <button
-                      onClick={e => togglePin(d, e)}
-                      title={d.isPinned ? 'Von oben lösen' : 'Oben anheften'}
-                      style={{
-                        border: 'none', background: 'transparent', cursor: 'pointer',
-                        fontSize: 16, padding: 4, flexShrink: 0, opacity: d.isPinned ? 1 : 0.35,
-                        lineHeight: 1,
-                      }}
-                    >
-                      📌
-                    </button>
+                    {isAdmin ? (
+                      <button
+                        onClick={e => togglePin(d, e)}
+                        title={d.isPinned ? 'Von oben lösen' : 'Oben anheften'}
+                        style={{
+                          border: 'none', background: 'transparent', cursor: 'pointer',
+                          fontSize: 16, padding: 4, flexShrink: 0, opacity: d.isPinned ? 1 : 0.35,
+                          lineHeight: 1,
+                        }}
+                      >
+                        📌
+                      </button>
+                    ) : d.isPinned ? (
+                      <span style={{ fontSize: 16, padding: 4, flexShrink: 0, lineHeight: 1 }}>📌</span>
+                    ) : null}
                   </div>
                 );
               })}
