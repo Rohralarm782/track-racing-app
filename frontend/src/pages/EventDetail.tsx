@@ -80,6 +80,20 @@ export default function EventDetail() {
     }
   }
 
+  async function deleteCategory(catId: string, name: string, teamCount: number) {
+    const warn = teamCount > 0
+      ? `Kategorie "${name}" wirklich löschen? ${teamCount} Teilnehmer und alle zugehörigen Rennen samt Ergebnissen werden ebenfalls gelöscht.`
+      : `Kategorie "${name}" wirklich löschen?`;
+    if (!confirm(warn)) return;
+    setError('');
+    try {
+      await api.delete(`/api/categories/${catId}`);
+      load();
+    } catch (e: any) {
+      setError(e.message ?? 'Löschen fehlgeschlagen');
+    }
+  }
+
   if (loading) return (
     <div className="page container"><div className="loading"><span className="spinner" /> Lädt…</div></div>
   );
@@ -250,6 +264,39 @@ export default function EventDetail() {
                     <button className="btn btn-primary" onClick={createCategory} disabled={saving || !catName}>
                       {saving ? 'Speichert…' : 'Kategorie anlegen'}
                     </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Bestehende Kategorien verwalten */}
+              {event.categories.length > 0 && (
+                <div style={{ borderTop: '1px solid var(--c-border)', paddingTop: 16, marginBottom: 4 }}>
+                  <p className="text-xs text-muted" style={{ fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 8 }}>
+                    Kategorien
+                  </p>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {event.categories.map(cat => (
+                      <div
+                        key={cat.id}
+                        className="flex-between"
+                        style={{ border: '1px solid var(--c-border)', borderRadius: 8, padding: '8px 10px', gap: 8 }}
+                      >
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontWeight: 600, fontSize: 14 }}>{cat.name}</div>
+                          <div className="text-xs text-muted">
+                            {FORMAT_LABEL[cat.format] ?? cat.format} · {cat._count.teams} Teilnehmer · {cat.races.length} Rennen
+                          </div>
+                        </div>
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          title="Kategorie löschen"
+                          onClick={() => deleteCategory(cat.id, cat.name, cat._count.teams)}
+                          style={{ flexShrink: 0, color: 'var(--c-danger, #dc2626)' }}
+                        >
+                          🗑
+                        </button>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
