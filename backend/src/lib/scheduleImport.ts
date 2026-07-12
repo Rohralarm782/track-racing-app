@@ -322,11 +322,11 @@ export function loadScheduleWithLinks(eventId: string) {
     include: {
       linkedDocument: {
         select: {
-          id: true, fileName: true, mevNames: true, mevRiders: true,
+          id: true, fileName: true, remoteModifiedAt: true, mevNames: true, mevRiders: true,
           heatCount: true, roundCount: true, starterCount: true, mevAnalyzedAt: true,
         },
       },
-      linkedResultDocument: { select: { id: true, fileName: true } },
+      linkedResultDocument: { select: { id: true, fileName: true, remoteModifiedAt: true } },
     },
   });
 }
