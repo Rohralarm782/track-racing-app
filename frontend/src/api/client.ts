@@ -160,6 +160,8 @@ export type LiveStatusKey = 'STARTING' | 'RUNNING' | 'FINISHED' | 'STARTS_AT';
 export interface ScheduleEntryLinkedDoc {
   id: string;
   fileName: string;
+  // Wird als Cache-Version (?v=) für die Offline-Vorabspeicherung genutzt.
+  remoteModifiedAt: string;
   mevNames: string[];
   mevRiders: MevRider[];
   heatCount: number | null;
@@ -171,6 +173,8 @@ export interface ScheduleEntryLinkedDoc {
 export interface ScheduleEntryResultDoc {
   id: string;
   fileName: string;
+  // Wird als Cache-Version (?v=) für die Offline-Vorabspeicherung genutzt.
+  remoteModifiedAt: string;
 }
 
 export interface ScheduleEntry {
@@ -265,8 +269,13 @@ export const communiquesApi = {
   poll: (eventId: string) =>
     api.post<{ newCount: number; newDocs: CommuniqueDocument[] }>(`/api/communiques/${eventId}/poll`, {}),
 
-  fileUrl: (eventId: string, documentId: string) =>
-    `${API_URL}/api/communiques/${eventId}/file/${documentId}`,
+  // version (= remoteModifiedAt des Dokuments) wird als ?v= angehängt und dient
+  // dem Service Worker als Cache-Schlüssel: neue Dateiversion ⇒ neue URL ⇒ die
+  // veraltete gecachte Version wird nie fälschlich ausgeliefert. Ohne version
+  // bleibt die URL unversioniert und wird bewusst NICHT offline gecacht.
+  fileUrl: (eventId: string, documentId: string, version?: string | null) =>
+    `${API_URL}/api/communiques/${eventId}/file/${documentId}` +
+    (version ? `?v=${encodeURIComponent(version)}` : ''),
 
   togglePin: (eventId: string, documentId: string, pinned: boolean) =>
     api.patch<CommuniqueDocument>(`/api/communiques/${eventId}/documents/${documentId}/pin`, { pinned }),
