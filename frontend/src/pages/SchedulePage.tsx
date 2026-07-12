@@ -142,6 +142,29 @@ export default function SchedulePage() {
 
   useEffect(() => { if (eventId) load(); }, [eventId]);
 
+  // Offline-Vorabspeicherung: sobald ein Tag angezeigt wird (Erst-Laden ODER
+  // Tageswechsel), dessen verlinkte Kommuniqués (Ansetzung + Ergebnis) an den
+  // Service Worker zum Cachen geben. Rein additiv – andere, bereits gecachte
+  // Tage bleiben erhalten. Läuft komplett im Hintergrund, ohne UI. Die URL trägt
+  // remoteModifiedAt als ?v=, damit der SW Korrekturen als neue Version erkennt.
+  useEffect(() => {
+    if (!eventId || !('serviceWorker' in navigator)) return;
+    const urls: string[] = [];
+    for (const e of entries) {
+      if (e.day !== activeDay) continue;
+      if (e.linkedDocument) {
+        urls.push(communiquesApi.fileUrl(eventId, e.linkedDocument.id, e.linkedDocument.remoteModifiedAt));
+      }
+      if (e.linkedResultDocument) {
+        urls.push(communiquesApi.fileUrl(eventId, e.linkedResultDocument.id, e.linkedResultDocument.remoteModifiedAt));
+      }
+    }
+    if (urls.length === 0) return;
+    navigator.serviceWorker.ready
+      .then(reg => reg.active?.postMessage({ type: 'PREFETCH', eventId, urls }))
+      .catch(() => { /* SW noch nicht bereit – nächster Tageswechsel versucht es erneut */ });
+  }, [eventId, activeDay, entries]);
+
   async function handleRematch() {
     if (!eventId) return;
     setRematchBusy(true); setError('');
@@ -255,6 +278,14 @@ export default function SchedulePage() {
 
   const currentEntryOrder = status && entries.find(e => e.id === status.scheduleEntryId)?.order;
   const currentEntryDay = status && entries.find(e => e.id === status.scheduleEntryId)?.day;
+
+  // Das gerade geöffnete Dokument (Ansetzung ODER Ergebnis) heraussuchen, um
+  // seine remoteModifiedAt als Cache-Version an die PDF-URL zu hängen.
+  const viewingDoc = viewingDocId
+    ? entries
+        .flatMap(e => [e.linkedDocument, e.linkedResultDocument])
+        .find(d => d?.id === viewingDocId) ?? null
+    : null;
 
   return (
     <>
@@ -652,7 +683,7 @@ export default function SchedulePage() {
             <button onClick={() => setViewingDocId(null)} className="btn btn-ghost btn-sm" style={{ fontSize: 18, padding: '4px 10px' }}>✕</button>
           </div>
           <div style={{ flex: 1, minHeight: 0 }}>
-            <PdfViewer url={communiquesApi.fileUrl(eventId, viewingDocId)} />
+            <PdfViewer url={communiquesApi.fileUrl(eventId, viewingDocId, viewingDoc?.remoteModifiedAt)} />
           </div>
         </div>
       </div>
