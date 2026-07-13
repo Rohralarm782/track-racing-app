@@ -100,6 +100,29 @@ function ActionsMenu({ items }: { items: MenuItem[] }) {
   );
 }
 
+// ── Platzierung mit geteilten Plätzen ────────────────────────────────────────
+// Bei Punktgleichheit entscheidet der Einlauf in der Schlusswertung. Solange die
+// noch nicht gefahren ist (finalePosition bei beiden null), gibt es nichts zu
+// trennen — punktgleiche Fahrer stehen dann wirklich auf demselben Platz.
+// Gezählt wird nach Wettkampfstandard: 1, 1, 3 (der belegte Platz wird
+// übersprungen, nicht neu vergeben).
+// Das Backend (scoring.ts) sortiert bereits korrekt; hier geht es nur um die
+// Nummer, die in der '#'-Spalte steht.
+function computeRanks(rows: TeamStanding[]): (number|null)[] {
+  const ranks: (number|null)[] = [];
+  let lastRank = 0;
+  rows.forEach((s, i) => {
+    if (s.isDsq) { ranks.push(null); return; }   // DSQ bekommt keinen Platz
+    const prev = i > 0 ? rows[i-1] : null;
+    const tied = !!prev && !prev.isDsq
+      && prev.total === s.total
+      && (prev.finalePosition ?? null) === (s.finalePosition ?? null);
+    if (tied) { ranks.push(lastRank); }
+    else { lastRank = i + 1; ranks.push(lastRank); }
+  });
+  return ranks;
+}
+
 // Nur für Punktefahren/Omnium-Anzeige in der Tabelle
 const SPRINT_PTS: Record<number, number> = { 1: 5, 2: 3, 3: 2, 4: 1 };
 function sprintPts(sprint: Sprint, teamId: string): number|null {
@@ -234,6 +257,8 @@ export default function RaceDetail() {
   }, [id]);
 
   useEffect(() => { fetchRace(); const t = setInterval(fetchRace, 6000); return () => clearInterval(t); }, [fetchRace]);
+
+  const ranks = race?.scoreboard ? computeRanks(race.scoreboard) : [];
 
   // Umbenennen-Modal — in allen drei Renn-Zweigen identisch, deshalb einmal
   // als Variable und unten jeweils eingehängt.
@@ -609,17 +634,17 @@ export default function RaceDetail() {
               <span className="text-xs text-muted">aktualisiert alle 6s</span>
             </div>
             <div className="table-wrap" style={{overflowX:'auto'}}>
-              <table className="table" style={{minWidth:288+(schlusswertung?38:0)}}>
+              <table className="table" style={{minWidth:322+(schlusswertung?38:0)}}>
                 <thead>
                   <tr>
-                    <th className="hide-mobile" style={{width:28}}>#</th>
-                    <th style={{width:38}}>Nr.</th>
-                    <th style={{minWidth:90}}>Name</th>
+                    <th style={{width:20}}>#</th>
+                    <th style={{width:34}}>Nr.</th>
+                    <th style={{minWidth:82}}>Name</th>
                     <th style={{textAlign:'center',width:56,fontSize:11}}>Rundensiege</th>
                     {schlusswertung&&<th style={{textAlign:'center',width:38,fontSize:11}} title="Schlusswertungsplatz">S.W.</th>}
-                    <th style={{textAlign:'center',width:44}}>R.</th>
-                    <th style={{textAlign:'right',width:48}}>Ges.</th>
-                    {isAdmin&&<th style={{width:48}}></th>}
+                    <th style={{textAlign:'center',width:40}}>R.</th>
+                    <th style={{textAlign:'right',width:46}}>Ges.</th>
+                    {isAdmin&&<th style={{width:44}}></th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -627,7 +652,7 @@ export default function RaceDetail() {
                     const rowStyle: React.CSSProperties = s.isDsq?{opacity:0.5,textDecoration:'line-through'}:s.color?{background:`${s.color}18`}:s.isFavorite?{background:'#fffbeb'}:{};
                     return(
                       <tr key={s.teamId} style={rowStyle}>
-                        <td className="hide-mobile" style={{color:'var(--c-text-muted)',fontSize:12}}>{s.isDsq?'':idx+1}</td>
+                        <td style={{color:'var(--c-text-muted)',fontSize:12}}>{ranks[idx] ?? ''}</td>
                         <td className="num" style={{fontWeight:600}}>{s.teamNumber}</td>
                         <td>
                           <div style={{display:'flex',alignItems:'center',gap:4}}>
@@ -992,18 +1017,18 @@ export default function RaceDetail() {
             <span className="text-xs text-muted">aktualisiert alle 6s</span>
           </div>
           <div className="table-wrap" style={{overflowX:'auto'}}>
-            <table className="table" style={{minWidth:220+race.sprints.length*42+(hasOmnium?42:0)+(hasFinale?34:0)}}>
+            <table className="table" style={{minWidth:266+race.sprints.length*40+(hasOmnium?40:0)+(hasFinale?34:0)}}>
               <thead>
                 <tr>
-                  <th className="hide-mobile" style={{width:28}}>#</th>
-                  <th style={{width:38}}>Nr.</th>
-                  <th style={{minWidth:90}}>Name</th>
-                  {race.sprints.map(s=><th key={s.id} style={{textAlign:'center',width:42,fontSize:11}}>{s.isFinale?<span>S{s.number}<span style={{color:'var(--c-warning)'}}>★</span></span>:`S${s.number}`}</th>)}
+                  <th style={{width:20}}>#</th>
+                  <th style={{width:34}}>Nr.</th>
+                  <th style={{minWidth:82}}>Name</th>
+                  {race.sprints.map(s=><th key={s.id} style={{textAlign:'center',width:40,fontSize:11}}>{s.isFinale?<span>S{s.number}<span style={{color:'var(--c-warning)'}}>★</span></span>:`S${s.number}`}</th>)}
                   {hasFinale&&<th style={{textAlign:'center',width:34,fontSize:11}}>F.</th>}
-                  <th style={{textAlign:'center',width:44}}>R.</th>
-                  {hasOmnium&&<th style={{textAlign:'center',width:42}}>Omn.</th>}
-                  <th style={{textAlign:'right',width:48}}>Ges.</th>
-                  {isAdmin&&<th style={{width:48}}></th>}
+                  <th style={{textAlign:'center',width:40}}>R.</th>
+                  {hasOmnium&&<th style={{textAlign:'center',width:40}}>Omn.</th>}
+                  <th style={{textAlign:'right',width:46}}>Ges.</th>
+                  {isAdmin&&<th style={{width:44}}></th>}
                 </tr>
               </thead>
               <tbody>
@@ -1011,7 +1036,7 @@ export default function RaceDetail() {
                   const rowStyle: React.CSSProperties = s.isDsq?{opacity:0.5,textDecoration:'line-through'}:s.color?{background:`${s.color}18`}:s.isFavorite?{background:'#fffbeb'}:{};
                   return(
                     <tr key={s.teamId} style={rowStyle}>
-                      <td className="hide-mobile" style={{color:'var(--c-text-muted)',fontSize:12}}>{s.isDsq?'':idx+1}</td>
+                      <td style={{color:'var(--c-text-muted)',fontSize:12}}>{ranks[idx] ?? ''}</td>
                       <td className="num" style={{fontWeight:600}}>{s.teamNumber}</td>
                       <td>
                         {editingTeamId===s.teamId ? (
