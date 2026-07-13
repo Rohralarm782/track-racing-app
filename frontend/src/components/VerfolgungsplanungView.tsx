@@ -98,7 +98,9 @@ type RiderMode = 'normal' | StoredRiderMode;
 interface FuehrungSegment { athleteId: string; laps: number; }
 
 const FUEHRUNG_PULL_LEN = 2;        // Start-Rundenzahl je Wechsel (kein UI-Regler mehr, nur Startwert für Neuberechnung)
-const FUEHRUNG_EDGE_CORRECTION = 0.25; // Start liegt ¼ Runde vor der Ziellinie → erster/letzter Wechsel je ¼ Runde länger
+const FUEHRUNG_EDGE_CORRECTION = 0.25; // Gewechselt wird in den Kurven, Start/Ziel liegt auf der Geraden dazwischen →
+                                       // erste Führung endet erst in der Kurve (+¼), letzte Führung fährt ab Kurve
+                                       // noch ¼ Runde ins Ziel (+¼). Die Summe bleibt exakt numRounds.
 const FUEHRUNG_STEP = 0.5;          // Schrittweite der +/− Knöpfe je Wechsel
 const FUEHRUNG_MIN_LAPS = 0.5;      // kürzeste erlaubte Führung
 const FUEHRUNG_MAX_ITER = 200;
@@ -119,8 +121,9 @@ function fmtLaps(n: number): string {
 
 /** Erzeugt die Wechselfolge: rotiert reihum durch alle Sportler außer "bleibt
  * hinten", der als "steigt aus" markierte Sportler fällt nach dropoutRound
- * kumulierten Runden aus der Rotation. Start-/Zielversatz wird auf den ersten
- * und letzten Wechsel addiert (Summe wird numRounds + 0,5). */
+ * kumulierten Runden aus der Rotation. Die Rotation füllt nur numRounds − ½
+ * Runden; die beiden fehlenden Viertel kommen als Kurven-Versatz auf die erste
+ * und die letzte Führung → Gesamtsumme exakt numRounds. */
 function generateFuehrungSegments(
   riderIds: string[],
   modes: Record<string, StoredRiderMode>,
@@ -129,11 +132,14 @@ function generateFuehrungSegments(
 ): FuehrungSegment[] {
   let active = riderIds.filter(id => modes[id] !== 'back');
   const dropoutId = riderIds.find(id => modes[id] === 'dropout') ?? null;
+  // Basis = Renndistanz minus die beiden Kurven-Viertel, die unten wieder
+  // aufgeschlagen werden. So bleibt die Summe am Ende exakt numRounds.
+  const base = Math.max(FUEHRUNG_MIN_LAPS, numRounds - 2 * FUEHRUNG_EDGE_CORRECTION);
   let idx = 0, roundsUsed = 0, dropoutSoFar = 0, iter = 0;
   const out: FuehrungSegment[] = [];
-  while (roundsUsed < numRounds - 1e-9 && active.length > 0 && iter++ < FUEHRUNG_MAX_ITER) {
+  while (roundsUsed < base - 1e-9 && active.length > 0 && iter++ < FUEHRUNG_MAX_ITER) {
     const athleteId = active[idx % active.length];
-    let len = Math.min(FUEHRUNG_PULL_LEN, numRounds - roundsUsed);
+    let len = Math.min(FUEHRUNG_PULL_LEN, base - roundsUsed);
     if (dropoutId !== null && athleteId === dropoutId) {
       const remaining = dropoutRound - dropoutSoFar;
       if (remaining <= 1e-9) { active = active.filter(id => id !== dropoutId); continue; }
@@ -601,7 +607,7 @@ export default function VerfolgungsplanungView({
             </div>
 
             {(() => {
-              const soll = numRounds + 2 * FUEHRUNG_EDGE_CORRECTION;
+              const soll = numRounds;
               const diff = Math.round((totalSum - soll) * 4) / 4;
               const ok = Math.abs(diff) < 0.01;
               const accent = ok ? '#047857' : '#c2410c';
@@ -621,7 +627,7 @@ export default function VerfolgungsplanungView({
                           : `${fmtLaps(-diff)} Rd. zu wenig`}
                     </div>
                     <div style={{ fontSize: 11, color: 'var(--c-text-muted)', marginTop: 1 }}>
-                      Soll: {numRounds} Runden + ½ Start-/Zielversatz = {fmtLaps(soll)}
+                      Soll: {fmtLaps(soll)} Runden · Wechsel in der Kurve (erste/letzte Führung mit ¼-Versatz)
                     </div>
                   </div>
                   <div style={{ textAlign: 'right', flexShrink: 0 }}>
