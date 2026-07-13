@@ -10,6 +10,14 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 //   B/M   — Ballustrade/Messlinie (Massenstart: Punktefahren, Madison, ...)
 const START_POSITIONS = ['ZG', 'GG', 'B', 'M'];
 
+/**
+ * Version der MEV-Analyse (Prompt + Nachbearbeitung). Wird am Dokument
+ * gespeichert; der Poll-Zyklus analysiert jedes Dokument mit kleinerer Version
+ * automatisch neu. Bei JEDER inhaltlichen Änderung an Prompt oder Auswertung
+ * hochzählen — sonst behalten bereits analysierte Dokumente ihr altes Ergebnis.
+ */
+export const MEV_ANALYSIS_VERSION = 3;
+
 export interface MevRider {
   name: string;
   lauf: number | null;
@@ -198,6 +206,18 @@ Regeln:
       for (const r of mevRiders) { r.lauf = null; r.laufLabel = null; }
     }
 
+    // Zweiter Guard gegen dieselbe Verwechslung: Eine Lauf-Nummer liegt immer
+    // zwischen 1 und der Gesamt-Laufzahl. Eine Startnummer sprengt diesen
+    // Bereich fast immer (real: Sprint-Finale mit 2 Läufen, das Modell gab die
+    // Startnummer 186 als Lauf aus). Der textuelle laufLabel bleibt erhalten —
+    // in genau diesen Dokumenten steht in der Lauf-Spalte "Platz 3/4" o.ä.,
+    // was die eigentlich gemeinte Information ist.
+    for (const r of mevRiders) {
+      if (r.lauf != null && heatCount != null && (r.lauf < 1 || r.lauf > heatCount)) {
+        r.lauf = null;
+      }
+    }
+
     // Ausscheidungsfahren: die Rundenzahl steht praktisch nie im Dokument,
     // folgt aber einer festen Formel (Starterzahl × 2) — verlässlicher als ein
     // Textfund, siehe Absprache mit Hauke.
@@ -207,7 +227,10 @@ Regeln:
 
     await prisma.communiqueDocument.update({
       where: { id: doc.id },
-      data: { mevNames, mevRiders, hasLvColumn, heatCount, starterCount, roundCount, mevAnalyzedAt: new Date() } as any,
+      data: {
+        mevNames, mevRiders, hasLvColumn, heatCount, starterCount, roundCount,
+        mevAnalyzedAt: new Date(), mevVersion: MEV_ANALYSIS_VERSION,
+      } as any,
     });
   } catch (err) {
     // Eine fehlgeschlagene Analyse darf den restlichen Poll-Zyklus nicht abbrechen —
