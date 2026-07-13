@@ -258,6 +258,22 @@ export default function RaceDetail() {
 
   useEffect(() => { fetchRace(); const t = setInterval(fetchRace, 6000); return () => clearInterval(t); }, [fetchRace]);
 
+  // ── Detailspalten (Sprints + Omnium-Vorpunkte) ────────────────────────────
+  // Standardmäßig aus: auf dem Handy passt der Zwischenstand damit ohne Scrollen
+  // aufs Display. Während des Rennens zählt die Gesamtpunktzahl — die einzelnen
+  // Sprintwertungen und die mitgeschleppten Omnium-Vorpunkte sind Nachschlagewerk.
+  // Der Zustand wird gemerkt, damit er nicht bei jedem Rennen neu gesetzt werden muss.
+  const [showDetails, setShowDetails] = useState<boolean>(() => {
+    try { return localStorage.getItem('scoreboardDetails') === '1'; } catch { return false; }
+  });
+  function toggleDetails() {
+    setShowDetails(v => {
+      const next = !v;
+      try { localStorage.setItem('scoreboardDetails', next ? '1' : '0'); } catch { /* egal */ }
+      return next;
+    });
+  }
+
   const ranks = race?.scoreboard ? computeRanks(race.scoreboard) : [];
 
   // Umbenennen-Modal — in allen drei Renn-Zweigen identisch, deshalb einmal
@@ -1039,21 +1055,28 @@ export default function RaceDetail() {
       {/* ── Scoreboard ── */}
       {race.scoreboard&&race.scoreboard.length>0&&(
         <div className="mb-4">
-          <div className="section-header" style={{marginBottom:8}}>
+          <div className="section-header" style={{marginBottom:8,gap:8,flexWrap:'wrap'}}>
             <h2 style={{margin:0}}>Zwischenstand</h2>
-            <span className="text-xs text-muted">aktualisiert alle 6s</span>
+            <div style={{display:'flex',alignItems:'center',gap:10}}>
+              <span className="text-xs text-muted">aktualisiert alle 6s</span>
+              {(race.sprints.length>0||hasOmnium)&&(
+                <button className="btn btn-ghost btn-sm" onClick={toggleDetails} style={{fontSize:12,padding:'5px 8px'}}>
+                  {showDetails?'Details ausblenden':'Details einblenden'}
+                </button>
+              )}
+            </div>
           </div>
           <div className="table-wrap" style={{overflowX:'auto'}}>
-            <table className="table" style={{minWidth:266+race.sprints.length*40+(hasOmnium?40:0)+(hasFinale?34:0)}}>
+            <table className="table" style={{minWidth:266+(showDetails?race.sprints.length*40+(hasOmnium?40:0):0)+(hasFinale?34:0)}}>
               <thead>
                 <tr>
                   <th style={{width:20}}>#</th>
                   <th style={{width:34}}>Nr.</th>
                   <th style={{minWidth:82}}>Name</th>
-                  {race.sprints.map(s=><th key={s.id} style={{textAlign:'center',width:40,fontSize:11}}>{s.isFinale?<span>S{s.number}<span style={{color:'var(--c-warning)'}}>★</span></span>:`S${s.number}`}</th>)}
+                  {showDetails&&race.sprints.map(s=><th key={s.id} style={{textAlign:'center',width:40,fontSize:11}}>{s.isFinale?<span>S{s.number}<span style={{color:'var(--c-warning)'}}>★</span></span>:`S${s.number}`}</th>)}
                   {hasFinale&&<th style={{textAlign:'center',width:34,fontSize:11}}>F.</th>}
                   <th style={{textAlign:'center',width:40}}>R.</th>
-                  {hasOmnium&&<th style={{textAlign:'center',width:40}}>Omn.</th>}
+                  {showDetails&&hasOmnium&&<th style={{textAlign:'center',width:40}}>Omn.</th>}
                   <th style={{textAlign:'right',width:46}}>Ges.</th>
                   {isAdmin&&<th style={{width:44}}></th>}
                 </tr>
@@ -1099,10 +1122,10 @@ export default function RaceDetail() {
                           </>
                         )}
                       </td>
-                      {race.sprints.map(sprint=>{const pts=sprintPts(sprint,s.teamId);return(<td key={sprint.id} style={{textAlign:'center'}}>{pts!==null?<span style={{fontWeight:pts>=5?700:pts>=3?600:400,color:pts>=5?'var(--c-success)':pts>=3?'var(--c-primary)':'var(--c-text)',fontSize:pts>=5?15:13}}>{pts}</span>:''}</td>);})}
+                      {showDetails&&race.sprints.map(sprint=>{const pts=sprintPts(sprint,s.teamId);return(<td key={sprint.id} style={{textAlign:'center'}}>{pts!==null?<span style={{fontWeight:pts>=5?700:pts>=3?600:400,color:pts>=5?'var(--c-success)':pts>=3?'var(--c-primary)':'var(--c-text)',fontSize:pts>=5?15:13}}>{pts}</span>:''}</td>);})}
                       {hasFinale&&<td style={{textAlign:'center',fontSize:12,color:'var(--c-text-muted)'}}>{s.finalePosition??''}</td>}
                       <td style={{textAlign:'center',color:s.lapBalance>0?'var(--c-success)':s.lapBalance<0?'var(--c-danger)':'',fontWeight:s.lapBalance!==0?600:400}}>{s.lapBalance!==0?(s.lapBalance>0?`+${s.lapBalance*20}`:`${s.lapBalance*20}`):''}</td>
-                      {hasOmnium&&<td style={{textAlign:'center'}}>{s.omniumPoints||''}</td>}
+                      {showDetails&&hasOmnium&&<td style={{textAlign:'center'}}>{s.omniumPoints||''}</td>}
                       <td style={{textAlign:'right',fontWeight:700,fontSize:15,color:s.isDsq?'var(--c-danger)':''}}>{s.isDsq?'DSQ':s.total}</td>
                       {isAdmin&&(
                         <td style={{textAlign:'center'}}>
