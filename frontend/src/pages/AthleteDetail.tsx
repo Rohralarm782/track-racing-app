@@ -109,7 +109,7 @@ export default function AthleteDetail() {
 
       <div className="flex-between mb-4">
         {editing ? (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 100px', gap: 10, flex: 1, marginRight: 12 }}>
+          <div className="grid-3" style={{ gap: 10, flex: 1, marginRight: 12 }}>
             <input className="form-input" value={vorname} onChange={e => setVorname(e.target.value)} placeholder="Vorname" autoFocus />
             <input className="form-input" value={nachname} onChange={e => setNachname(e.target.value)} placeholder="Nachname" />
             <input className="form-input" value={ak} onChange={e => setAk(e.target.value)} placeholder="AK" />
