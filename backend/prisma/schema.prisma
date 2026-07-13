@@ -313,14 +313,15 @@ model CommuniqueDocument {
   disciplineCode String?  // z.B. "MA", "PR", "OM", "TR", "VF" — aus Dateinamen erkannt
   phaseLabel     String?  // z.B. "1. VL", "A-Lauf", "Finale" — aus Dateinamen erkannt
 
-  // ─── MEV-Erkennung (nur bei STARTLISTE-Dokumenten, per Hintergrund-Analyse) ──
+// ─── MEV-Erkennung (nur bei STARTLISTE-Dokumenten, per Hintergrund-Analyse) ──
   mevNames      String[]  @default([]) // Namen erkannter MEV-Fahrer/Teams (nur Namen, für Abwärtskompatibilität)
-  mevRiders     Json      @default("[]") // [{ name, startNo, lauf, team, startPos }] — startPos: "ZG"/"GG" (Ziel-/Gegengerade, Einzelstart) bzw. "B"/"M" (Ballustrade/Messlinie, Massenstart)
-  hasLvColumn   Boolean?  // hat die Startliste eine LV-Spalte? null = vor Einführung analysiert (löst Neuanalyse aus). false = MEV-Fahrer nur über Startnummern-Roster erkennbar, siehe mevDetect.ts
+  mevRiders     Json      @default("[]") // [{ name, startNo, lauf, laufLabel, team, startPos }] — startPos: "ZG"/"GG" (Ziel-/Gegengerade, Einzelstart) bzw. "B"/"M" (Ballustrade/Messlinie, Massenstart); laufLabel: textueller Lauf wie "Platz 3/4" (Sprint-Finale)
+  hasLvColumn   Boolean?  // hat die Startliste eine LV-Spalte? false = MEV-Fahrer nur über Startnummern-Roster erkennbar, siehe mevDetect.ts
   heatCount     Int?      // Gesamtzahl unterschiedlicher Läufe (Einzelstart-Formate wie Zeitfahren/Verfolgung)
   starterCount  Int?      // Gesamtzahl Starter/Teams laut Tabelle
   roundCount    Int?      // Rundenzahl des Rennens (Massenstart-Formate); bei Ausscheidungsfahren = starterCount*2 statt Textfund (siehe mevDetect.ts)
   mevAnalyzedAt DateTime? // wann die MEV-Analyse zuletzt gelaufen ist (null = noch nicht analysiert)
+  mevVersion    Int       @default(0) // Stand des Analyse-Prompts (siehe MEV_ANALYSIS_VERSION in mevDetect.ts); kleiner = wird beim nächsten Poll neu analysiert
 
   scheduleEntry ScheduleEntry?
   // Reverse von linkedResultDocumentId (siehe ScheduleEntry) — falls DIESES
