@@ -241,6 +241,7 @@ h3 { font-size: 0.95rem; font-weight: 600; margin: 0; }
 
   .card { padding: 14px; }
   .modal { padding: 18px; }
-  .table th, .table td { padding: 8px 10px; }
+  .table th, .table td { padding: 8px 7px; }
+  .table .hide-mobile { display: none; }
   .table { font-size: 13px; }
 }
