@@ -122,6 +122,33 @@ export default function RaceDetail() {
   const [allAthletes, setAllAthletes] = useState<Athlete[]>([]);
   useEffect(() => { athletesApi.list().then(setAllAthletes).catch(() => {}); }, []);
 
+  // ── Rennen umbenennen ─────────────────────────────────────────────────────
+  const [renameOpen, setRenameOpen]     = useState(false);
+  const [renameValue, setRenameValue]   = useState('');
+  const [savingRename, setSavingRename] = useState(false);
+
+  function openRename() {
+    if (!race) return;
+    setRenameValue(race.name);
+    setRenameOpen(true);
+  }
+
+  async function saveRename() {
+    if (!id) return;
+    const name = renameValue.trim();
+    if (!name) return;
+    setSavingRename(true);
+    try {
+      await api.patch(`/api/races/${id}`, { name });
+      setRenameOpen(false);
+      await fetchRace();
+    } catch (e: any) {
+      setError(e.message ?? 'Umbenennen fehlgeschlagen');
+    } finally {
+      setSavingRename(false);
+    }
+  }
+
   async function deleteRace() {
     if (!race || !id) return;
     if (!confirm(`Rennen "${race.name}" wirklich löschen? Alle Ergebnisse gehen verloren.`)) return;
@@ -207,6 +234,32 @@ export default function RaceDetail() {
   }, [id]);
 
   useEffect(() => { fetchRace(); const t = setInterval(fetchRace, 6000); return () => clearInterval(t); }, [fetchRace]);
+
+  // Umbenennen-Modal — in allen drei Renn-Zweigen identisch, deshalb einmal
+  // als Variable und unten jeweils eingehängt.
+  const renameModal = renameOpen && (
+    <div className="modal-overlay" onClick={() => setRenameOpen(false)}>
+      <div className="modal" style={{maxWidth:400}} onClick={e => e.stopPropagation()}>
+        <p className="modal-title">Rennen umbenennen</p>
+        <div className="form-group">
+          <label className="form-label">Name</label>
+          <input
+            className="form-input"
+            value={renameValue}
+            autoFocus
+            onChange={e => setRenameValue(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') saveRename(); }}
+          />
+        </div>
+        <div className="flex-between mt-4">
+          <button className="btn btn-ghost" onClick={() => setRenameOpen(false)}>Abbrechen</button>
+          <button className="btn btn-primary" onClick={saveRename} disabled={savingRename || !renameValue.trim()}>
+            {savingRename ? 'Speichert…' : 'Speichern'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 
   // ── Punktefahren-Sprint-Eingabe ───────────────────────────────────────────
   function openNew() {
@@ -388,12 +441,14 @@ export default function RaceDetail() {
           {isAdmin && (
             <div className="page-actions">
               <ActionsMenu items={[
+                { label: 'Rennen umbenennen', icon: '✏️', onClick: openRename },
                 { label: 'Rennen löschen', icon: '🗑', danger: true, onClick: deleteRace },
               ]} />
             </div>
           )}
         </div>
         {error && <div className="alert alert-error mb-3">{error}</div>}
+        {renameModal}
         <VerfolgungsplanungView
           teams={teams}
           isAdmin={isAdmin}
@@ -441,6 +496,7 @@ export default function RaceDetail() {
                 </button>
               )}
               <ActionsMenu items={[
+                { label: 'Rennen umbenennen', icon: '✏️', onClick: openRename },
                 { label: 'Rennen löschen', icon: '🗑', danger: true, onClick: deleteRace },
               ]} />
             </div>
@@ -448,6 +504,7 @@ export default function RaceDetail() {
         </div>
 
         {error && <div className="alert alert-error mb-3">{error}</div>}
+        {renameModal}
 
         {/* ── Runden-Eingabepanel — immer offen, Klick = sofort speichern ── */}
         {isAdmin && !isLocked && !entryOpen && (
@@ -552,17 +609,17 @@ export default function RaceDetail() {
               <span className="text-xs text-muted">aktualisiert alle 6s</span>
             </div>
             <div className="table-wrap" style={{overflowX:'auto'}}>
-              <table className="table" style={{minWidth:320}}>
+              <table className="table" style={{minWidth:288+(schlusswertung?38:0)}}>
                 <thead>
                   <tr>
-                    <th style={{width:28}}>#</th>
-                    <th style={{width:40}}>Nr.</th>
-                    <th style={{minWidth:100}}>Name</th>
-                    <th style={{textAlign:'center',width:64,fontSize:11}}>Rundensiege</th>
-                    {schlusswertung&&<th style={{textAlign:'center',width:40,fontSize:11}} title="Schlusswertungsplatz">S.W.</th>}
-                    <th style={{textAlign:'center',width:52}}>R.</th>
-                    <th style={{textAlign:'right',width:52}}>Ges.</th>
-                    {isAdmin&&<th style={{width:60}}></th>}
+                    <th className="hide-mobile" style={{width:28}}>#</th>
+                    <th style={{width:38}}>Nr.</th>
+                    <th style={{minWidth:90}}>Name</th>
+                    <th style={{textAlign:'center',width:56,fontSize:11}}>Rundensiege</th>
+                    {schlusswertung&&<th style={{textAlign:'center',width:38,fontSize:11}} title="Schlusswertungsplatz">S.W.</th>}
+                    <th style={{textAlign:'center',width:44}}>R.</th>
+                    <th style={{textAlign:'right',width:48}}>Ges.</th>
+                    {isAdmin&&<th style={{width:48}}></th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -570,7 +627,7 @@ export default function RaceDetail() {
                     const rowStyle: React.CSSProperties = s.isDsq?{opacity:0.5,textDecoration:'line-through'}:s.color?{background:`${s.color}18`}:s.isFavorite?{background:'#fffbeb'}:{};
                     return(
                       <tr key={s.teamId} style={rowStyle}>
-                        <td style={{color:'var(--c-text-muted)',fontSize:12}}>{s.isDsq?'':idx+1}</td>
+                        <td className="hide-mobile" style={{color:'var(--c-text-muted)',fontSize:12}}>{s.isDsq?'':idx+1}</td>
                         <td className="num" style={{fontWeight:600}}>{s.teamNumber}</td>
                         <td>
                           <div style={{display:'flex',alignItems:'center',gap:4}}>
@@ -745,6 +802,7 @@ export default function RaceDetail() {
               ...(displayFormat!=='TEAM_PAIRS'
                 ? [{ label: 'Omnium-Vorpunkte', icon: '🏅', onClick: openOmnium }]
                 : []),
+              { label: 'Rennen umbenennen', icon: '✏️', onClick: openRename },
               { label: 'Rennen löschen', icon: '🗑', danger: true, onClick: deleteRace },
             ]} />
           </div>
@@ -752,6 +810,7 @@ export default function RaceDetail() {
       </div>
 
       {error && <div className="alert alert-error mb-3">{error}</div>}
+      {renameModal}
 
       {/* ── Madison-Teambuilder ── */}
       {/* Nur für Rennen mit echter Kategorie — bei neuen, direkt am Event
@@ -933,18 +992,18 @@ export default function RaceDetail() {
             <span className="text-xs text-muted">aktualisiert alle 6s</span>
           </div>
           <div className="table-wrap" style={{overflowX:'auto'}}>
-            <table className="table" style={{minWidth:220+race.sprints.length*48+(hasOmnium?48:0)+(hasFinale?36:0)}}>
+            <table className="table" style={{minWidth:220+race.sprints.length*42+(hasOmnium?42:0)+(hasFinale?34:0)}}>
               <thead>
                 <tr>
-                  <th style={{width:28}}>#</th>
-                  <th style={{width:40}}>Nr.</th>
-                  <th style={{minWidth:100}}>Name</th>
-                  {race.sprints.map(s=><th key={s.id} style={{textAlign:'center',width:48,fontSize:11}}>{s.isFinale?<span>S{s.number}<span style={{color:'var(--c-warning)'}}>★</span></span>:`S${s.number}`}</th>)}
-                  {hasFinale&&<th style={{textAlign:'center',width:36,fontSize:11}}>F.</th>}
-                  <th style={{textAlign:'center',width:52}}>R.</th>
-                  {hasOmnium&&<th style={{textAlign:'center',width:48}}>Omn.</th>}
-                  <th style={{textAlign:'right',width:52}}>Ges.</th>
-                  {isAdmin&&<th style={{width:60}}></th>}
+                  <th className="hide-mobile" style={{width:28}}>#</th>
+                  <th style={{width:38}}>Nr.</th>
+                  <th style={{minWidth:90}}>Name</th>
+                  {race.sprints.map(s=><th key={s.id} style={{textAlign:'center',width:42,fontSize:11}}>{s.isFinale?<span>S{s.number}<span style={{color:'var(--c-warning)'}}>★</span></span>:`S${s.number}`}</th>)}
+                  {hasFinale&&<th style={{textAlign:'center',width:34,fontSize:11}}>F.</th>}
+                  <th style={{textAlign:'center',width:44}}>R.</th>
+                  {hasOmnium&&<th style={{textAlign:'center',width:42}}>Omn.</th>}
+                  <th style={{textAlign:'right',width:48}}>Ges.</th>
+                  {isAdmin&&<th style={{width:48}}></th>}
                 </tr>
               </thead>
               <tbody>
@@ -952,7 +1011,7 @@ export default function RaceDetail() {
                   const rowStyle: React.CSSProperties = s.isDsq?{opacity:0.5,textDecoration:'line-through'}:s.color?{background:`${s.color}18`}:s.isFavorite?{background:'#fffbeb'}:{};
                   return(
                     <tr key={s.teamId} style={rowStyle}>
-                      <td style={{color:'var(--c-text-muted)',fontSize:12}}>{s.isDsq?'':idx+1}</td>
+                      <td className="hide-mobile" style={{color:'var(--c-text-muted)',fontSize:12}}>{s.isDsq?'':idx+1}</td>
                       <td className="num" style={{fontWeight:600}}>{s.teamNumber}</td>
                       <td>
                         {editingTeamId===s.teamId ? (
