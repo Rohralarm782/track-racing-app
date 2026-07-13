@@ -54,7 +54,7 @@ export default function AthletesPage() {
 
       {showNew && (
         <div className="card mb-3" style={{ borderColor: '#bfdbfe', background: '#f0f7ff' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+          <div className="grid-3">
             <div className="form-group" style={{ margin: 0 }}>
               <label className="form-label">Vorname</label>
               <input
