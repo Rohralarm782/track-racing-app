@@ -120,6 +120,9 @@ export type Discipline = 'SPRINT' | 'AUSDAUER' | 'ALLGEMEIN';
 export interface MevRider {
   name: string;
   lauf: number | null;
+  // Textueller Lauf, wenn die Lauf-Spalte keine Zahl enthält — z.B. "Platz 3/4"
+  // im Sprint-Finale. Entweder lauf ODER laufLabel ist gesetzt, nie beides.
+  laufLabel?: string | null;
   team: string | null;
   // Startposition auf der Bahn: ZG/GG = Ziel-/Gegengerade (Einzelstart),
   // B/M = Ballustrade/Messlinie (Massenstart). Fehlt bei Dokumenten, die vor
