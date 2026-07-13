@@ -42,6 +42,64 @@ interface Race {
   athletes?: Array<{ id: string; athleteId: string; timeMs: number | null; athlete: Athlete }>;
 }
 
+// ── Überlaufmenü (⋮) ──────────────────────────────────────────────────────────
+// Sammelt alle Aktionen, die NICHT während des laufenden Rennens gebraucht
+// werden (Omnium-Vorpunkte, Rennen löschen). Zweck: der destruktive
+// Löschen-Knopf liegt auf dem Handy nicht mehr direkt neben "+ Sprint".
+interface MenuItem { label: string; icon?: string; danger?: boolean; onClick: () => void; }
+
+function ActionsMenu({ items }: { items: MenuItem[] }) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e: MouseEvent | TouchEvent) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    function onEsc(e: KeyboardEvent) { if (e.key === 'Escape') setOpen(false); }
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('touchstart', onDown);
+    document.addEventListener('keydown', onEsc);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('touchstart', onDown);
+      document.removeEventListener('keydown', onEsc);
+    };
+  }, [open]);
+
+  if (items.length === 0) return null;
+
+  return (
+    <div className="menu-wrap" ref={wrapRef}>
+      <button
+        className="btn btn-secondary btn-icon"
+        aria-label="Weitere Aktionen"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen(o => !o)}
+      >⋮</button>
+      {open && (
+        <div className="menu" role="menu">
+          {items.map((it, i) => (
+            <div key={it.label}>
+              {it.danger && i > 0 && <div className="menu-sep" />}
+              <button
+                role="menuitem"
+                className={`menu-item${it.danger ? ' menu-item-danger' : ''}`}
+                onClick={() => { setOpen(false); it.onClick(); }}
+              >
+                {it.icon && <span aria-hidden="true">{it.icon}</span>}
+                {it.label}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Nur für Punktefahren/Omnium-Anzeige in der Tabelle
 const SPRINT_PTS: Record<number, number> = { 1: 5, 2: 3, 3: 2, 4: 1 };
 function sprintPts(sprint: Sprint, teamId: string): number|null {
@@ -328,7 +386,11 @@ export default function RaceDetail() {
             </p>
           </div>
           {isAdmin && (
-            <button className="btn btn-danger btn-sm" onClick={deleteRace}>Rennen löschen</button>
+            <div className="page-actions">
+              <ActionsMenu items={[
+                { label: 'Rennen löschen', icon: '🗑', danger: true, onClick: deleteRace },
+              ]} />
+            </div>
           )}
         </div>
         {error && <div className="alert alert-error mb-3">{error}</div>}
@@ -372,13 +434,15 @@ export default function RaceDetail() {
             </p>
           </div>
           {isAdmin && (
-            <div style={{display:'flex',gap:8}}>
+            <div className="page-actions">
               {!isLocked && !entryOpen && !schlusswertung && (
                 <button className="btn btn-secondary" onClick={openTempoSchlusswertung} style={{borderColor:'#f59e0b',color:'#b45309'}}>
                   Schlusswertung ★
                 </button>
               )}
-              <button className="btn btn-danger btn-sm" onClick={deleteRace}>Rennen löschen</button>
+              <ActionsMenu items={[
+                { label: 'Rennen löschen', icon: '🗑', danger: true, onClick: deleteRace },
+              ]} />
             </div>
           )}
         </div>
@@ -670,17 +734,19 @@ export default function RaceDetail() {
           </p>
         </div>
         {isAdmin && (
-          <div style={{display:'flex',gap:8}}>
-            {displayFormat==='TEAM_PAIRS' && !showTeamBuilder && (
-              <button className="btn btn-secondary btn-sm" onClick={()=>setShowTeamBuilder(true)}>
-                🔀 Teams aufbauen
-              </button>
+          <div className="page-actions">
+            {!entryOpen && !showTeamBuilder && (
+              <button className="btn btn-primary" onClick={openNew}>+ Sprint {nextNum}</button>
             )}
-            {displayFormat!=='TEAM_PAIRS' && (
-              <button className="btn btn-secondary btn-sm" onClick={openOmnium}>Omnium-Vorpunkte</button>
-            )}
-            {!entryOpen && !showTeamBuilder && <button className="btn btn-primary" onClick={openNew}>+ Sprint {nextNum}</button>}
-            <button className="btn btn-danger btn-sm" onClick={deleteRace}>Rennen löschen</button>
+            <ActionsMenu items={[
+              ...(displayFormat==='TEAM_PAIRS' && !showTeamBuilder
+                ? [{ label: 'Teams aufbauen', icon: '🔀', onClick: ()=>setShowTeamBuilder(true) }]
+                : []),
+              ...(displayFormat!=='TEAM_PAIRS'
+                ? [{ label: 'Omnium-Vorpunkte', icon: '🏅', onClick: openOmnium }]
+                : []),
+              { label: 'Rennen löschen', icon: '🗑', danger: true, onClick: deleteRace },
+            ]} />
           </div>
         )}
       </div>
