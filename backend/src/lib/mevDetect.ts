@@ -16,12 +16,13 @@ const START_POSITIONS = ['ZG', 'GG', 'B', 'M'];
  * automatisch neu. Bei JEDER inhaltlichen Änderung an Prompt oder Auswertung
  * hochzählen — sonst behalten bereits analysierte Dokumente ihr altes Ergebnis.
  */
-export const MEV_ANALYSIS_VERSION = 3;
+export const MEV_ANALYSIS_VERSION = 4;
 
 export interface MevRider {
   name: string;
   lauf: number | null;
   laufLabel: string | null;
+  startSlot: number | null;
   team: string | null;
   startNo: number | null;
   startPos: string | null;
@@ -142,7 +143,7 @@ Prüfe außerdem:
 
 Gib NUR JSON zurück (kein Markdown, kein Text davor/danach):
 
-{"hasLvColumn":true,"mevRiders":[{"name":"Vorname Nachname","startNo":88,"lauf":9,"laufLabel":null,"team":"${lv} 2","startPos":"ZG"}],"heatCount":13,"starterCount":24,"roundCount":40}
+{"hasLvColumn":true,"mevRiders":[{"name":"Vorname Nachname","startNo":88,"lauf":9,"laufLabel":null,"team":"${lv} 2","startPos":"B","startSlot":10}],"heatCount":13,"starterCount":24,"roundCount":40}
 
 Regeln:
 - hasLvColumn: true, wenn die Tabelle eine LV-/Landesverband-Spalte hat, sonst false
@@ -158,6 +159,7 @@ Regeln:
   * Einzelstart-Formate (Zeitfahren, Einzel-/Mannschaftsverfolgung — zwei Starter je Lauf): "ZG" (Zielgerade) oder "GG" (Gegengerade). Die Zuordnung steht NICHT in der Tabelle, sondern in einem Hinweissatz unter der Tabelle, z.B. "Die erstgenannte Fahrerin startet von der Zielgeraden". Diesen Satz wörtlich auswerten und auf die Zeilen-Reihenfolge INNERHALB des Laufs anwenden: bei dieser Formulierung startet der im Lauf zuerst genannte Fahrer von "ZG", der zweite von "GG". Steht dort stattdessen "Gegengeraden", gilt es genau umgekehrt. Fehlt der Hinweissatz, ist die Position unbekannt -> null.
   * Massenstart-Formate (Punktefahren, Madison, Scratch, Ausscheidungsfahren): "B" (Ballustrade/Balustrade) oder "M" (Messlinie/Mess-linie). Die Startaufstellung besteht dort aus ZWEI nebeneinander oder untereinander stehenden Tabellen bzw. einer Spalte mit genau diesen Überschriften — maßgeblich ist, in welcher der beiden der Fahrer steht. Die zweite Tabelle kann auch "Cote d'Azur" überschrieben sein — das ist die Messlinien-Gruppe -> "M".
   * In allen anderen Fällen: null
+- startSlot: NUR bei Massenstart (startPos "B" oder "M"): die Position des Fahrers INNERHALB seiner Startreihe, also die 1-basierte Zeilennummer in genau der Tabelle, in der er steht (erste Zeile der Ballustrade-Tabelle = 1, zweite = 2, usw.; die Messlinien-/Cote-d'Azur-Tabelle wird separat ab 1 gezählt). Leerzeilen am Tabellenende nicht mitzählen. Gibt es eine eigene, GEFÜLLTE Positions-Spalte, deren Wert verwenden. Bei Einzelstart (startPos "ZG"/"GG") und wenn startPos null ist: immer null.
 - heatCount: Gesamtzahl unterschiedlicher Werte in der Lauf-Spalte der GESAMTEN Tabelle (nicht nur bei "${lv}"-Zeilen) — Text-Werte wie "Platz 1/2" zählen genauso mit wie Zahlen. null, falls die Tabelle keine Lauf-Spalte hat.
 - starterCount: Gesamtzahl der Fahrer/Teams (Zeilen) in der Tabelle, unabhängig von einer Lauf-Spalte
 - roundCount: die im Dokument genannte Rundenzahl. Aktiv danach suchen (siehe oben) — nur null zurückgeben, wenn wirklich nirgends im Dokument eine Rundenzahl steht
@@ -188,6 +190,7 @@ Regeln:
             // Nur die vier bekannten Positionen zulassen — ein halluziniertes
             // Freitext-Feld würde sonst ungeprüft in der Zeitplan-Zeile landen.
             startPos: START_POSITIONS.includes(r.startPos) ? r.startPos : null,
+            startSlot: typeof r.startSlot === 'number' ? r.startSlot : null,
           }))
       : [];
     const hasLvColumn = typeof parsed?.hasLvColumn === 'boolean' ? parsed.hasLvColumn : null;
@@ -216,6 +219,15 @@ Regeln:
       if (r.lauf != null && heatCount != null && (r.lauf < 1 || r.lauf > heatCount)) {
         r.lauf = null;
       }
+    }
+
+    // startSlot ist nur im Massenstart definiert (Platz in der Ballustrade- bzw.
+    // Messlinien-Reihe) und kann nie größer als das Starterfeld sein.
+    for (const r of mevRiders) {
+      const massStart = r.startPos === 'B' || r.startPos === 'M';
+      const outOfRange = r.startSlot != null
+        && (r.startSlot < 1 || (starterCount != null && r.startSlot > starterCount));
+      if (!massStart || outOfRange) r.startSlot = null;
     }
 
     // Ausscheidungsfahren: die Rundenzahl steht praktisch nie im Dokument,
