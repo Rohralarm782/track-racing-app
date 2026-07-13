@@ -255,7 +255,7 @@ export default function TeamBulkEntry({ categoryId, format, existingTeams, onSuc
       )}
 
       {/* ── Hauptformular ────────────────────────────────────────────────── */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, alignItems: 'start' }}>
+      <div className="grid-split" style={{ gap: 16 }}>
 
         {/* Linke Spalte: Eingabe */}
         <div>
