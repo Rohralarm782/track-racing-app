@@ -233,6 +233,22 @@ function rankDocs(docs: MatchableDoc[], docType: string): Map<string, number> {
   return rank;
 }
 
+// Harter Ausschluss statt bloßem Punktabzug: Steht sowohl beim Zeitplan-Eintrag
+// als auch beim Dokument ein EINDEUTIGES Disziplin-Kürzel fest und widersprechen
+// sich die beiden, kann das Dokument unmöglich zu diesem Rennen gehören.
+//
+// Ohne diesen Ausschluss war die falsche Disziplin nur ein fehlender Bonus (+1),
+// kein Hindernis: Ein Dokument mit passender Phase (+2) konnte ein Rennen einer
+// ganz anderen Disziplin gewinnen, sobald das eigentlich richtige Dokument noch
+// nicht eingetroffen war. Real aufgetreten bei "U17w Punktefahren Finale", dem
+// "K160B - U17w Ansetz Finale 500m.pdf" zugeordnet wurde ("finale" ist Teilstring
+// von "finale 500m") — inklusive Läufe-Zahl und MEV-Namen aus dem falschen PDF.
+// Lieber gar keine Verknüpfung als eine falsche: eine fehlende fällt sofort auf,
+// eine falsche sieht aus wie eine richtige.
+function isDisciplineConflict(entryCode: string | null, docCode: string | null): boolean {
+  return entryCode !== null && docCode !== null && entryCode !== docCode;
+}
+
 function findBestMatch(
   entry: MatchableEntry,
   docs: MatchableDoc[],
@@ -240,12 +256,16 @@ function findBestMatch(
   docRank: Map<string, number>,
   docType: string,
 ): MatchableDoc | null {
-  const candidates = docs.filter(d => d.docType === docType && d.ak === entry.ak);
+  const entryCode = inferCodeForEntry(entry.disciplineLabel);
+  const candidates = docs.filter(d =>
+    d.docType === docType
+    && d.ak === entry.ak
+    && !isDisciplineConflict(entryCode, d.disciplineCode)
+  );
   if (candidates.length === 0) return null;
 
   const disciplineNorm = normalize(entry.disciplineLabel);
   const phaseNorm = entry.phase ? normalize(entry.phase) : null;
-  const entryCode = inferCodeForEntry(entry.disciplineLabel);
 
   const scored = candidates
     .map(d => {
@@ -287,15 +307,37 @@ export async function autoMatch(eventId: string) {
     prisma.communiqueDocument.findMany({ where: { sourceId: source.id } }),
   ]);
 
-  // Ränge werden über ALLE Einträge berechnet (nicht nur die noch offenen),
-  // damit die Reihenfolge stabil bleibt, unabhängig davon, was bereits
-  // manuell oder in einem früheren Lauf verknüpft wurde.
-  const entryRank = rankEntries(allRaceEntries);
-
   const passes: Array<{ docType: 'STARTLISTE' | 'ERGEBNIS'; field: 'linkedDocumentId' | 'linkedResultDocumentId' }> = [
     { docType: 'STARTLISTE', field: 'linkedDocumentId' },
     { docType: 'ERGEBNIS', field: 'linkedResultDocumentId' },
   ];
+
+  // ── Selbstheilung: widersprüchliche Verknüpfungen lösen ───────────────────
+  // Die Matching-Durchläufe unten fassen bestehende Verknüpfungen nie an
+  // (openEntries = nur unverknüpfte Einträge) — eine einmal gesetzte falsche
+  // Zuordnung wäre also dauerhaft, selbst wenn das richtige Dokument später
+  // eintrifft. Deshalb vorab genau EINE Sorte Link auflösen: solche mit
+  // Disziplin-Widerspruch (siehe isDisciplineConflict). Das ist ein objektiver
+  // Fehler, nie eine bewusste Entscheidung — eine manuell gesetzte Verknüpfung
+  // mit passender Disziplin bleibt dagegen unangetastet.
+  const docById = new Map(docs.map(d => [d.id, d]));
+  for (const entry of allRaceEntries) {
+    const entryCode = inferCodeForEntry(entry.disciplineLabel);
+    for (const { field } of passes) {
+      const linkedId = entry[field];
+      if (!linkedId) continue;
+      const doc = docById.get(linkedId);
+      if (!doc || !isDisciplineConflict(entryCode, doc.disciplineCode)) continue;
+      await prisma.scheduleEntry.update({ where: { id: entry.id }, data: { [field]: null } as any });
+      (entry as any)[field] = null; // lokale Kopie mitziehen, damit der Eintrag unten als "offen" gilt
+      console.log(`Zeitplan-Matching: Falschverknüpfung gelöst — "${entry.disciplineLabel} ${entry.phase ?? ''}" (${entry.ak}) ≠ ${doc.fileName}`);
+    }
+  }
+
+  // Ränge werden über ALLE Einträge berechnet (nicht nur die noch offenen),
+  // damit die Reihenfolge stabil bleibt, unabhängig davon, was bereits
+  // manuell oder in einem früheren Lauf verknüpft wurde.
+  const entryRank = rankEntries(allRaceEntries);
 
   for (const { docType, field } of passes) {
     const alreadyLinked = new Set(
