@@ -798,41 +798,68 @@ export default function RaceDetail() {
   }
 
   // ── PUNKTEFAHREN / MADISON / OMNIUM ───────────────────────────────────────
-  return (
-    <div className="page container">
-      <div className="breadcrumb">
-        <Link to="/">Veranstaltungen</Link><span>›</span>
-        <Link to={`/events/${category.event.id}`}>{category.event.name}</Link><span>›</span>
-        {category.id ? <><Link to={`/categories/${category.id}`}>{category.name}</Link><span>›</span></> : <><span>{category.name}</span><span>›</span></>}
-        {race.name}
-      </div>
+  const raceMenuItems: MenuItem[] = [
+    ...(displayFormat==='TEAM_PAIRS' && !showTeamBuilder
+      ? [{ label: 'Teams aufbauen', icon: '🔀', onClick: ()=>setShowTeamBuilder(true) }]
+      : []),
+    ...(displayFormat!=='TEAM_PAIRS'
+      ? [{ label: 'Omnium-Vorpunkte', icon: '🏅', onClick: openOmnium }]
+      : []),
+    { label: 'Rennen umbenennen', icon: '✏️', onClick: openRename },
+    { label: 'Rennen löschen', icon: '🗑', danger: true, onClick: deleteRace },
+  ];
 
-      <div className="flex-between mb-4">
-        <div>
-          <h1>{race.name}</h1>
-          <p className="text-sm text-muted" style={{margin:'2px 0 0'}}>
-            {category.name} · {race.sprints.length} Sprints
-            {race.plannedSprints!=null && ` (${race.plannedSprints} geplant)`}
-          </p>
+  return (
+    // Während der Sprint-Eingabe fährt der Seitenkopf zusammen (siehe unten):
+    // .page-tight kürzt den oberen Seitenabstand, Breadcrumb und großer Titel
+    // entfallen. So beginnt das Eingabefeld ohne Scrollen direkt unter dem
+    // App-Header.
+    <div className={`page container${entryOpen ? ' page-tight' : ''}`}>
+      {!entryOpen && (
+        <div className="breadcrumb">
+          <Link to="/">Veranstaltungen</Link><span>›</span>
+          <Link to={`/events/${category.event.id}`}>{category.event.name}</Link><span>›</span>
+          {category.id ? <><Link to={`/categories/${category.id}`}>{category.name}</Link><span>›</span></> : <><span>{category.name}</span><span>›</span></>}
+          {race.name}
         </div>
-        {isAdmin && (
-          <div className="page-actions">
-            {!entryOpen && !showTeamBuilder && (
-              <button className="btn btn-primary" onClick={openNew}>+ Sprint {nextNum}</button>
-            )}
-            <ActionsMenu items={[
-              ...(displayFormat==='TEAM_PAIRS' && !showTeamBuilder
-                ? [{ label: 'Teams aufbauen', icon: '🔀', onClick: ()=>setShowTeamBuilder(true) }]
-                : []),
-              ...(displayFormat!=='TEAM_PAIRS'
-                ? [{ label: 'Omnium-Vorpunkte', icon: '🏅', onClick: openOmnium }]
-                : []),
-              { label: 'Rennen umbenennen', icon: '✏️', onClick: openRename },
-              { label: 'Rennen löschen', icon: '🗑', danger: true, onClick: deleteRace },
-            ]} />
+      )}
+
+      {entryOpen ? (
+        /* Kompaktkopf: eine Zeile, Titel gekürzt statt umgebrochen */
+        <div className="flex-between mb-3" style={{flexWrap:'nowrap',gap:8}}>
+          <div style={{minWidth:0}}>
+            <div style={{fontSize:15,fontWeight:600,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+              {race.name}
+            </div>
+            <div className="text-xs text-muted" style={{whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+              {category.name} · {race.sprints.length} Sprints
+            </div>
           </div>
-        )}
-      </div>
+          {isAdmin && (
+            <div className="page-actions" style={{width:'auto',flex:'0 0 auto'}}>
+              <ActionsMenu items={raceMenuItems} />
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="flex-between mb-4">
+          <div>
+            <h1>{race.name}</h1>
+            <p className="text-sm text-muted" style={{margin:'2px 0 0'}}>
+              {category.name} · {race.sprints.length} Sprints
+              {race.plannedSprints!=null && ` (${race.plannedSprints} geplant)`}
+            </p>
+          </div>
+          {isAdmin && (
+            <div className="page-actions">
+              {!showTeamBuilder && (
+                <button className="btn btn-primary" onClick={openNew}>+ Sprint {nextNum}</button>
+              )}
+              <ActionsMenu items={raceMenuItems} />
+            </div>
+          )}
+        </div>
+      )}
 
       {error && <div className="alert alert-error mb-3">{error}</div>}
       {renameModal}
