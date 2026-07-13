@@ -141,6 +141,29 @@ h3 { font-size: 0.95rem; font-weight: 600; margin: 0; }
 }
 .modal-title { font-size: 1.05rem; font-weight: 600; margin: 0 0 18px; }
 
+/* ── Aktionsleiste + Überlaufmenü ────────────────── */
+.page-actions { display: flex; align-items: center; gap: 8px; }
+.btn-icon { padding: 8px 11px; font-size: 15px; line-height: 1; }
+.menu-wrap { position: relative; }
+.menu {
+  position: absolute; right: 0; top: calc(100% + 6px);
+  min-width: 210px; z-index: 50;
+  background: var(--c-white); border: 1px solid var(--c-border);
+  border-radius: 10px; padding: 4px;
+  box-shadow: 0 10px 26px rgba(0,0,0,0.13);
+}
+.menu-item {
+  display: flex; align-items: center; gap: 9px;
+  width: 100%; text-align: left;
+  padding: 11px 12px; border: none; background: transparent;
+  border-radius: 7px; font-size: 14px; font-family: inherit;
+  color: var(--c-text); cursor: pointer;
+}
+.menu-item:hover { background: var(--c-bg); }
+.menu-item-danger { color: var(--c-danger); }
+.menu-item-danger:hover { background: #fef2f2; }
+.menu-sep { height: 1px; background: var(--c-border); margin: 4px 0; }
+
 /* ── Breadcrumb ──────────────────────────────────── */
 .breadcrumb { font-size: 13px; color: var(--c-text-muted); margin-bottom: 16px; }
 .breadcrumb a { color: var(--c-text-muted); }
@@ -209,6 +232,12 @@ h3 { font-size: 0.95rem; font-weight: 600; margin: 0; }
   .header-brand { font-size: 21px; }
   .brand-text, .nav-text { display: none; }
   .header-nav { gap: 0; }
+
+  .flex-between { flex-wrap: wrap; gap: 10px; }
+  .page-actions { width: 100%; }
+  .page-actions > .btn { flex: 1; min-height: 40px; justify-content: center; }
+  .page-actions > .menu-wrap { flex: 0 0 auto; }
+  .page-actions .btn-icon { width: 44px; min-height: 40px; justify-content: center; }
 
   .card { padding: 14px; }
   .modal { padding: 18px; }
