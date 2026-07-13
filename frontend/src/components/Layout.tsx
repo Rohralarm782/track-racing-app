@@ -55,22 +55,32 @@ export default function Layout() {
       {/* ── Header ── */}
       <header className="header">
         <div className="header-inner">
-          <Link to="/" className="header-brand">🚴 Bahnrad-Tracker</Link>
-          <Link to="/pursuit" className="btn btn-ghost btn-sm">Verfolgung</Link>
-          <Link to="/athletes" className="btn btn-ghost btn-sm">Sportler</Link>
-          {token && <Link to="/settings" className="btn btn-ghost btn-sm">⚙️ Einstellungen</Link>}
-          <div className="flex-center gap-2">
+          <Link to="/" className="header-brand" aria-label="Startseite">
+            <span>🚴</span>
+            <span className="brand-text">Bahnrad-Tracker</span>
+          </Link>
+          <nav className="header-nav">
+            <Link to="/pursuit" className="btn btn-ghost btn-sm" title="Verfolgung">
+              <span>⏱</span><span className="nav-text">Verfolgung</span>
+            </Link>
+            <Link to="/athletes" className="btn btn-ghost btn-sm" title="Sportler">
+              <span>👤</span><span className="nav-text">Sportler</span>
+            </Link>
+            {token && (
+              <Link to="/settings" className="btn btn-ghost btn-sm" title="Einstellungen">
+                <span>⚙️</span><span className="nav-text">Einstellungen</span>
+              </Link>
+            )}
             {token ? (
-              <>
-                <span className="badge badge-green">Admin</span>
-                <button className="btn btn-secondary btn-sm" onClick={logout}>Abmelden</button>
-              </>
+              <button className="btn btn-secondary btn-sm" onClick={logout} title="Abmelden">
+                <span>🚪</span><span className="nav-text">Abmelden</span>
+              </button>
             ) : (
               <button className="btn btn-secondary btn-sm" onClick={() => setShowLogin(true)}>
                 Admin
               </button>
             )}
-          </div>
+          </nav>
         </div>
       </header>
 
