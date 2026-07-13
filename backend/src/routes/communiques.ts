@@ -7,7 +7,7 @@ import { listShareFiles, fetchShareFile } from '../lib/webdav';
 import { classifyFileName } from '../lib/classify';
 import { getCachedFile, setCachedFile } from '../lib/fileCache';
 import { notifyNewDocuments } from '../lib/push';
-import { analyzeMevForDocument } from '../lib/mevDetect';
+import { analyzeMevForDocument, needsStartPosBackfill } from '../lib/mevDetect';
 import { autoImportScheduleFromDocument, autoMatch } from '../lib/scheduleImport';
 
 const router = Router();
@@ -259,9 +259,17 @@ export async function pollSource(sourceId: string, shareToken: string, eventId: 
   // Anfragen zu treffen — bei der Erstverbindung einer Quelle mit vielen
   // Dokumenten dauert ein Poll-Zyklus dadurch entsprechend länger, blockiert
   // aber keine anderen Quellen (siehe index.ts).
-  const unanalyzed = await prisma.communiqueDocument.findMany({
-    where: { sourceId, docType: 'STARTLISTE', starterCount: null },
+  // Zusätzlich zum starterCount-Trigger: Dokumente, die noch VOR Einführung der
+  // Startpositions-Erkennung analysiert wurden, haben MEV-Fahrer ohne startPos-
+  // Feld — die werden einmalig nachanalysiert (siehe needsStartPosBackfill).
+  // Die Json-Spalte mevRiders lässt sich nicht sinnvoll in der DB filtern,
+  // deshalb alle Startlisten laden und in JS aussieben.
+  const startlists = await prisma.communiqueDocument.findMany({
+    where: { sourceId, docType: 'STARTLISTE' },
   });
+  const unanalyzed = startlists.filter(
+    d => d.starterCount === null || needsStartPosBackfill(d.mevRiders),
+  );
   for (const doc of unanalyzed) {
     await analyzeMevForDocument(doc, shareToken);
   }
