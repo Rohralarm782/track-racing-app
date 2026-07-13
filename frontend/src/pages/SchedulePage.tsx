@@ -48,6 +48,18 @@ function agoLabel(iso: string): string {
 // einzelner Vornamen — deshalb Team-Namen bevorzugen, sobald mindestens ein
 // Fahrer ein team-Feld hat. Pro (team, lauf) nur einmal anzeigen, auch wenn
 // mehrere MEV-Fahrer im selben Team stehen.
+// Lauf-Nummer und Startposition (falls vorhanden) stehen zusammen in EINER
+// Klammer hinter dem Namen: "Carlotta (Lauf 11, ZG)" bzw. bei Massenstart, wo
+// es keine Läufe gibt, nur "Dorothea (M)".
+//   ZG/GG = Ziel-/Gegengerade (Einzelstart: Zeitfahren, Verfolgung)
+//   B/M   = Ballustrade/Messlinie (Massenstart: Punktefahren, Madison, ...)
+function riderDetail(r: MevRider): string {
+  const bits: string[] = [];
+  if (r.lauf != null) bits.push(`Lauf ${r.lauf}`);
+  if (r.startPos) bits.push(r.startPos);
+  return bits.length > 0 ? ` (${bits.join(', ')})` : '';
+}
+
 function mevSummary(riders: MevRider[]): string | null {
   if (!riders || riders.length === 0) return null;
 
@@ -62,13 +74,10 @@ function mevSummary(riders: MevRider[]): string | null {
       const key = `${label}::${r.lauf ?? ''}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      parts.push(r.lauf != null ? `${label} (Lauf ${r.lauf})` : label);
+      parts.push(`${label}${riderDetail(r)}`);
     }
   } else {
-    parts = riders.map(r => {
-      const first = r.name.trim().split(/\s+/)[0];
-      return r.lauf != null ? `${first} (Lauf ${r.lauf})` : first;
-    });
+    parts = riders.map(r => `${r.name.trim().split(/\s+/)[0]}${riderDetail(r)}`);
   }
 
   const joined = parts.join(', ');
