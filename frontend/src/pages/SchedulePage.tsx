@@ -50,7 +50,8 @@ function agoLabel(iso: string): string {
 // mehrere MEV-Fahrer im selben Team stehen.
 // Lauf und Startposition (falls vorhanden) stehen zusammen in EINER Klammer
 // hinter dem Namen: "Carlotta (Lauf 11, ZG)", bei Massenstart ohne Läufe nur
-// "Dorothea (M)", im Sprint-Finale "Finn-Liam (Platz 3/4)".
+// "Dorothea (B 10)" (Zehnte an der Ballustrade), im Sprint-Finale
+// "Finn-Liam (Platz 3/4)".
 //   ZG/GG = Ziel-/Gegengerade (Einzelstart: Zeitfahren, Verfolgung)
 //   B/M   = Ballustrade/Messlinie (Massenstart: Punktefahren, Madison, ...)
 // Die Lauf-Spalte enthält nicht immer eine Zahl — bei Sprint-Finals steht dort
@@ -60,7 +61,9 @@ function riderDetail(r: MevRider): string {
   const bits: string[] = [];
   if (r.lauf != null) bits.push(`Lauf ${r.lauf}`);
   else if (r.laufLabel) bits.push(r.laufLabel);
-  if (r.startPos) bits.push(r.startPos);
+  // Im Massenstart zusätzlich der Platz in der Reihe: "B 10" = Zehnter an der
+  // Ballustrade. Im Einzelstart gibt es keinen Platz, dort bleibt es bei "ZG"/"GG".
+  if (r.startPos) bits.push(r.startSlot != null ? `${r.startPos} ${r.startSlot}` : r.startPos);
   return bits.length > 0 ? ` (${bits.join(', ')})` : '';
 }
 
