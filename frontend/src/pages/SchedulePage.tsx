@@ -512,6 +512,7 @@ export default function SchedulePage() {
                         <span style={{
                           marginLeft: 6, fontSize: 11, fontWeight: 500, color: 'var(--c-text-muted)',
                           background: 'var(--c-bg-muted, #f3f4f6)', padding: '1px 7px', borderRadius: 10,
+                          whiteSpace: 'nowrap',
                         }}>
                           {heatCount} {heatCount === 1 ? 'Lauf' : 'Läufe'}
                         </span>
@@ -527,35 +528,40 @@ export default function SchedulePage() {
                       )}
                     </div>
                     {entry.type === 'RACE' && (
-                      <div className="text-xs text-muted" style={{ marginTop: 2 }}>
+                      <div
+                        className="text-xs text-muted"
+                        style={{ marginTop: 3, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '4px 10px' }}
+                      >
                         {entry.linkedDocument ? (
                           <span
-                            style={{ color: 'var(--c-primary)', cursor: 'pointer' }}
+                            style={{ color: 'var(--c-primary)', cursor: 'pointer', whiteSpace: 'nowrap' }}
                             onClick={() => setViewingDocId(entry.linkedDocument!.id)}
                           >
                             📄 Kommuniqué öffnen
                           </span>
                         ) : (
-                          <span>kein Kommuniqué zugeordnet</span>
-                        )}
-                        {mev && (
-                          <span style={{
-                            marginLeft: 6, fontSize: 11.5, fontWeight: 600, color: '#b45309',
-                            background: '#fef3c7', padding: '2px 8px', borderRadius: 10,
-                          }}>
-                            MEV: {mev}
-                          </span>
+                          <span style={{ whiteSpace: 'nowrap' }}>kein Kommuniqué zugeordnet</span>
                         )}
                         {entry.linkedResultDocument && (
-                          <>
-                            {' · '}
-                            <span
-                              style={{ color: 'var(--c-success, #16a34a)', cursor: 'pointer' }}
-                              onClick={() => setViewingDocId(entry.linkedResultDocument!.id)}
-                            >
-                              🏁 Ergebnis öffnen
-                            </span>
-                          </>
+                          <span
+                            style={{ color: 'var(--c-success, #16a34a)', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                            onClick={() => setViewingDocId(entry.linkedResultDocument!.id)}
+                          >
+                            🏁 Ergebnis öffnen
+                          </span>
+                        )}
+                        {mev && (
+                          <span
+                            title={`MEV: ${mev}`}
+                            style={{
+                              flexBasis: '100%', maxWidth: '100%',
+                              fontSize: 11.5, fontWeight: 600, color: '#b45309',
+                              background: '#fef3c7', padding: '2px 8px', borderRadius: 8,
+                              lineHeight: 1.45, marginTop: 1,
+                            }}
+                          >
+                            MEV: {mev}
+                          </span>
                         )}
                       </div>
                     )}
