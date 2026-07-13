@@ -417,7 +417,7 @@ export default function CategoryDetail() {
           {showNewRace && (
             <div className="card mb-3" style={{ borderColor: '#bfdbfe', background: '#f0f7ff' }}>
               {raceError && <div className="alert alert-error">{raceError}</div>}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+              <div className="grid-3">
                 <div className="form-group" style={{ margin: 0 }}>
                   <label className="form-label">Name</label>
                   <input className="form-input" type="text" value={raceName}
