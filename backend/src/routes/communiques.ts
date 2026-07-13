@@ -7,7 +7,7 @@ import { listShareFiles, fetchShareFile } from '../lib/webdav';
 import { classifyFileName } from '../lib/classify';
 import { getCachedFile, setCachedFile } from '../lib/fileCache';
 import { notifyNewDocuments } from '../lib/push';
-import { analyzeMevForDocument, needsStartPosBackfill } from '../lib/mevDetect';
+import { analyzeMevForDocument, needsRosterRecheck } from '../lib/mevDetect';
 import { autoImportScheduleFromDocument, autoMatch } from '../lib/scheduleImport';
 
 const router = Router();
@@ -259,26 +259,36 @@ export async function pollSource(sourceId: string, shareToken: string, eventId: 
   // Anfragen zu treffen — bei der Erstverbindung einer Quelle mit vielen
   // Dokumenten dauert ein Poll-Zyklus dadurch entsprechend länger, blockiert
   // aber keine anderen Quellen (siehe index.ts).
-  // Zusätzlich zum starterCount-Trigger: Dokumente, die noch VOR Einführung der
-  // Startpositions-Erkennung analysiert wurden, haben MEV-Fahrer ohne startPos-
-  // Feld — die werden einmalig nachanalysiert (siehe needsStartPosBackfill).
-  // Die Json-Spalte mevRiders lässt sich nicht sinnvoll in der DB filtern,
-  // deshalb alle Startlisten laden und in JS aussieben.
+  // Trigger für die MEV-Analyse (die Json-Spalte mevRiders lässt sich nicht
+  // sinnvoll in der DB filtern, deshalb alle Startlisten laden und in JS aussieben):
+  //   1. starterCount === null  -> noch nie erfolgreich analysiert
+  //   2. hasLvColumn === null   -> vor Einführung von LV-Spalten-Erkennung,
+  //      Startnummer und Startposition analysiert; einmaliger Nachtrag
+  //   3. needsRosterRecheck     -> Dokument ohne LV-Spalte, für dessen AK
+  //      inzwischen ein Dokument MIT LV-Spalte analysiert wurde (Roster gewachsen)
   const startlists = await prisma.communiqueDocument.findMany({
     where: { sourceId, docType: 'STARTLISTE' },
   });
-  const unanalyzed = startlists.filter(
-    d => d.starterCount === null || needsStartPosBackfill(d.mevRiders),
+  const needsAnalysis = startlists.filter(
+    d => d.starterCount === null || d.hasLvColumn === null || needsRosterRecheck(d, startlists),
   );
-  for (const doc of unanalyzed) {
+  for (const doc of needsAnalysis) {
     await analyzeMevForDocument(doc, shareToken);
   }
 
-  // ── Automatischer Zeitplan-Import ──────────────────────────────────────────
-  // Nur für NEU entdeckte Zeitplan-Dokumente (created), nicht für
-  // reklassifizierte — ein bereits einmal importiertes Dokument, das sich
-  // nicht geändert hat, soll nicht bei jedem Poll erneut analysiert werden.
-  // Sequentiell aus demselben Grund wie die MEV-Analyse oben.
+  // Zweiter Durchgang: Die Reihenfolge oben ist nicht garantiert — ein Dokument
+  // ohne LV-Spalte kann VOR dem Dokument mit LV-Spalte derselben AK analysiert
+  // worden sein und hätte den Roster dann noch nicht gesehen. Ein Nachlauf
+  // genügt, danach sind alle LV-Dokumente analysiert und der Roster vollständig.
+  if (needsAnalysis.length > 0) {
+    const refreshed = await prisma.communiqueDocument.findMany({
+      where: { sourceId, docType: 'STARTLISTE' },
+    });
+    for (const doc of refreshed.filter(d => needsRosterRecheck(d, refreshed))) {
+      await analyzeMevForDocument(doc, shareToken);
+    }
+  }
+
   const newZeitplanDocs = created.filter(d => d.docType === 'ZEITPLAN');
   for (const doc of newZeitplanDocs) {
     await autoImportScheduleFromDocument(eventId, doc, shareToken);
