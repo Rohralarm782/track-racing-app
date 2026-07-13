@@ -10,37 +10,102 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 //   B/M   — Ballustrade/Messlinie (Massenstart: Punktefahren, Madison, ...)
 const START_POSITIONS = ['ZG', 'GG', 'B', 'M'];
 
+export interface MevRider {
+  name: string;
+  lauf: number | null;
+  laufLabel: string | null;
+  team: string | null;
+  startNo: number | null;
+  startPos: string | null;
+}
+
+// Was analyzeMevForDocument vom Dokument braucht — deckungsgleich mit dem
+// Prisma-Modell, damit Aufrufer einfach das geladene Dokument durchreichen können.
+interface AnalyzableDoc {
+  id: string;
+  sourceId: string;
+  fileName: string;
+  ak: string;
+  disciplineCode?: string | null;
+}
+
 /**
- * True, wenn ein bereits analysiertes Dokument MEV-Fahrer OHNE startPos-Feld
- * enthält — also vor Einführung der Startpositions-Erkennung analysiert wurde.
- * Dient dem einmaligen Nachtrag im Poll-Zyklus (siehe communiques.ts): nach der
- * Neuanalyse hat jeder Fahrer das Feld (ggf. mit Wert null) und das Dokument
- * wird nicht erneut angefasst. Dokumente ganz ohne MEV-Fahrer brauchen keinen
- * Nachtrag — dort gibt es nichts anzuzeigen.
+ * True, wenn ein Dokument OHNE LV-Spalte neu analysiert werden muss, weil
+ * inzwischen ein Dokument MIT LV-Spalte derselben Altersklasse analysiert
+ * wurde — das Roster (Startnummer → MEV-Fahrer) ist also größer geworden als
+ * beim letzten Analyseversuch dieses Dokuments.
+ *
+ * Hintergrund: Vorlauf-Ansetzungen im Massenstart enthalten oft NUR
+ * Startnummer + Name, keine LV-Spalte (real: "K134A - U17w Ansetz 1.Vorl
+ * Punktefahren.pdf"). Erkannt werden die MEV-Fahrer dort nur über ihre
+ * Startnummer, die aus anderen Kommuniqués derselben Veranstaltung bekannt
+ * ist. Trifft ein solches Dokument VOR dem ersten Dokument mit LV-Spalte ein,
+ * ist das Roster noch leer — deshalb dieser Nachzieh-Trigger.
  */
-export function needsStartPosBackfill(mevRiders: unknown): boolean {
-  return Array.isArray(mevRiders)
-    && mevRiders.length > 0
-    && mevRiders.some(r => r && typeof r === 'object' && !('startPos' in r));
+export function needsRosterRecheck(
+  doc: { id: string; ak: string; hasLvColumn: boolean | null; mevAnalyzedAt: Date | null },
+  allDocs: Array<{ id: string; ak: string; hasLvColumn: boolean | null; mevAnalyzedAt: Date | null }>,
+): boolean {
+  if (doc.hasLvColumn !== false || !doc.mevAnalyzedAt) return false;
+  return allDocs.some(d =>
+    d.id !== doc.id
+    && d.ak === doc.ak
+    && d.hasLvColumn === true
+    && d.mevAnalyzedAt != null
+    && d.mevAnalyzedAt > doc.mevAnalyzedAt!,
+  );
+}
+
+// Alle bereits bekannten MEV-Fahrer derselben Veranstaltung und Altersklasse,
+// zusammengetragen aus den Dokumenten MIT LV-Spalte. Startnummern sind
+// innerhalb einer Veranstaltung eindeutig und damit der verlässlichste
+// Anknüpfungspunkt; der Name dient als Rückfallebene.
+async function loadMevRoster(doc: AnalyzableDoc): Promise<Array<{ startNo: number | null; name: string }>> {
+  const lvDocs = await prisma.communiqueDocument.findMany({
+    where: { sourceId: doc.sourceId, ak: doc.ak, hasLvColumn: true, id: { not: doc.id } },
+    select: { mevRiders: true },
+  });
+
+  const byKey = new Map<string, { startNo: number | null; name: string }>();
+  for (const d of lvDocs) {
+    const riders = Array.isArray(d.mevRiders) ? (d.mevRiders as any[]) : [];
+    for (const r of riders) {
+      if (!r || typeof r.name !== 'string') continue;
+      const startNo = typeof r.startNo === 'number' ? r.startNo : null;
+      const key = startNo != null ? `n${startNo}` : `x${r.name.toLowerCase()}`;
+      if (!byKey.has(key)) byKey.set(key, { startNo, name: r.name });
+    }
+  }
+  return [...byKey.values()];
 }
 
 /**
  * Analysiert ein einzelnes Startlisten-Kommuniqué per Claude Haiku und
  * speichert erkannte Fahrer/Teams des konfigurierten Landesverbands (siehe
  * AppSettings.mevLv, Standard "MEV") direkt am CommuniqueDocument, inkl.
- * Lauf-Nummer pro Fahrer, Gesamt-Laufzahl (Einzelstart-Formate), Starterzahl
- * und Rundenzahl (Massenstart-Formate) — Grundlage für die Zeitschätzung im
- * Zeitplan. Läuft nur einmal pro Dokument (mevAnalyzedAt wird danach gesetzt)
- * und wird vom Poll-Zyklus für neu entdeckte STARTLISTE-Dokumente
- * angestoßen — rein informativ, verändert keine Renn-/Team-Daten.
+ * Startnummer, Lauf-Nummer, Startposition, Gesamt-Laufzahl, Starterzahl und
+ * Rundenzahl — Grundlage für die Zeitschätzung und die Anzeige im Zeitplan.
+ * Wird vom Poll-Zyklus angestoßen — rein informativ, verändert keine
+ * Renn-/Team-Daten.
  */
 export async function analyzeMevForDocument(
-  doc: { id: string; fileName: string; disciplineCode?: string | null },
+  doc: AnalyzableDoc,
   shareToken: string,
 ): Promise<void> {
   try {
     const settings = await getSettings();
     const lv = settings.mevLv;
+
+    const roster = await loadMevRoster(doc);
+    // Nur wenn überhaupt etwas bekannt ist — ein leerer Roster-Block im Prompt
+    // würde das Modell nur zu Fehlschlüssen einladen ("keine bekannt" ≠ "keine da").
+    const rosterBlock = roster.length === 0 ? '' : `
+
+FALLS DIE TABELLE KEINE LV-SPALTE HAT (kommt bei Vorlauf-Ansetzungen im Massenstart häufig vor — dort stehen nur Startnummer und Name):
+Aus anderen Kommuniqués DERSELBEN Veranstaltung und Altersklasse sind diese "${lv}"-Fahrer bekannt:
+${roster.map(r => `- Startnummer ${r.startNo ?? '?'} = ${r.name}`).join('\n')}
+Dann gelten GENAU diese Fahrer als "${lv}". Erkenne sie in der Tabelle vorrangig an der STARTNUMMER (innerhalb der Veranstaltung eindeutig), hilfsweise am Namen. Nimm keine anderen Fahrer auf.
+Hat die Tabelle dagegen eine LV-Spalte, ist AUSSCHLIESSLICH diese Spalte maßgeblich — die Liste oben dann ignorieren.`;
 
     const file = await fetchShareFile(shareToken, doc.fileName);
     const base64 = file.data.toString('base64');
@@ -60,26 +125,32 @@ export async function analyzeMevForDocument(
             text: `Dies ist eine Startliste/Ansetzung einer Bahnrad-Veranstaltung.
 Finde alle Fahrer bzw. Teams, deren Landesverband-Kürzel (Spalte "LV" o.ä.) "${lv}" ist.
 Prüfe außerdem:
+- ob die Tabelle überhaupt eine "LV"-Spalte (Landesverband) hat
 - ob die Tabelle eine "Lauf"-Spalte hat (Lauf-/Paarungs-Nummer, typisch bei Einzelstart-Formaten wie Zeitfahren oder Verfolgung, aber auch bei anderen Formaten möglich)
 - ob die Tabelle eine "Team"/"Mannschaft"-Spalte hat (typisch bei Mannschafts-Disziplinen wie Teamsprint, Mannschaftsverfolgung, Madison — dort stehen mehrere Fahrer pro Lauf, gruppiert unter einem Team-Kürzel wie "${lv} 2" oder "${lv} 1")
+- die Startposition jedes gefundenen "${lv}"-Fahrers/Teams (siehe startPos unten)
 - die Gesamtzahl der Starter/Teams in der Tabelle
-- die Startposition jedes gefundenen ${lv}-Fahrers/Teams (siehe startPos unten)
-- die Rundenzahl für das Rennen. Bei allen Disziplinen AUSSER Ausscheidungsfahren steht diese praktisch immer irgendwo im Dokument, oft in einer Zeile direkt unter der Renn-Überschrift im Format "<Distanz> / <Rundenzahl> Runden / <Anzahl> Wertungen" (z.B. "15km / 60 Runden / 6 Wertungen") — diese Zeile kann auch am Ende des Dokuments wiederholt werden. Manchmal auch anders formuliert, z.B. "Wertung nach 40 Runden" oder als Teil der Renn-Überschrift ("Punktefahren über 40 Runden").
+- die Rundenzahl für das Rennen. Bei allen Disziplinen AUSSER Ausscheidungsfahren steht diese praktisch immer irgendwo im Dokument, oft in einer Zeile direkt unter der Renn-Überschrift im Format "<Distanz> / <Rundenzahl> Runden / <Anzahl> Wertungen" (z.B. "15km / 60 Runden / 6 Wertungen") — diese Zeile kann auch am Ende des Dokuments wiederholt werden. Manchmal auch anders formuliert, z.B. "Wertung nach 40 Runden" oder als Teil der Renn-Überschrift ("Punktefahren über 40 Runden").${rosterBlock}
 
 Gib NUR JSON zurück (kein Markdown, kein Text davor/danach):
 
-{"mevRiders":[{"name":"Vorname Nachname","lauf":9,"team":"${lv} 2","startPos":"ZG"}],"heatCount":13,"starterCount":24,"roundCount":40}
+{"hasLvColumn":true,"mevRiders":[{"name":"Vorname Nachname","startNo":88,"lauf":9,"laufLabel":null,"team":"${lv} 2","startPos":"ZG"}],"heatCount":13,"starterCount":24,"roundCount":40}
 
 Regeln:
+- hasLvColumn: true, wenn die Tabelle eine LV-/Landesverband-Spalte hat, sonst false
 - name: "Vorname Nachname", keine Startnummer/Verein/UCI-ID
-- lauf: die Lauf-Nummer dieses Fahrers laut Tabelle, falls eine Lauf-Spalte existiert, sonst null
+- startNo: die Startnummer dieses Fahrers laut Spalte "Start-Nr." o.ä., sonst null
+- lauf / laufLabel: beide beziehen sich AUSSCHLIESSLICH auf eine echte Lauf-Spalte der Tabelle (Spaltenüberschrift "Lauf", "Heat", "Paarung" o.ä.). Gibt es keine solche Spalte, sind BEIDE null. Die Startnummer ("Start-Nr.") ist NIEMALS die Lauf-Nummer — verwechsle die beiden Spalten nicht. Auch eine Überschrift wie "Vorlauf 1" über der Tabelle ist KEINE Lauf-Angabe im Sinne dieser Felder: dann beide null.
+  * lauf: der Wert der Lauf-Spalte, wenn er eine reine Zahl ist (z.B. "9" -> 9), sonst null
+  * laufLabel: der Text der Lauf-Spalte, wenn er KEINE reine Zahl ist — z.B. bei Sprint-Finals steht dort "Platz 1/2" bzw. "Platz 3/4", bei Hoffnungsläufen o.ä. auch anderer Text. Wortlaut aus dem Dokument übernehmen (Zeilenumbrüche in der Zelle als Leerzeichen). Ist der Wert eine reine Zahl, dann null.
+  * Ein Fahrer hat also entweder lauf ODER laufLabel gesetzt, nie beides.
 - team: der Wert aus der Team-/Mannschaft-Spalte (z.B. "${lv} 2"), falls eine solche Spalte existiert, sonst null. NICHT der Vereinsname aus der "Verein"-Spalte — das Team-Kürzel besteht meist aus Landesverband-Kürzel + Nummer.
 - Bei Team-Paaren/Mannschaften (z.B. Madison, Teamsprint, Mannschaftsverfolgung) ALLE Fahrer des Teams einzeln auflisten, falls einer oder mehrere "${lv}" sind; alle bekommen denselben lauf- und team-Wert
 - startPos: die Startposition dieses Fahrers/Teams. Genau einer dieser vier Werte oder null:
-  * Einzelstart-Formate (Zeitfahren, Einzel-/Mannschaftsverfolgung — Tabelle mit Lauf-Spalte, zwei Starter je Lauf): "ZG" (Zielgerade) oder "GG" (Gegengerade). Die Zuordnung steht NICHT in der Tabelle, sondern in einem Hinweissatz unter der Tabelle, z.B. "Die erstgenannte Fahrerin startet von der Zielgeraden". Diesen Satz wörtlich auswerten und auf die Zeilen-Reihenfolge INNERHALB des Laufs anwenden: bei dieser Formulierung startet der im Lauf zuerst genannte Fahrer von "ZG", der zweite von "GG". Steht dort stattdessen "Gegengeraden", gilt es genau umgekehrt. Fehlt der Hinweissatz, ist die Position unbekannt -> null.
-  * Massenstart-Formate (Punktefahren, Madison, Scratch, Ausscheidungsfahren): "B" (Ballustrade/Balustrade) oder "M" (Messlinie/Mess-linie). Die Startaufstellung besteht dort typischerweise aus ZWEI Tabellen bzw. einer Spalte mit genau diesen Überschriften — maßgeblich ist, in welcher der beiden der Fahrer steht.
-  * In allen anderen Fällen (keine der genannten Angaben im Dokument): null
-- heatCount: Gesamtzahl unterschiedlicher Lauf-Nummern in der GESAMTEN Tabelle (nicht nur bei ${lv}-Zeilen), oder null falls keine Lauf-Spalte existiert
+  * Einzelstart-Formate (Zeitfahren, Einzel-/Mannschaftsverfolgung — zwei Starter je Lauf): "ZG" (Zielgerade) oder "GG" (Gegengerade). Die Zuordnung steht NICHT in der Tabelle, sondern in einem Hinweissatz unter der Tabelle, z.B. "Die erstgenannte Fahrerin startet von der Zielgeraden". Diesen Satz wörtlich auswerten und auf die Zeilen-Reihenfolge INNERHALB des Laufs anwenden: bei dieser Formulierung startet der im Lauf zuerst genannte Fahrer von "ZG", der zweite von "GG". Steht dort stattdessen "Gegengeraden", gilt es genau umgekehrt. Fehlt der Hinweissatz, ist die Position unbekannt -> null.
+  * Massenstart-Formate (Punktefahren, Madison, Scratch, Ausscheidungsfahren): "B" (Ballustrade/Balustrade) oder "M" (Messlinie/Mess-linie). Die Startaufstellung besteht dort aus ZWEI nebeneinander oder untereinander stehenden Tabellen bzw. einer Spalte mit genau diesen Überschriften — maßgeblich ist, in welcher der beiden der Fahrer steht. Die zweite Tabelle kann auch "Cote d'Azur" überschrieben sein — das ist die Messlinien-Gruppe -> "M".
+  * In allen anderen Fällen: null
+- heatCount: Gesamtzahl unterschiedlicher Werte in der Lauf-Spalte der GESAMTEN Tabelle (nicht nur bei "${lv}"-Zeilen) — Text-Werte wie "Platz 1/2" zählen genauso mit wie Zahlen. null, falls die Tabelle keine Lauf-Spalte hat.
 - starterCount: Gesamtzahl der Fahrer/Teams (Zeilen) in der Tabelle, unabhängig von einer Lauf-Spalte
 - roundCount: die im Dokument genannte Rundenzahl. Aktiv danach suchen (siehe oben) — nur null zurückgeben, wenn wirklich nirgends im Dokument eine Rundenzahl steht
 - Leeres Array für mevRiders, wenn kein "${lv}"-Fahrer gefunden wird
@@ -92,22 +163,40 @@ Regeln:
     const text = (message.content.find((c: any) => c.type === 'text') as any)?.text ?? '{}';
     const clean = text.replace(/```json\n?|```/g, '').trim();
     const parsed = JSON.parse(clean);
-    const mevRiders = Array.isArray(parsed?.mevRiders)
+    const mevRiders: MevRider[] = Array.isArray(parsed?.mevRiders)
       ? parsed.mevRiders
           .filter((r: any) => r && typeof r.name === 'string')
           .map((r: any) => ({
             name: r.name,
             lauf: typeof r.lauf === 'number' ? r.lauf : null,
+            // Textueller Lauf ("Platz 3/4" im Sprint-Finale) — die Lauf-Spalte
+            // enthält nicht immer eine Zahl. Kürzen, damit ein ausufernder
+            // Freitext die Zeitplan-Zeile nicht sprengt.
+            laufLabel: typeof r.laufLabel === 'string' && r.laufLabel.trim()
+              ? r.laufLabel.trim().replace(/\s+/g, ' ').slice(0, 20)
+              : null,
             team: typeof r.team === 'string' ? r.team : null,
+            startNo: typeof r.startNo === 'number' ? r.startNo : null,
             // Nur die vier bekannten Positionen zulassen — ein halluziniertes
             // Freitext-Feld würde sonst ungeprüft in der Zeitplan-Zeile landen.
             startPos: START_POSITIONS.includes(r.startPos) ? r.startPos : null,
           }))
       : [];
+    const hasLvColumn = typeof parsed?.hasLvColumn === 'boolean' ? parsed.hasLvColumn : null;
     const heatCount = typeof parsed?.heatCount === 'number' ? parsed.heatCount : null;
     const starterCount = typeof parsed?.starterCount === 'number' ? parsed.starterCount : null;
     let roundCount = typeof parsed?.roundCount === 'number' ? parsed.roundCount : null;
-    const mevNames = mevRiders.map((r: { name: string }) => r.name); // Abwärtskompatibilität
+    const mevNames = mevRiders.map(r => r.name); // Abwärtskompatibilität
+
+    // Schutz gegen eine wiederkehrende Verwechslung: Ohne Lauf-Spalte gibt es
+    // keine heatCount — dann darf auch kein Fahrer eine Lauf-Nummer haben. Das
+    // Modell hat in solchen Dokumenten (z.B. Vorlauf-Ansetzungen im Massenstart,
+    // die nur Start-Nr./Name/Vorname enthalten) sonst gern die STARTNUMMER als
+    // Lauf-Nummer ausgegeben — im Zeitplan stand dann "Dorothea (Lauf 88)".
+    // Gilt für beide Lauf-Felder, numerisch wie textuell.
+    if (heatCount == null) {
+      for (const r of mevRiders) { r.lauf = null; r.laufLabel = null; }
+    }
 
     // Ausscheidungsfahren: die Rundenzahl steht praktisch nie im Dokument,
     // folgt aber einer festen Formel (Starterzahl × 2) — verlässlicher als ein
@@ -118,12 +207,12 @@ Regeln:
 
     await prisma.communiqueDocument.update({
       where: { id: doc.id },
-      data: { mevNames, mevRiders, heatCount, starterCount, roundCount, mevAnalyzedAt: new Date() } as any,
+      data: { mevNames, mevRiders, hasLvColumn, heatCount, starterCount, roundCount, mevAnalyzedAt: new Date() } as any,
     });
   } catch (err) {
     // Eine fehlgeschlagene Analyse darf den restlichen Poll-Zyklus nicht abbrechen —
     // das Dokument bleibt einfach unanalysiert (mevAnalyzedAt bleibt null) und wird
-    // beim nächsten Zyklus erneut versucht, sofern es sich noch unter den neuen zählt.
+    // beim nächsten Zyklus erneut versucht.
     console.error(`MEV-Analyse fehlgeschlagen für ${doc.fileName}:`, err);
   }
 }
