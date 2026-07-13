@@ -790,7 +790,7 @@ export default function VerfolgungsplanungView({
         <>
           {renderAthleteSelector()}
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 28, alignItems: 'start' }}>
+          <div className="grid-split">
             {/* ── Links ── */}
             <div>
               <div style={{ display: 'flex', gap: 12, marginBottom: 16 }}>
