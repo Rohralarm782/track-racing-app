@@ -128,6 +128,8 @@ export interface MevRider {
   // B/M = Ballustrade/Messlinie (Massenstart). Fehlt bei Dokumenten, die vor
   // Einführung der Erkennung analysiert wurden (wird beim Poll nachgetragen).
   startPos?: 'ZG' | 'GG' | 'B' | 'M' | null;
+  // Nur im Massenstart: Platz innerhalb der Ballustrade-/Messlinien-Reihe (1-basiert)
+  startSlot?: number | null;
 }
 
 export interface CommuniqueDocument {
