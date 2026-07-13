@@ -416,7 +416,7 @@ export default function PursuitPage() {
         {!finished && (
           <>
             {/* Zwischenstand */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+            <div className="grid-2" style={{ marginBottom: 12 }}>
               <div className="card" style={{ padding: '11px 14px' }}>
                 <div className="text-xs text-muted">{planName(activePlan)}</div>
                 <div style={{ fontSize: 20, fontWeight: 500, margin: '3px 0' }}>
@@ -489,7 +489,7 @@ export default function PursuitPage() {
             </button>
 
             {/* Nebensteuerung */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 6, marginBottom: 14 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(70px, 1fr))', gap: 6, marginBottom: 14 }}>
               <button className="btn btn-secondary btn-sm" onClick={manualHalf}
                 style={{ opacity: autoAlt ? 0.35 : 1, pointerEvents: autoAlt ? 'none' : 'auto' }}>
                 ½ Runde
