@@ -243,7 +243,7 @@ export default function MadisonTeamBuilder({
       )}
 
       {/* ── Zwei-Spalten-Layout ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: 24, alignItems: 'start' }}>
+      <div className="grid-sidebar">
 
         {/* ── Linke Spalte: Fahrerliste ────────────────────────────────── */}
         <div>
