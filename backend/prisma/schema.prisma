@@ -315,7 +315,8 @@ model CommuniqueDocument {
 
   // ─── MEV-Erkennung (nur bei STARTLISTE-Dokumenten, per Hintergrund-Analyse) ──
   mevNames      String[]  @default([]) // Namen erkannter MEV-Fahrer/Teams (nur Namen, für Abwärtskompatibilität)
-  mevRiders     Json      @default("[]") // [{ name: string, lauf: number | null }] — wie mevNames, zusätzlich mit Lauf-Nummer bei Einzelstart-Formaten
+  mevRiders     Json      @default("[]") // [{ name, startNo, lauf, team, startPos }] — startPos: "ZG"/"GG" (Ziel-/Gegengerade, Einzelstart) bzw. "B"/"M" (Ballustrade/Messlinie, Massenstart)
+  hasLvColumn   Boolean?  // hat die Startliste eine LV-Spalte? null = vor Einführung analysiert (löst Neuanalyse aus). false = MEV-Fahrer nur über Startnummern-Roster erkennbar, siehe mevDetect.ts
   heatCount     Int?      // Gesamtzahl unterschiedlicher Läufe (Einzelstart-Formate wie Zeitfahren/Verfolgung)
   starterCount  Int?      // Gesamtzahl Starter/Teams laut Tabelle
   roundCount    Int?      // Rundenzahl des Rennens (Massenstart-Formate); bei Ausscheidungsfahren = starterCount*2 statt Textfund (siehe mevDetect.ts)
@@ -462,7 +463,7 @@ model DurationEstimate {
 // ─── Allgemeine Einstellungen ───────────────────────────────────────────────
 // Singleton (immer genau eine Zeile, id fest "singleton") — gilt für die
 // gesamte App, nicht pro Veranstaltung. Enthält alles, was bisher als feste
-// Konstante in durationEstimate.ts/mevDetect.ts stand, jetzt editierbar über
+// Konstante in durationEstimate.ts/Detect.ts stand, jetzt editierbar über
 // die Einstellungen-Seite, ohne dass dafür Code geändert werden muss.
 model AppSettings {
   id String @id @default("singleton")
