@@ -44,7 +44,8 @@ h3 { font-size: 0.95rem; font-weight: 600; margin: 0; }
   height: 54px; padding: 0 16px;
   display: flex; align-items: center; justify-content: space-between;
 }
-.header-brand { font-weight: 700; font-size: 15px; color: var(--c-text); }
+.header-brand { font-weight: 700; font-size: 15px; color: var(--c-text); display: inline-flex; align-items: center; gap: 6px; }
+.header-nav { display: flex; align-items: center; gap: 4px; }
 .header-brand:hover { text-decoration: none; }
 
 /* ── Cards ──────────────────────────────────────── */
@@ -98,7 +99,7 @@ h3 { font-size: 0.95rem; font-weight: 600; margin: 0; }
 .form-hint { font-size: 12px; color: var(--c-text-muted); margin-top: 4px; }
 
 /* ── Tables ──────────────────────────────────────── */
-.table-wrap { background: var(--c-white); border: 1px solid var(--c-border); border-radius: 10px; overflow: hidden; }
+.table-wrap { background: var(--c-white); border: 1px solid var(--c-border); border-radius: 10px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .table { width: 100%; border-collapse: collapse; font-size: 14px; }
 .table th {
   text-align: left; padding: 9px 14px;
@@ -182,3 +183,35 @@ h3 { font-size: 0.95rem; font-weight: 600; margin: 0; }
   display: inline-block;
 }
 .loading { display: flex; align-items: center; gap: 10px; padding: 40px 20px; color: var(--c-text-muted); }
+
+/* ── Responsive Grids ────────────────────────────── */
+.grid-2       { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.grid-3       { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.grid-split   { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 28px; align-items: start; }
+.grid-sidebar { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 24px; align-items: start; }
+.scroll-x     { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.scroll-x > * { min-width: 420px; }
+
+/* ── Mobile (≤640px) ─────────────────────────────── */
+@media (max-width: 640px) {
+  .container { padding: 0 12px; }
+  .page { padding: 18px 0; }
+
+  h1 { font-size: 1.25rem; }
+
+  .grid-2, .grid-3, .grid-split, .grid-sidebar {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .header-inner { padding: 0 8px; height: 50px; gap: 6px; }
+  .header-inner .btn { padding: 6px 8px; font-size: 17px; }
+  .header-brand { font-size: 21px; }
+  .brand-text, .nav-text { display: none; }
+  .header-nav { gap: 0; }
+
+  .card { padding: 14px; }
+  .modal { padding: 18px; }
+  .table th, .table td { padding: 8px 10px; }
+  .table { font-size: 13px; }
+}
