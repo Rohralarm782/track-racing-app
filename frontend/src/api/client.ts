@@ -121,6 +121,10 @@ export interface MevRider {
   name: string;
   lauf: number | null;
   team: string | null;
+  // Startposition auf der Bahn: ZG/GG = Ziel-/Gegengerade (Einzelstart),
+  // B/M = Ballustrade/Messlinie (Massenstart). Fehlt bei Dokumenten, die vor
+  // Einführung der Erkennung analysiert wurden (wird beim Poll nachgetragen).
+  startPos?: 'ZG' | 'GG' | 'B' | 'M' | null;
 }
 
 export interface CommuniqueDocument {
