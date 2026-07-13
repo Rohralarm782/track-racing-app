@@ -130,7 +130,7 @@ export default function ScheduleImport({ eventId, onDone, onClose }: Props) {
               </span>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 16 }}>
+            <div className="scroll-x" style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 16 }}>
               {rows.map(r => (
                 <div
                   key={r._id}
