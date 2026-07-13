@@ -99,6 +99,8 @@ interface FuehrungSegment { athleteId: string; laps: number; }
 
 const FUEHRUNG_PULL_LEN = 2;        // Start-Rundenzahl je Wechsel (kein UI-Regler mehr, nur Startwert für Neuberechnung)
 const FUEHRUNG_EDGE_CORRECTION = 0.25; // Start liegt ¼ Runde vor der Ziellinie → erster/letzter Wechsel je ¼ Runde länger
+const FUEHRUNG_STEP = 0.5;          // Schrittweite der +/− Knöpfe je Wechsel
+const FUEHRUNG_MIN_LAPS = 0.5;      // kürzeste erlaubte Führung
 const FUEHRUNG_MAX_ITER = 200;
 const FUEHRUNG_SAVE_DEBOUNCE_MS = 600;
 const FUEHRUNG_COLORS = ['#1d4ed8', '#16a34a', '#d97706', '#7c3aed', '#db2777', '#0891b2'];
@@ -341,18 +343,17 @@ export default function VerfolgungsplanungView({
       return next;
     });
   }
+  // Verändert NUR diesen Wechsel — die Nachbarn bleiben unangetastet. Die
+  // Gesamtsumme verschiebt sich dadurch bewusst; die Soll/Ist-Anzeige über der
+  // Liste zeigt, ob man auf die geplante Renndistanz kommt.
   function adjustFuehrungSeg(i: number, delta: 1 | -1) {
     setFuehrungSegments(prev => {
       const segs = prev.map(s => ({ ...s }));
-      const j = (i === segs.length - 1) ? i - 1 : i + 1;
-      if (j < 0 || !segs[i] || !segs[j]) return prev;
-      if (delta > 0) {
-        if (segs[j].laps <= 0.5) return prev;
-        segs[i].laps += 0.5; segs[j].laps -= 0.5;
-      } else {
-        if (segs[i].laps <= 0.5) return prev;
-        segs[i].laps -= 0.5; segs[j].laps += 0.5;
-      }
+      const seg = segs[i];
+      if (!seg) return prev;
+      const next = Math.round((seg.laps + delta * FUEHRUNG_STEP) * 4) / 4;
+      if (next < FUEHRUNG_MIN_LAPS - 1e-9) return prev;
+      segs[i] = { ...seg, laps: next };
       return segs;
     });
   }
@@ -387,16 +388,12 @@ export default function VerfolgungsplanungView({
       return segs;
     });
   }
-  // Entfernt Wechsel i — Runden gehen an den Nachbarn (nächster, oder voriger
-  // beim letzten Wechsel), der dadurch ggf. die Rand-Korrektur mit übernimmt.
+  // Entfernt Wechsel i — die Runden werden NICHT auf die Nachbarn verteilt,
+  // die Gesamtsumme sinkt entsprechend (siehe Soll/Ist-Anzeige).
   function removeFuehrungSeg(i: number) {
     setFuehrungSegments(prev => {
       if (prev.length <= 1) return prev;
       const segs = prev.map(s => ({ ...s }));
-      const seg = segs[i];
-      const j = i === segs.length - 1 ? i - 1 : i + 1;
-      if (!segs[j]) return prev;
-      segs[j] = { ...segs[j], laps: segs[j].laps + seg.laps };
       segs.splice(i, 1);
       return segs;
     });
@@ -602,9 +599,43 @@ export default function VerfolgungsplanungView({
                 );
               })}
             </div>
-          
+
+            {(() => {
+              const soll = numRounds + 2 * FUEHRUNG_EDGE_CORRECTION;
+              const diff = Math.round((totalSum - soll) * 4) / 4;
+              const ok = Math.abs(diff) < 0.01;
+              const accent = ok ? '#047857' : '#c2410c';
+              return (
+                <div style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+                  marginTop: 10, padding: '9px 11px', borderRadius: 8,
+                  background: ok ? '#ecfdf5' : '#fff7ed',
+                  border: `1px solid ${ok ? '#a7f3d0' : '#fed7aa'}`,
+                }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 600, color: accent }}>
+                      {ok
+                        ? '✓ Führungen ergeben genau die Renndistanz'
+                        : diff > 0
+                          ? `${fmtLaps(diff)} Rd. zu viel`
+                          : `${fmtLaps(-diff)} Rd. zu wenig`}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--c-text-muted)', marginTop: 1 }}>
+                      Soll: {numRounds} Runden + ½ Start-/Zielversatz = {fmtLaps(soll)}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                    <div style={{ fontSize: 17, fontWeight: 700, color: accent, fontVariantNumeric: 'tabular-nums', lineHeight: 1.1 }}>
+                      {fmtLaps(totalSum)}
+                    </div>
+                    <div style={{ fontSize: 10.5, color: 'var(--c-text-muted)' }}>Summe Rd.</div>
+                  </div>
+                </div>
+              );
+            })()}
+
             <label className="form-label" style={{ textTransform: 'lowercase', marginTop: 14 }}>
-              wechsel im detail{isAdmin ? ' — antippen zum anpassen (½-runden-schritte)' : ''}
+              wechsel im detail{isAdmin ? ' — jede führung einzeln (½-runden-schritte)' : ''}
             </label>
             {(() => {
               let cum = 0;
