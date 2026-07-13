@@ -8,7 +8,7 @@ import { classifyFileName } from '../lib/classify';
 import { getCachedFile, setCachedFile } from '../lib/fileCache';
 import { notifyNewDocuments } from '../lib/push';
 import { analyzeMevForDocument } from '../lib/mevDetect';
-import { autoImportScheduleFromDocument } from '../lib/scheduleImport';
+import { autoImportScheduleFromDocument, autoMatch } from '../lib/scheduleImport';
 
 const router = Router();
 
@@ -274,6 +274,32 @@ export async function pollSource(sourceId: string, shareToken: string, eventId: 
   const newZeitplanDocs = created.filter(d => d.docType === 'ZEITPLAN');
   for (const doc of newZeitplanDocs) {
     await autoImportScheduleFromDocument(eventId, doc, shareToken);
+  }
+
+  // ── Zeitplan-Verknüpfung nachziehen ───────────────────────────────────────
+  // Kommuniqués treffen über den ganzen Veranstaltungstag verteilt ein, der
+  // Zeitplan steht aber schon vorher. Ohne diesen Aufruf läuft autoMatch nur
+  // beim Speichern des Zeitplans und beim manuellen Rematch — jedes danach
+  // eintreffende Dokument bliebe bis zu einem manuellen Rematch unverknüpft
+  // (real aufgetreten: Punktefahren-Vorläufe ohne Kommuniqué, obwohl die
+  // Ansetzungen längst da waren).
+  //
+  // Auch nach reinen Reklassifizierungen (toReclassify), da sich dabei
+  // Disziplin/Phase eines bekannten Dokuments ändern können — genau die
+  // Signale, auf denen das Matching beruht. autoMatch ist idempotent: schon
+  // korrekt verknüpfte Einträge werden nicht angefasst.
+  //
+  // autoImportScheduleFromDocument ruft autoMatch selbst am Ende auf; ein
+  // zusätzlicher Aufruf hier schadet daher nicht, sondern deckt den (häufigen)
+  // Fall ab, dass gar kein Zeitplan-Dokument dabei war.
+  if (created.length > 0 || toReclassify.length > 0) {
+    try {
+      await autoMatch(eventId);
+    } catch (err) {
+      // Darf den Poll-Zyklus nicht abbrechen — beim nächsten Eintreffen eines
+      // Dokuments (oder per manuellem Rematch) wird es erneut versucht.
+      console.error('Zeitplan-Matching nach Poll fehlgeschlagen:', err);
+    }
   }
 
   return created;
