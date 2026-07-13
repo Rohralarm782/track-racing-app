@@ -265,7 +265,7 @@ export default function EventDetail() {
                 <div className="card mb-3" style={{ borderColor: '#bfdbfe', background: '#f0f7ff' }}>
                   <p className="text-sm" style={{ fontWeight: 600, marginBottom: 12 }}>Neue Kategorie</p>
                   {error && <div className="alert alert-error">{error}</div>}
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div className="grid-2">
                     <div className="form-group" style={{ margin: 0 }}>
                       <label className="form-label">Name</label>
                       <input
@@ -315,7 +315,7 @@ export default function EventDetail() {
                           style={{ border: '1px solid #bfdbfe', background: '#f0f7ff', borderRadius: 8, padding: '10px' }}
                         >
                           {error && <div className="alert alert-error" style={{ marginBottom: 8 }}>{error}</div>}
-                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+                          <div className="grid-2" style={{ gap: 8, marginBottom: 8 }}>
                             <div className="form-group" style={{ margin: 0 }}>
                               <label className="form-label">Name</label>
                               <input
