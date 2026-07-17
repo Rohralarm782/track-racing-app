@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { api, athletesApi, athleteShortName, type Athlete, type FuehrungsplanData } from '../api/client';
 import { useAdmin } from '../components/Layout';
 import VerfolgungsplanungView, { PlanSaveData, fmtTime } from '../components/VerfolgungsplanungView';
+import FitText from '../components/FitText';
 
 // ── Typen ──────────────────────────────────────────────────────────────────────
 interface SavedPlan {
@@ -333,7 +334,7 @@ export default function PursuitPage() {
     const filled    = dispFill === 'full' && delta !== null;
 
     const lapText   = lastLapT !== null ? `${lastLapT.toFixed(2)}s` : '–';
-    const deltaText = style.label;
+    const deltaText = delta !== null ? `${delta > 0 ? '+' : ''}${delta.toFixed(2)}s` : '–';
     const bigText   = dispNum === 'delta' ? deltaText : lapText;
     const subText   = dispNum === 'delta' ? lapText   : deltaText;
 
@@ -354,16 +355,10 @@ export default function PursuitPage() {
         <div style={{ marginBottom: 8, fontSize: 14, color: metaColor }}>
           {planName(activePlan)} · Runde {lapCount} / {timerLaps}
         </div>
-        <div style={{
-          fontSize: 'clamp(80px, 22vw, 40vh)',
-          fontWeight: 500, lineHeight: 1,
-          fontVariantNumeric: 'tabular-nums',
-          letterSpacing: '-0.02em',
-          color: bigColor,
-        }}>
-          {bigText}
+        <div style={{ width: '100%', padding: '0 2cm', boxSizing: 'border-box' }}>
+          <FitText text={bigText} color={bigColor} />
         </div>
-        <div style={{ fontSize: 'clamp(24px, 8vw, 14vh)', fontWeight: 500, marginTop: 16, color: subColor }}>
+        <div style={{ fontSize: 'clamp(16px, 3.5vw, 6vh)', fontWeight: 500, marginTop: 8, color: subColor }}>
           {subText}
         </div>
         {countdown > 0 && (
