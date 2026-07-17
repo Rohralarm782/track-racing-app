@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { useAdmin } from '../components/Layout';
 import TimeEstimateSettings from '../components/TimeEstimateSettings';
+import PursuitDisplaySettings from '../components/PursuitDisplaySettings';
 
 export default function SettingsPage() {
   const { isAdmin } = useAdmin();
@@ -16,7 +17,10 @@ export default function SettingsPage() {
       </p>
 
       {isAdmin ? (
-        <TimeEstimateSettings />
+        <>
+          <PursuitDisplaySettings />
+          <TimeEstimateSettings />
+        </>
       ) : (
         <div className="empty"><p>Einstellungen sind nur für Admins sichtbar.</p></div>
       )}
