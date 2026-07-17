@@ -319,17 +319,39 @@ export default function PursuitPage() {
   // VIEW: ATHLETENANZEIGE
   // ════════════════════════════════════════════════════════════════════════════
   if (view === 'display') {
+    // Zentrale Anzeige-Einstellungen (Einstellungen → Renntimer-Anzeige),
+    // geräteweit über localStorage. Nur gelesen, hier nicht gesetzt.
+    type DScheme = 'light' | 'dark'; type DFill = 'border' | 'full'; type DNum = 'lap' | 'delta';
+    const dispScheme = (localStorage.getItem('pursuitDisp.scheme') as DScheme) || 'light';
+    const dispFill   = (localStorage.getItem('pursuitDisp.fill')   as DFill)   || 'border';
+    const dispNum    = (localStorage.getItem('pursuitDisp.num')    as DNum)    || 'lap';
+
+    const isDark    = dispScheme === 'dark';
+    const pageBg    = isDark ? '#000000' : 'var(--c-white)';
+    const pageText  = isDark ? '#ffffff' : 'var(--c-text)';
+    const statusCol = style.border;
+    const filled    = dispFill === 'full' && delta !== null;
+
+    const lapText   = lastLapT !== null ? `${lastLapT.toFixed(2)}s` : '–';
+    const deltaText = style.label;
+    const bigText   = dispNum === 'delta' ? deltaText : lapText;
+    const subText   = dispNum === 'delta' ? lapText   : deltaText;
+
+    const bigColor  = filled ? '#ffffff' : (dispNum === 'delta' ? statusCol : pageText);
+    const subColor  = filled ? 'rgba(255,255,255,0.85)' : (dispNum === 'delta' ? pageText : statusCol);
+    const metaColor = filled ? 'rgba(255,255,255,0.85)' : 'var(--c-text-muted)';
+
     return (
       <div style={{
         position: 'fixed', inset: 0, zIndex: 50,
-        background: 'var(--c-white)',
-        border: `16px solid ${style.border}`,
+        background: filled ? statusCol : pageBg,
+        border: filled ? 'none' : `16px solid ${statusCol}`,
         display: 'flex', flexDirection: 'column',
         alignItems: 'center', justifyContent: 'center',
         textAlign: 'center',
-        transition: 'border-color 0.25s',
+        transition: 'background-color 0.25s, border-color 0.25s',
       }}>
-        <div className="text-sm text-muted" style={{ marginBottom: 8 }}>
+        <div style={{ marginBottom: 8, fontSize: 14, color: metaColor }}>
           {planName(activePlan)} · Runde {lapCount} / {timerLaps}
         </div>
         <div style={{
@@ -337,21 +359,21 @@ export default function PursuitPage() {
           fontWeight: 500, lineHeight: 1,
           fontVariantNumeric: 'tabular-nums',
           letterSpacing: '-0.02em',
-          color: 'var(--c-text)',
+          color: bigColor,
         }}>
-          {lastLapT !== null ? `${lastLapT.toFixed(2)}s` : '–'}
+          {bigText}
         </div>
-        <div style={{ fontSize: 'clamp(24px, 8vw, 14vh)', fontWeight: 500, marginTop: 16, color: style.text }}>
-          {style.label}
+        <div style={{ fontSize: 'clamp(24px, 8vw, 14vh)', fontWeight: 500, marginTop: 16, color: subColor }}>
+          {subText}
         </div>
         {countdown > 0 && (
-          <div className="text-xs text-muted" style={{ marginTop: 20 }}>
+          <div style={{ marginTop: 20, fontSize: 12, color: metaColor }}>
             Zurück in {countdown}s
           </div>
         )}
         <button
           className="btn btn-ghost btn-sm"
-          style={{ position: 'absolute', bottom: 24 }}
+          style={{ position: 'absolute', bottom: 24, color: filled ? '#ffffff' : undefined }}
           onClick={() => { clearTimeout(dispTimer.current!); clearInterval(cdInterval.current!); setView('race'); }}
         >
           ← Trainer
