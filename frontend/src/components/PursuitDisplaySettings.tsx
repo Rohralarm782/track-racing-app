@@ -49,8 +49,8 @@ export default function PursuitDisplaySettings() {
   const filled   = fill === 'full';
   const pageBg   = isDark ? '#000000' : 'var(--c-white)';
   const pageText = isDark ? '#ffffff' : 'var(--c-text)';
-  const bigText  = num === 'delta' ? '▲ +0.42s' : '17.31s';
-  const subText  = num === 'delta' ? '17.31s'   : '▲ +0.42s';
+  const bigText  = num === 'delta' ? '+0.42s' : '17.31s';
+  const subText  = num === 'delta' ? '17.31s' : '+0.42s';
   const bigColor = filled ? '#ffffff' : (num === 'delta' ? status : pageText);
   const subColor = filled ? 'rgba(255,255,255,0.85)' : (num === 'delta' ? pageText : status);
   const metaColor = filled ? 'rgba(255,255,255,0.85)' : 'var(--c-text-muted)';
@@ -80,10 +80,10 @@ export default function PursuitDisplaySettings() {
         alignItems: 'center', justifyContent: 'center',
       }}>
         <div style={{ fontSize: 11, color: metaColor, marginBottom: 4 }}>Vorschau · Runde 5 / 12</div>
-        <div style={{ fontSize: 42, fontWeight: 500, fontVariantNumeric: 'tabular-nums', lineHeight: 1, color: bigColor }}>
+        <div style={{ fontSize: 52, fontWeight: 600, fontVariantNumeric: 'tabular-nums', lineHeight: 1, letterSpacing: '-0.02em', color: bigColor }}>
           {bigText}
         </div>
-        <div style={{ fontSize: 17, fontWeight: 500, marginTop: 6, color: subColor }}>
+        <div style={{ fontSize: 14, fontWeight: 500, marginTop: 6, color: subColor }}>
           {subText}
         </div>
       </div>
