@@ -28,6 +28,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Athlete, FuehrungsplanData } from '../api/client';
 import { athleteShortName, athleteFullName } from '../api/client';
+import FitText from './FitText';
 
 // ── Typen ──────────────────────────────────────────────────────────────────────
 interface Team {
@@ -1139,7 +1140,7 @@ function RenntimerView({ anfahrtSec, lapSec, numRounds, planLabel, onBack }: {
     const filled    = dispFill === 'full' && delta !== null; // Vollflächen-Fill erst ab vorhandenem Delta
 
     const lapText   = lastLapT !== null ? `${lastLapT.toFixed(2)}s` : '–';
-    const deltaText = style.label;
+    const deltaText = delta !== null ? `${delta > 0 ? '+' : ''}${delta.toFixed(2)}s` : '–';
     const bigText   = dispNum === 'delta' ? deltaText : lapText;
     const subText   = dispNum === 'delta' ? lapText   : deltaText;
 
@@ -1163,16 +1164,10 @@ function RenntimerView({ anfahrtSec, lapSec, numRounds, planLabel, onBack }: {
         <div style={{ marginBottom: 8, fontSize: 14, color: metaColor }}>
           {planLabel} · Runde {lapCount} / {numRounds}
         </div>
-        <div style={{
-          fontSize: 'clamp(80px, 22vw, 40vh)',
-          fontWeight: 500, lineHeight: 1,
-          fontVariantNumeric: 'tabular-nums',
-          letterSpacing: '-0.02em',
-          color: bigColor,
-        }}>
-          {bigText}
+        <div style={{ width: '100%', padding: '0 2cm', boxSizing: 'border-box' }}>
+          <FitText text={bigText} color={bigColor} />
         </div>
-        <div style={{ fontSize: 'clamp(24px, 8vw, 14vh)', fontWeight: 500, marginTop: 16, color: subColor }}>
+        <div style={{ fontSize: 'clamp(16px, 3.5vw, 6vh)', fontWeight: 500, marginTop: 8, color: subColor }}>
           {subText}
         </div>
         {countdown > 0 && (
