@@ -969,31 +969,6 @@ function MaterialBtn({ label, active, onClick }: { label: string; active: boolea
 // aus den Zeitstempeln retroperspektiv berechnet — kein durchlaufender Countdown.
 // Nach jedem Tap wechselt die Anzeige für DISPLAY_SEC Sekunden auf eine
 // Vollbild-Athletenanzeige mit riesiger Rundenzeit.
-// Kleine segmentierte Umschaltung für die Anzeige-Einstellungen des Renntimers.
-function DispSeg({ label, value, opts, onPick }: {
-  label: string; value: string; opts: [string, string][]; onPick: (v: string) => void;
-}) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-      <div className="text-sm text-muted" style={{ width: 92, flex: '0 0 auto' }}>{label}</div>
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-        {opts.map(([v, lbl]) => {
-          const active = v === value;
-          return (
-            <button key={v} onClick={() => onPick(v)} style={{
-              padding: '6px 10px', borderRadius: 7, fontSize: 13, cursor: 'pointer',
-              border: active ? '2px solid var(--c-primary)' : '1px solid var(--c-border)',
-              background: active ? '#dbeafe' : 'var(--c-white)',
-              color: active ? 'var(--c-primary)' : 'var(--c-text)',
-              fontWeight: active ? 700 : 400,
-            }}>{lbl}</button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 function RenntimerView({ anfahrtSec, lapSec, numRounds, planLabel, onBack }: {
   anfahrtSec: number; lapSec: number; numRounds: number; planLabel: string; onBack: () => void;
 }) {
@@ -1005,18 +980,14 @@ function RenntimerView({ anfahrtSec, lapSec, numRounds, planLabel, onBack }: {
   const [finished, setFinished]     = useState(false);
   const [btnArmed, setBtnArmed]     = useState(false); // Finger liegt auf Button
 
-  // ── Anzeige-Einstellungen (global, in localStorage) ──────────────────────
-  // Betrifft NUR die Vollbild-Athletenanzeige unten. Bewusst kein Backend/kein
-  // Schema — die Werte liegen wie die Spalten-Prefs im localStorage. Eine
-  // pro-Sportler-Ausnahme kommt später zusammen mit dem Pacing-Feature.
+  // ── Anzeige-Einstellungen (global) ───────────────────────────────────────
+  // Werden zentral unter Einstellungen → Renntimer-Anzeige gesetzt und hier nur
+  // gelesen (localStorage, geräteweit — kein Backend/Schema). Beim Öffnen des
+  // Timers gilt jeweils der aktuelle Stand.
   type DScheme = 'light' | 'dark'; type DFill = 'border' | 'full'; type DNum = 'lap' | 'delta';
-  const [dispScheme, setDispScheme] = useState<DScheme>(() => (localStorage.getItem('pursuitDisp.scheme') as DScheme) || 'light');
-  const [dispFill,   setDispFill]   = useState<DFill>(()   => (localStorage.getItem('pursuitDisp.fill')   as DFill)   || 'border');
-  const [dispNum,    setDispNum]    = useState<DNum>(()    => (localStorage.getItem('pursuitDisp.num')    as DNum)    || 'lap');
-  const [showDispCfg, setShowDispCfg] = useState(false);
-  function pickScheme(v: string) { const s = v as DScheme; setDispScheme(s); localStorage.setItem('pursuitDisp.scheme', s); }
-  function pickFill(v: string)   { const s = v as DFill;   setDispFill(s);   localStorage.setItem('pursuitDisp.fill', s); }
-  function pickNum(v: string)    { const s = v as DNum;    setDispNum(s);    localStorage.setItem('pursuitDisp.num', s); }
+  const dispScheme = (localStorage.getItem('pursuitDisp.scheme') as DScheme) || 'light';
+  const dispFill   = (localStorage.getItem('pursuitDisp.fill')   as DFill)   || 'border';
+  const dispNum    = (localStorage.getItem('pursuitDisp.num')    as DNum)    || 'lap';
 
   const eventsRef     = useRef<TEvent[]>([]);
   const autoAltRef    = useRef(false);
@@ -1239,31 +1210,7 @@ function RenntimerView({ anfahrtSec, lapSec, numRounds, planLabel, onBack }: {
             {numRounds} Runden · Plan {fmtTime(anfahrtSec + lapSec * (numRounds - 1))}
           </p>
         </div>
-        <button
-          className="btn btn-ghost btn-sm"
-          style={{ flex: '0 0 auto' }}
-          title="Anzeige-Einstellungen"
-          onClick={() => setShowDispCfg(v => !v)}
-        >
-          ⚙ Anzeige
-        </button>
       </div>
-
-      {showDispCfg && (
-        <div className="card mb-4" style={{ padding: 12 }}>
-          <div className="text-xs text-muted" style={{ marginBottom: 10 }}>
-            Vollbild-Athletenanzeige · gilt global
-          </div>
-          <div style={{ display: 'grid', gap: 10 }}>
-            <DispSeg label="Farbe"      value={dispScheme} onPick={pickScheme}
-                     opts={[['light', 'Schwarz auf Weiß'], ['dark', 'Weiß auf Schwarz']]} />
-            <DispSeg label="Anzeige"    value={dispFill}   onPick={pickFill}
-                     opts={[['border', 'Rahmen'], ['full', 'Vollbild']]} />
-            <DispSeg label="Große Zahl" value={dispNum}    onPick={pickNum}
-                     opts={[['lap', 'Rundenzeit'], ['delta', 'Abweichung']]} />
-          </div>
-        </div>
-      )}
 
       {/* Ziel-Anzeige */}
       {finished && (
