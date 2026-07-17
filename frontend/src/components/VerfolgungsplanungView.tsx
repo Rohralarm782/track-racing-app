@@ -969,6 +969,31 @@ function MaterialBtn({ label, active, onClick }: { label: string; active: boolea
 // aus den Zeitstempeln retroperspektiv berechnet — kein durchlaufender Countdown.
 // Nach jedem Tap wechselt die Anzeige für DISPLAY_SEC Sekunden auf eine
 // Vollbild-Athletenanzeige mit riesiger Rundenzeit.
+// Kleine segmentierte Umschaltung für die Anzeige-Einstellungen des Renntimers.
+function DispSeg({ label, value, opts, onPick }: {
+  label: string; value: string; opts: [string, string][]; onPick: (v: string) => void;
+}) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      <div className="text-sm text-muted" style={{ width: 92, flex: '0 0 auto' }}>{label}</div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        {opts.map(([v, lbl]) => {
+          const active = v === value;
+          return (
+            <button key={v} onClick={() => onPick(v)} style={{
+              padding: '6px 10px', borderRadius: 7, fontSize: 13, cursor: 'pointer',
+              border: active ? '2px solid var(--c-primary)' : '1px solid var(--c-border)',
+              background: active ? '#dbeafe' : 'var(--c-white)',
+              color: active ? 'var(--c-primary)' : 'var(--c-text)',
+              fontWeight: active ? 700 : 400,
+            }}>{lbl}</button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function RenntimerView({ anfahrtSec, lapSec, numRounds, planLabel, onBack }: {
   anfahrtSec: number; lapSec: number; numRounds: number; planLabel: string; onBack: () => void;
 }) {
@@ -979,6 +1004,19 @@ function RenntimerView({ anfahrtSec, lapSec, numRounds, planLabel, onBack }: {
   const [countdown, setCountdown]   = useState(0);
   const [finished, setFinished]     = useState(false);
   const [btnArmed, setBtnArmed]     = useState(false); // Finger liegt auf Button
+
+  // ── Anzeige-Einstellungen (global, in localStorage) ──────────────────────
+  // Betrifft NUR die Vollbild-Athletenanzeige unten. Bewusst kein Backend/kein
+  // Schema — die Werte liegen wie die Spalten-Prefs im localStorage. Eine
+  // pro-Sportler-Ausnahme kommt später zusammen mit dem Pacing-Feature.
+  type DScheme = 'light' | 'dark'; type DFill = 'border' | 'full'; type DNum = 'lap' | 'delta';
+  const [dispScheme, setDispScheme] = useState<DScheme>(() => (localStorage.getItem('pursuitDisp.scheme') as DScheme) || 'light');
+  const [dispFill,   setDispFill]   = useState<DFill>(()   => (localStorage.getItem('pursuitDisp.fill')   as DFill)   || 'border');
+  const [dispNum,    setDispNum]    = useState<DNum>(()    => (localStorage.getItem('pursuitDisp.num')    as DNum)    || 'lap');
+  const [showDispCfg, setShowDispCfg] = useState(false);
+  function pickScheme(v: string) { const s = v as DScheme; setDispScheme(s); localStorage.setItem('pursuitDisp.scheme', s); }
+  function pickFill(v: string)   { const s = v as DFill;   setDispFill(s);   localStorage.setItem('pursuitDisp.fill', s); }
+  function pickNum(v: string)    { const s = v as DNum;    setDispNum(s);    localStorage.setItem('pursuitDisp.num', s); }
 
   const eventsRef     = useRef<TEvent[]>([]);
   const autoAltRef    = useRef(false);
@@ -1123,17 +1161,35 @@ function RenntimerView({ anfahrtSec, lapSec, numRounds, planLabel, onBack }: {
 
   // ── Athletenanzeige (Vollbild) ───────────────────────────────────────────
   if (screen === 'display') {
+    const isDark    = dispScheme === 'dark';
+    const pageBg    = isDark ? '#000000' : 'var(--c-white)';
+    const pageText  = isDark ? '#ffffff' : 'var(--c-text)';
+    const statusCol = style.border;                          // grün/rot/blau aus diffStyle
+    const filled    = dispFill === 'full' && delta !== null; // Vollflächen-Fill erst ab vorhandenem Delta
+
+    const lapText   = lastLapT !== null ? `${lastLapT.toFixed(2)}s` : '–';
+    const deltaText = style.label;
+    const bigText   = dispNum === 'delta' ? deltaText : lapText;
+    const subText   = dispNum === 'delta' ? lapText   : deltaText;
+
+    // Bei Vollfläche trägt der Grund die Statusfarbe → alles weiß für max.
+    // Kontrast. Bei Rahmen bleibt der Grund neutral; im Delta-Modus nimmt die
+    // große Zahl selbst die Statusfarbe an.
+    const bigColor  = filled ? '#ffffff' : (dispNum === 'delta' ? statusCol : pageText);
+    const subColor  = filled ? 'rgba(255,255,255,0.85)' : (dispNum === 'delta' ? pageText : statusCol);
+    const metaColor = filled ? 'rgba(255,255,255,0.85)' : 'var(--c-text-muted)';
+
     return (
       <div style={{
         position: 'fixed', inset: 0, zIndex: 50,
-        background: 'var(--c-white)',
-        border: `16px solid ${style.border}`,
+        background: filled ? statusCol : pageBg,
+        border: filled ? 'none' : `16px solid ${statusCol}`,
         display: 'flex', flexDirection: 'column',
         alignItems: 'center', justifyContent: 'center',
         textAlign: 'center',
-        transition: 'border-color 0.25s',
+        transition: 'background-color 0.25s, border-color 0.25s',
       }}>
-        <div className="text-sm text-muted" style={{ marginBottom: 8 }}>
+        <div style={{ marginBottom: 8, fontSize: 14, color: metaColor }}>
           {planLabel} · Runde {lapCount} / {numRounds}
         </div>
         <div style={{
@@ -1141,21 +1197,21 @@ function RenntimerView({ anfahrtSec, lapSec, numRounds, planLabel, onBack }: {
           fontWeight: 500, lineHeight: 1,
           fontVariantNumeric: 'tabular-nums',
           letterSpacing: '-0.02em',
-          color: 'var(--c-text)',
+          color: bigColor,
         }}>
-          {lastLapT !== null ? `${lastLapT.toFixed(2)}s` : '–'}
+          {bigText}
         </div>
-        <div style={{ fontSize: 'clamp(24px, 8vw, 14vh)', fontWeight: 500, marginTop: 16, color: style.text }}>
-          {style.label}
+        <div style={{ fontSize: 'clamp(24px, 8vw, 14vh)', fontWeight: 500, marginTop: 16, color: subColor }}>
+          {subText}
         </div>
         {countdown > 0 && (
-          <div className="text-xs text-muted" style={{ marginTop: 20 }}>
+          <div style={{ marginTop: 20, fontSize: 12, color: metaColor }}>
             Zurück in {countdown}s
           </div>
         )}
         <button
           className="btn btn-ghost btn-sm"
-          style={{ position: 'absolute', bottom: 24 }}
+          style={{ position: 'absolute', bottom: 24, color: filled ? '#ffffff' : undefined }}
           onClick={() => { clearTimeout(dispTimer.current!); clearInterval(cdInterval.current!); setScreen('race'); }}
         >
           ← Trainer
@@ -1183,7 +1239,31 @@ function RenntimerView({ anfahrtSec, lapSec, numRounds, planLabel, onBack }: {
             {numRounds} Runden · Plan {fmtTime(anfahrtSec + lapSec * (numRounds - 1))}
           </p>
         </div>
+        <button
+          className="btn btn-ghost btn-sm"
+          style={{ flex: '0 0 auto' }}
+          title="Anzeige-Einstellungen"
+          onClick={() => setShowDispCfg(v => !v)}
+        >
+          ⚙ Anzeige
+        </button>
       </div>
+
+      {showDispCfg && (
+        <div className="card mb-4" style={{ padding: 12 }}>
+          <div className="text-xs text-muted" style={{ marginBottom: 10 }}>
+            Vollbild-Athletenanzeige · gilt global
+          </div>
+          <div style={{ display: 'grid', gap: 10 }}>
+            <DispSeg label="Farbe"      value={dispScheme} onPick={pickScheme}
+                     opts={[['light', 'Schwarz auf Weiß'], ['dark', 'Weiß auf Schwarz']]} />
+            <DispSeg label="Anzeige"    value={dispFill}   onPick={pickFill}
+                     opts={[['border', 'Rahmen'], ['full', 'Vollbild']]} />
+            <DispSeg label="Große Zahl" value={dispNum}    onPick={pickNum}
+                     opts={[['lap', 'Rundenzeit'], ['delta', 'Abweichung']]} />
+          </div>
+        </div>
+      )}
 
       {/* Ziel-Anzeige */}
       {finished && (
