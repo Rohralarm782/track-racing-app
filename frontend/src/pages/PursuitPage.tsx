@@ -4,6 +4,7 @@ import { api, athletesApi, athleteShortName, type Athlete, type FuehrungsplanDat
 import { useAdmin } from '../components/Layout';
 import VerfolgungsplanungView, { PlanSaveData, fmtTime } from '../components/VerfolgungsplanungView';
 import FitText from '../components/FitText';
+import { readDisplaySettings, pursuitDisplayStyle } from '../components/pursuitDisplay';
 
 // ── Typen ──────────────────────────────────────────────────────────────────────
 interface SavedPlan {
@@ -320,55 +321,41 @@ export default function PursuitPage() {
   // VIEW: ATHLETENANZEIGE
   // ════════════════════════════════════════════════════════════════════════════
   if (view === 'display') {
-    // Zentrale Anzeige-Einstellungen (Einstellungen → Renntimer-Anzeige),
-    // geräteweit über localStorage. Nur gelesen, hier nicht gesetzt.
-    type DScheme = 'light' | 'dark'; type DFill = 'border' | 'full'; type DNum = 'lap' | 'delta';
-    const dispScheme = (localStorage.getItem('pursuitDisp.scheme') as DScheme) || 'light';
-    const dispFill   = (localStorage.getItem('pursuitDisp.fill')   as DFill)   || 'border';
-    const dispNum    = (localStorage.getItem('pursuitDisp.num')    as DNum)    || 'lap';
-
-    const isDark    = dispScheme === 'dark';
-    const pageBg    = isDark ? '#000000' : 'var(--c-white)';
-    const pageText  = isDark ? '#ffffff' : 'var(--c-text)';
-    const statusCol = style.border;
-    const filled    = dispFill === 'full' && delta !== null;
-
+    // Zentrale Anzeige-Logik (Einstellungen → Renntimer-Anzeige), geräteweit.
+    const dcfg = readDisplaySettings();
+    const ds = pursuitDisplayStyle(delta, dcfg);
     const lapText   = lastLapT !== null ? `${lastLapT.toFixed(2)}s` : '–';
     const deltaText = delta !== null ? `${delta > 0 ? '+' : ''}${delta.toFixed(2)}s` : '–';
-    const bigText   = dispNum === 'delta' ? deltaText : lapText;
-    const subText   = dispNum === 'delta' ? lapText   : deltaText;
-
-    const bigColor  = filled ? '#ffffff' : (dispNum === 'delta' ? statusCol : pageText);
-    const subColor  = filled ? 'rgba(255,255,255,0.85)' : (dispNum === 'delta' ? pageText : statusCol);
-    const metaColor = filled ? 'rgba(255,255,255,0.85)' : 'var(--c-text-muted)';
+    const bigText   = dcfg.num === 'delta' ? deltaText : lapText;
+    const subText   = dcfg.num === 'delta' ? lapText   : deltaText;
 
     return (
       <div style={{
         position: 'fixed', inset: 0, zIndex: 50,
-        background: filled ? statusCol : pageBg,
-        border: filled ? 'none' : `16px solid ${statusCol}`,
+        background: ds.containerBg,
+        border: ds.containerBorder,
         display: 'flex', flexDirection: 'column',
         alignItems: 'center', justifyContent: 'center',
         textAlign: 'center',
         transition: 'background-color 0.25s, border-color 0.25s',
       }}>
-        <div style={{ marginBottom: 8, fontSize: 14, color: metaColor }}>
+        <div style={{ marginBottom: 8, fontSize: 14, color: ds.metaColor }}>
           {planName(activePlan)} · Runde {lapCount} / {timerLaps}
         </div>
         <div style={{ width: '100%', padding: '0 2cm', boxSizing: 'border-box' }}>
-          <FitText text={bigText} color={bigColor} />
+          <FitText text={bigText} color={ds.bigColor} />
         </div>
-        <div style={{ fontSize: 'clamp(16px, 3.5vw, 6vh)', fontWeight: 500, marginTop: 8, color: subColor }}>
+        <div style={{ fontSize: 'clamp(16px, 3.5vw, 6vh)', fontWeight: 500, marginTop: 8, color: ds.subColor }}>
           {subText}
         </div>
         {countdown > 0 && (
-          <div style={{ marginTop: 20, fontSize: 12, color: metaColor }}>
+          <div style={{ marginTop: 20, fontSize: 12, color: ds.metaColor }}>
             Zurück in {countdown}s
           </div>
         )}
         <button
           className="btn btn-ghost btn-sm"
-          style={{ position: 'absolute', bottom: 24, color: filled ? '#ffffff' : undefined }}
+          style={{ position: 'absolute', bottom: 24, color: ds.metaColor }}
           onClick={() => { clearTimeout(dispTimer.current!); clearInterval(cdInterval.current!); setView('race'); }}
         >
           ← Trainer
