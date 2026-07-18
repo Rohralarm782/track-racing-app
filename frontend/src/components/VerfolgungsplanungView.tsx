@@ -29,6 +29,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Athlete, FuehrungsplanData } from '../api/client';
 import { athleteShortName, athleteFullName } from '../api/client';
 import FitText from './FitText';
+import { readDisplaySettings, pursuitDisplayStyle } from './pursuitDisplay';
 
 // ── Typen ──────────────────────────────────────────────────────────────────────
 interface Team {
@@ -982,13 +983,8 @@ function RenntimerView({ anfahrtSec, lapSec, numRounds, planLabel, onBack }: {
   const [btnArmed, setBtnArmed]     = useState(false); // Finger liegt auf Button
 
   // ── Anzeige-Einstellungen (global) ───────────────────────────────────────
-  // Werden zentral unter Einstellungen → Renntimer-Anzeige gesetzt und hier nur
-  // gelesen (localStorage, geräteweit — kein Backend/Schema). Beim Öffnen des
-  // Timers gilt jeweils der aktuelle Stand.
-  type DScheme = 'light' | 'dark'; type DFill = 'border' | 'full'; type DNum = 'lap' | 'delta';
-  const dispScheme = (localStorage.getItem('pursuitDisp.scheme') as DScheme) || 'light';
-  const dispFill   = (localStorage.getItem('pursuitDisp.fill')   as DFill)   || 'border';
-  const dispNum    = (localStorage.getItem('pursuitDisp.num')    as DNum)    || 'lap';
+  // Zentral unter Einstellungen → Renntimer-Anzeige gesetzt, hier nur gelesen.
+  const dcfg = readDisplaySettings();
 
   const eventsRef     = useRef<TEvent[]>([]);
   const autoAltRef    = useRef(false);
@@ -1133,51 +1129,39 @@ function RenntimerView({ anfahrtSec, lapSec, numRounds, planLabel, onBack }: {
 
   // ── Athletenanzeige (Vollbild) ───────────────────────────────────────────
   if (screen === 'display') {
-    const isDark    = dispScheme === 'dark';
-    const pageBg    = isDark ? '#000000' : 'var(--c-white)';
-    const pageText  = isDark ? '#ffffff' : 'var(--c-text)';
-    const statusCol = style.border;                          // grün/rot/blau aus diffStyle
-    const filled    = dispFill === 'full' && delta !== null; // Vollflächen-Fill erst ab vorhandenem Delta
-
+    const ds = pursuitDisplayStyle(delta, dcfg);
     const lapText   = lastLapT !== null ? `${lastLapT.toFixed(2)}s` : '–';
     const deltaText = delta !== null ? `${delta > 0 ? '+' : ''}${delta.toFixed(2)}s` : '–';
-    const bigText   = dispNum === 'delta' ? deltaText : lapText;
-    const subText   = dispNum === 'delta' ? lapText   : deltaText;
-
-    // Bei Vollfläche trägt der Grund die Statusfarbe → alles weiß für max.
-    // Kontrast. Bei Rahmen bleibt der Grund neutral; im Delta-Modus nimmt die
-    // große Zahl selbst die Statusfarbe an.
-    const bigColor  = filled ? '#ffffff' : (dispNum === 'delta' ? statusCol : pageText);
-    const subColor  = filled ? 'rgba(255,255,255,0.85)' : (dispNum === 'delta' ? pageText : statusCol);
-    const metaColor = filled ? 'rgba(255,255,255,0.85)' : 'var(--c-text-muted)';
+    const bigText   = dcfg.num === 'delta' ? deltaText : lapText;
+    const subText   = dcfg.num === 'delta' ? lapText   : deltaText;
 
     return (
       <div style={{
         position: 'fixed', inset: 0, zIndex: 50,
-        background: filled ? statusCol : pageBg,
-        border: filled ? 'none' : `16px solid ${statusCol}`,
+        background: ds.containerBg,
+        border: ds.containerBorder,
         display: 'flex', flexDirection: 'column',
         alignItems: 'center', justifyContent: 'center',
         textAlign: 'center',
         transition: 'background-color 0.25s, border-color 0.25s',
       }}>
-        <div style={{ marginBottom: 8, fontSize: 14, color: metaColor }}>
+        <div style={{ marginBottom: 8, fontSize: 14, color: ds.metaColor }}>
           {planLabel} · Runde {lapCount} / {numRounds}
         </div>
         <div style={{ width: '100%', padding: '0 2cm', boxSizing: 'border-box' }}>
-          <FitText text={bigText} color={bigColor} />
+          <FitText text={bigText} color={ds.bigColor} />
         </div>
-        <div style={{ fontSize: 'clamp(16px, 3.5vw, 6vh)', fontWeight: 500, marginTop: 8, color: subColor }}>
+        <div style={{ fontSize: 'clamp(16px, 3.5vw, 6vh)', fontWeight: 500, marginTop: 8, color: ds.subColor }}>
           {subText}
         </div>
         {countdown > 0 && (
-          <div style={{ marginTop: 20, fontSize: 12, color: metaColor }}>
+          <div style={{ marginTop: 20, fontSize: 12, color: ds.metaColor }}>
             Zurück in {countdown}s
           </div>
         )}
         <button
           className="btn btn-ghost btn-sm"
-          style={{ position: 'absolute', bottom: 24, color: filled ? '#ffffff' : undefined }}
+          style={{ position: 'absolute', bottom: 24, color: ds.metaColor }}
           onClick={() => { clearTimeout(dispTimer.current!); clearInterval(cdInterval.current!); setScreen('race'); }}
         >
           ← Trainer
