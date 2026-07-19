@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import PdfViewer from '../components/PdfViewer';
 import EventTabBar from '../components/EventTabBar';
 import SettingsGearButton from '../components/SettingsGearButton';
+import KioskButton from '../components/KioskButton';
 import ScheduleImport from '../components/ScheduleImport';
 import { useAdmin } from '../components/Layout';
 import {
@@ -325,6 +326,7 @@ export default function SchedulePage() {
               {rematchBusy ? '…' : '🔄 Kommuniqués abgleichen'}
             </button>
           )}
+          {eventId && <KioskButton eventId={eventId} />}
           {eventId && <SettingsGearButton eventId={eventId} />}
         </div>
       </div>
