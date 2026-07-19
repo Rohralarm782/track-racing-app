@@ -13,12 +13,8 @@ import SchedulePage from './pages/SchedulePage';
 import SettingsPage from './pages/SettingsPage';
 import AthletesPage from './pages/AthletesPage';
 import AthleteDetail from './pages/AthleteDetail';
-import KioskPage from './pages/KioskPage';
 
 const router = createBrowserRouter([
-  // Kiosk-Modus bewusst OHNE Layout (kein App-Header) — füllt den ganzen
-  // Bildschirm als Fahrerlager-Anzeige. Siehe KioskPage.
-  { path: 'events/:id/kiosk', element: <KioskPage /> },
   {
     path: '/',
     element: <Layout />,
