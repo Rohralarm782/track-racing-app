@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import PdfViewer from '../components/PdfViewer';
 import EventTabBar from '../components/EventTabBar';
 import SettingsGearButton from '../components/SettingsGearButton';
+import KioskButton from '../components/KioskButton';
 import AnsetzungImport from '../components/AnsetzungImport';
 import OmniumImport from '../components/OmniumImport';
 import { useAdmin } from '../components/Layout';
@@ -496,7 +497,12 @@ export default function CommuniquesPage() {
       </div>
       <div className="flex-between mb-4" style={{ alignItems: 'flex-start' }}>
         <h1 style={{ margin: 0 }}>{event?.name ?? 'Kommuniqués'}</h1>
-        {eventId && <SettingsGearButton eventId={eventId} />}
+        {eventId && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <KioskButton eventId={eventId} />
+            <SettingsGearButton eventId={eventId} />
+          </div>
+        )}
       </div>
 
       {eventId && <EventTabBar eventId={eventId} active="kommuniques" />}
