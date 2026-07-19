@@ -50,6 +50,20 @@ export default function EventTabBar({ eventId, active, onLocalTabChange }: Event
       <button style={tabStyle('uebersicht')} onClick={() => go('uebersicht')}>Übersicht</button>
       <button style={tabStyle('kommuniques')} onClick={() => go('kommuniques')}>🔔 Kommuniqués</button>
       <button style={tabStyle('zeitplan')} onClick={() => go('zeitplan')}>🗓️ Zeitplan</button>
+      {/* Kein Inhalts-Tab, sondern Start der Fahrerlager-Anzeige (Vollbild-Kiosk).
+          Bewusst schmal (kein flex:1), damit die drei Tabs gleichrangig bleiben. */}
+      <button
+        onClick={() => navigate(`/events/${eventId}/kiosk`)}
+        title="Fahrerlager-Anzeige im Vollbild"
+        aria-label="Kiosk-Modus starten"
+        style={{
+          flexShrink: 0, padding: '7px 11px', border: 'none', borderRadius: 7,
+          background: 'transparent', color: 'var(--c-text-muted)',
+          fontSize: 12.5, fontWeight: 600, cursor: 'pointer',
+        }}
+      >
+        🖥️ Kiosk
+      </button>
     </div>
   );
 }
