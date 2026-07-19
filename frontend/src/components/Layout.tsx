@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useState } from 'react';
 import { Link, Outlet, useNavigate } from 'react-router-dom';
 import { api, clearToken, getToken, setToken } from '../api/client';
+import KioskShell from './KioskShell';
 
 // ─── Admin Context ────────────────────────────────────────────────────────────
 
@@ -19,6 +20,23 @@ export function useAdmin() {
   return useContext(AdminContext);
 }
 
+// ─── Kiosk Context ──────────────────────────────────────────────────────────
+// Der Kiosk-Modus ist ein Layout-weiter Zustand: Ist er aktiv, wird der normale
+// App-Header durch die gesperrte KioskShell ersetzt, während der Seiteninhalt
+// (Zeitplan/Kommuniqués mit allen Funktionen) unverändert bleibt. Seiten starten
+// ihn über useKiosk().startKiosk(eventId) — siehe KioskButton.
+
+interface KioskCtx {
+  active: boolean;
+  startKiosk: (eventId: string) => void;
+}
+
+const KioskContext = createContext<KioskCtx>({ active: false, startKiosk: () => {} });
+
+export function useKiosk() {
+  return useContext(KioskContext);
+}
+
 // ─── Layout ───────────────────────────────────────────────────────────────────
 
 export default function Layout() {
@@ -28,6 +46,25 @@ export default function Layout() {
   const [loading, setLoading]    = useState(false);
   const [error, setError]        = useState('');
   const navigate = useNavigate();
+
+  // Kiosk-Modus: aktiv für genau eine Veranstaltung. In sessionStorage gehalten,
+  // damit ein versehentlicher Reload den gesperrten Zustand nicht aufhebt
+  // (Vollbild geht beim Reload verloren → KioskShell zeigt dann „Wieder Vollbild").
+  const [kioskEventId, setKioskEventId] = useState<string | null>(
+    () => sessionStorage.getItem('kiosk_active_event'));
+
+  const startKiosk = useCallback((eventId: string) => {
+    sessionStorage.setItem('kiosk_active_event', eventId);
+    setKioskEventId(eventId);
+    // Direkt im Klick (User-Geste) darf Vollbild angefordert werden.
+    document.documentElement.requestFullscreen?.().catch(() => {});
+  }, []);
+
+  const stopKiosk = useCallback(() => {
+    sessionStorage.removeItem('kiosk_active_event');
+    setKioskEventId(null);
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  }, []);
 
   const logout = useCallback(() => {
     clearToken();
@@ -52,7 +89,12 @@ export default function Layout() {
 
   return (
     <AdminContext.Provider value={{ isAdmin: !!token, token, logout, openLogin: () => setShowLogin(true) }}>
-      {/* ── Header ── */}
+    <KioskContext.Provider value={{ active: kioskEventId != null, startKiosk }}>
+      {kioskEventId ? (
+        /* ── Kiosk-Kopfleiste statt Header ── */
+        <KioskShell eventId={kioskEventId} onExit={stopKiosk} />
+      ) : (
+      /* ── Header ── */
       <header className="header">
         <div className="header-inner">
           <Link to="/" className="header-brand" aria-label="Startseite">
@@ -83,9 +125,10 @@ export default function Layout() {
           </nav>
         </div>
       </header>
+      )}
 
-      {/* ── Login Modal ── */}
-      {showLogin && (
+      {/* ── Login Modal (im Kiosk-Modus unterdrückt) ── */}
+      {!kioskEventId && showLogin && (
         <div className="modal-overlay" onClick={() => setShowLogin(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <p className="modal-title">Admin-Login</p>
@@ -117,6 +160,7 @@ export default function Layout() {
       <main>
         <Outlet />
       </main>
+    </KioskContext.Provider>
     </AdminContext.Provider>
   );
 }
