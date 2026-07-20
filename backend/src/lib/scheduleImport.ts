@@ -1,7 +1,8 @@
+import type { SourceType } from '@prisma/client';
 import { z } from 'zod';
 import Anthropic from '@anthropic-ai/sdk';
 import prisma from '../prisma';
-import { fetchShareFile } from './webdav';
+import { fetchDocumentFile } from './remoteSource';
 import { parseCommuniqueNumber } from './classify';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -395,11 +396,11 @@ export function loadScheduleWithLinks(eventId: string) {
 //   3. Sonst: neuer Tag, hinten an die höchste bestehende Nummer angehängt.
 export async function autoImportScheduleFromDocument(
   eventId: string,
-  doc: { id: string; fileName: string },
-  shareToken: string,
+  doc: { id: string; fileName: string; remoteUrl?: string | null },
+  source: { sourceType: SourceType; shareToken: string | null },
 ): Promise<void> {
   try {
-    const file = await fetchShareFile(shareToken, doc.fileName);
+    const file = await fetchDocumentFile(source, { fileName: doc.fileName, remoteUrl: doc.remoteUrl ?? null });
     const base64 = file.data.toString('base64');
     const rawEntries = await analyzeZeitplanPdf(base64);
 
