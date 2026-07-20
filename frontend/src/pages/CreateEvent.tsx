@@ -35,7 +35,7 @@ export default function CreateEvent() {
       // im Kommuniqués-Tab nachtragen.
       const token = shareLink.trim() ? extractShareToken(shareLink.trim()) : null;
       if (token) {
-        try { await communiquesApi.setSource(ev.id, token); } catch { /* still, im Kommuniqués-Tab nachtragbar */ }
+        try { await communiquesApi.setSource(ev.id, { sourceType: 'WEBDAV', shareToken: token }); } catch { /* still, im Kommuniqués-Tab nachtragbar */ }
       }
 
       navigate(`/events/${ev.id}`);
