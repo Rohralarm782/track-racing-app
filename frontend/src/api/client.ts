@@ -142,6 +142,7 @@ export interface CommuniqueDocument {
   isPinned: boolean;
   remoteModifiedAt: string;
   discoveredAt: string;
+  remoteUrl?: string | null;
   disciplineCode?: string | null;
   phaseLabel?: string | null;
   mevNames?: string[];
@@ -152,13 +153,26 @@ export interface CommuniqueDocument {
   mevAnalyzedAt?: string | null;
 }
 
+export type CommuniqueSourceType = 'WEBDAV' | 'HTML';
+
 export interface CommuniqueSource {
   id: string;
   eventId: string;
-  shareToken: string;
+  sourceType: CommuniqueSourceType;
+  shareToken: string | null;   // nur WEBDAV
+  htmlPageUrls: string[];      // nur HTML
   label: string | null;
   lastPolledAt: string | null;
   documents: CommuniqueDocument[];
+}
+
+// Konfiguration, die der Setup-Endpunkt erwartet — je nach sourceType ist
+// entweder shareToken (WEBDAV) oder htmlPageUrls (HTML) gesetzt.
+export interface CommuniqueSourceConfig {
+  sourceType: CommuniqueSourceType;
+  shareToken?: string;
+  htmlPageUrls?: string[];
+  label?: string;
 }
 
 // ─── Zeitplan ────────────────────────────────────────────────────────────────
@@ -272,8 +286,8 @@ export const api = {
 export const communiquesApi = {
   get: (eventId: string) => api.get<CommuniqueSource | null>(`/api/communiques/${eventId}`),
 
-  setSource: (eventId: string, shareToken: string, label?: string) =>
-    api.post<CommuniqueSource>(`/api/communiques/${eventId}`, { shareToken, label }),
+  setSource: (eventId: string, config: CommuniqueSourceConfig) =>
+    api.post<CommuniqueSource>(`/api/communiques/${eventId}`, config),
 
   poll: (eventId: string) =>
     api.post<{ newCount: number; newDocs: CommuniqueDocument[] }>(`/api/communiques/${eventId}/poll`, {}),
