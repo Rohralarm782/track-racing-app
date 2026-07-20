@@ -9,7 +9,8 @@ import OmniumImport from '../components/OmniumImport';
 import { useAdmin } from '../components/Layout';
 import {
   api, communiquesApi,
-  type CommuniqueSource, type CommuniqueDocument as CommuniqueDocumentT, type Event as EventT,
+  type CommuniqueSource, type CommuniqueSourceConfig,
+  type CommuniqueDocument as CommuniqueDocumentT, type Event as EventT,
 } from '../api/client';
 
 const AK_OPTIONS = ['U15m', 'U15w', 'U17m', 'U17w', 'U19m', 'U19w', 'Elite m', 'Elite w'];
@@ -29,6 +30,24 @@ function extractShareToken(input: string): string | null {
   const match = input.match(/\/s\/([A-Za-z0-9]+)/);
   if (match) return match[1];
   if (/^[A-Za-z0-9]{8,}$/.test(input)) return input;
+  return null;
+}
+
+// Erkennt aus der Setup-Eingabe automatisch die Quellenart:
+//   • Nextcloud-Share-Link (…/s/<token>) oder blanker Token         → WEBDAV
+//   • eine oder mehrere http(s)-Seiten-URLs (Zeile/Komma/Leerzeichen) → HTML
+// Der Token-Check läuft zuerst; eine reine Webseiten-URL (mit "://") kann ihn
+// nicht auslösen, fällt also sauber in den HTML-Zweig.
+function parseSourceInput(raw: string): CommuniqueSourceConfig | null {
+  const text = raw.trim();
+  if (!text) return null;
+
+  const token = extractShareToken(text);
+  if (token) return { sourceType: 'WEBDAV', shareToken: token };
+
+  const urls = text.split(/[\s,]+/).map(u => u.trim()).filter(u => /^https?:\/\//i.test(u));
+  if (urls.length > 0) return { sourceType: 'HTML', htmlPageUrls: urls };
+
   return null;
 }
 
@@ -208,11 +227,11 @@ export default function CommuniquesPage() {
   async function handleSetupSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!eventId || !shareInput.trim()) return;
-    const token = extractShareToken(shareInput.trim());
-    if (!token) { setError('Konnte keinen Share-Token aus dem Link erkennen.'); return; }
+    const config = parseSourceInput(shareInput);
+    if (!config) { setError('Bitte einen Nextcloud-Share-Link oder eine Webseiten-URL (https://…) eingeben.'); return; }
     setSaving(true); setError('');
     try {
-      const src = await communiquesApi.setSource(eventId, token);
+      const src = await communiquesApi.setSource(eventId, config);
       setSource({ ...src, documents: [] });
       await handleManualRefresh();
     } catch (e: any) {
@@ -511,19 +530,22 @@ export default function CommuniquesPage() {
 
       {!source ? (
         <div className="card">
-          <h3 style={{ marginBottom: 8 }}>Nextcloud-Link hinterlegen</h3>
+          <h3 style={{ marginBottom: 8 }}>Kommuniqué-Quelle hinterlegen</h3>
           <p className="text-sm text-muted" style={{ marginTop: 0, marginBottom: 14 }}>
-            Fügt den öffentlichen Share-Link ein, unter dem Startlisten und Ergebnisse
-            für dieses Event veröffentlicht werden.
+            Entweder den öffentlichen <strong>Nextcloud-Share-Link</strong> einfügen, oder die
+            <strong> Webseiten-Adresse(n)</strong>, auf denen die PDFs direkt verlinkt sind
+            (z.&nbsp;B. der Ergebnis-/Meldelisten-Bereich der Veranstalter-Homepage). Mehrere
+            Seiten einfach zeilenweise untereinander — die Quellenart wird automatisch erkannt.
           </p>
           <form onSubmit={handleSetupSubmit}>
             <div className="form-group" style={{ marginBottom: 10 }}>
-              <input
+              <textarea
                 className="form-input"
-                type="text"
-                placeholder="https://share.spurtlinie.de/index.php/s/…"
+                rows={3}
+                placeholder={'https://share.spurtlinie.de/index.php/s/…\noder\nhttps://bahndm-buettgen.de/meldelisten-ergebnisse-allgemein/'}
                 value={shareInput}
                 onChange={e => setShareInput(e.target.value)}
+                style={{ resize: 'vertical', fontFamily: 'inherit' }}
               />
             </div>
             <button className="btn btn-primary" type="submit" disabled={saving || !shareInput.trim()}>
