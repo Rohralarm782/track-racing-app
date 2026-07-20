@@ -67,17 +67,62 @@ function unitCountFor(
 }
 
 /**
- * Ob für diesen Eintrag eine ECHTE Runden-/Laufzahl bekannt ist (Startliste
- * oder manuelle Eingabe) oder nur eine Rückfallgröße verwendet wurde — damit
- * das Frontend anzeigen kann, wo eine manuelle Korrektur sinnvoll wäre.
+ * Ob für diesen Eintrag eine ECHTE Runden-/Laufzahl vorliegt — entweder aus
+ * der verknüpften Startliste (Kommuniqué) oder per manueller Eingabe. Nur dann
+ * ist unsere Formel-Schätzung besser als die vom Veranstalter geplante Dauer.
+ */
+function hasRealUnitCount(
+  entry: { massStart: boolean; manualUnitCount?: number | null },
+  linkedDoc: { roundCount: number | null; heatCount: number | null } | null | undefined,
+): boolean {
+  if (entry.manualUnitCount != null) return true;
+  const known = linkedDoc ? (entry.massStart ? linkedDoc.roundCount : linkedDoc.heatCount) : null;
+  return known != null;
+}
+
+/**
+ * Wählt die Basis-Dauer (noch ohne Kalibrierungsfaktor) nach fester Priorität:
+ *   1. Echte Runden-/Laufzahl (Startliste ODER manuelle Eingabe) → unsere Formel
+ *   2. Vom Veranstalter im Zeitplan geplante Dauer (plannedDurationMin) — solange
+ *      (1) fehlt, ist dieser Wert deutlich verlässlicher als unsere blinde
+ *      Rückfall-Annahme (real aufgetreten: unsere Fallback-Zahlen ließen die
+ *      Zeiten stark vom veröffentlichten Zeitplan abweichen).
+ *   3. Blinde Rückfallgröße (Formel mit Rückfall-Runden-/Laufzahl)
+ * INFO-Einträge (Warm-up/Pausen) bleiben bewusst unschätzbar (null) — sie
+ * ankern im Frontend auf ihre eigene geplante Uhrzeit.
+ */
+function baseDurationMinutes(
+  entry: { disciplineLabel: string; massStart: boolean; type: string; phase: string | null; manualUnitCount?: number | null; plannedDurationMin?: number | null },
+  linkedDoc: { roundCount: number | null; heatCount: number | null } | null | undefined,
+  settings: AppSettings,
+): number | null {
+  if (entry.type === 'INFO') return null;
+
+  if (hasRealUnitCount(entry, linkedDoc)) {
+    return baseFormulaMinutes(entry, unitCountFor(entry, linkedDoc, settings), settings);
+  }
+  if (entry.plannedDurationMin != null && entry.plannedDurationMin > 0) {
+    return entry.plannedDurationMin;
+  }
+  return baseFormulaMinutes(entry, unitCountFor(entry, linkedDoc, settings), settings);
+}
+
+/**
+ * Ob die Schätzung nur auf einer blinden Rückfallgröße beruht — also WEDER eine
+ * echte Runden-/Laufzahl (Startliste/manuell) NOCH eine vom Veranstalter
+ * geplante Dauer vorliegt. Signal fürs Frontend, eine manuelle Eingabe
+ * anzubieten. Bei vorhandener Veranstalter-Dauer ist es kein blinder Schätzwert
+ * mehr → false.
  */
 export function usedFallback(
-  entry: { massStart: boolean; manualUnitCount?: number | null },
+  entry: { massStart: boolean; manualUnitCount?: number | null; plannedDurationMin?: number | null },
   linkedDoc: { roundCount: number | null; heatCount: number | null } | null | undefined,
 ): boolean {
   if (entry.manualUnitCount != null) return false;
   const known = linkedDoc ? (entry.massStart ? linkedDoc.roundCount : linkedDoc.heatCount) : null;
-  return known == null;
+  if (known != null) return false;
+  if (entry.plannedDurationMin != null && entry.plannedDurationMin > 0) return false;
+  return true;
 }
 
 /**
@@ -88,12 +133,11 @@ export function usedFallback(
  * Einträgen nicht unnötig oft dieselbe Zeile lädt.
  */
 export async function estimateMinutes(
-  entry: { ak: string; disciplineLabel: string; massStart: boolean; type: string; phase: string | null; manualUnitCount?: number | null },
+  entry: { ak: string; disciplineLabel: string; massStart: boolean; type: string; phase: string | null; manualUnitCount?: number | null; plannedDurationMin?: number | null },
   linkedDoc: { roundCount: number | null; heatCount: number | null } | null | undefined,
   settings: AppSettings,
 ): Promise<number | null> {
-  const unitCount = unitCountFor(entry, linkedDoc, settings);
-  const base = baseFormulaMinutes(entry, unitCount, settings);
+  const base = baseDurationMinutes(entry, linkedDoc, settings);
   if (base == null) return null;
 
   const cal = await prisma.durationEstimate.findUnique({
