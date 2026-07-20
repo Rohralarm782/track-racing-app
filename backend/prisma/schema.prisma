@@ -406,6 +406,13 @@ model ScheduleEntry {
   // ändert nichts an der eigentlichen Renn-Wertung.
   manualUnitCount Int?
 
+  // Vom Veranstalter im Zeitplan-PDF angegebene geplante Dauer dieses
+  // Programmpunkts in Minuten (Spalte "Zeit (min.)" o.ä.), falls vorhanden.
+  // Wird in der Dauer-Schätzung bevorzugt verwendet, solange keine echte
+  // Runden-/Laufzahl aus einer Startliste (oder eine manuelle Eingabe)
+  // vorliegt — siehe durationEstimate.ts. null = keine Angabe im Zeitplan.
+  plannedDurationMin Int?
+
   liveStatus EventStatus?
   statusLogEntries StatusUpdateLog[]
 
