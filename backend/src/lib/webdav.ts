@@ -3,6 +3,9 @@ import { XMLParser } from 'fast-xml-parser';
 export interface RemoteFile {
   fileName: string;
   modifiedAt: Date;
+  // Nur bei HTML-Quellen gesetzt: absolute PDF-URL. Bei WebDAV undefined
+  // (Abruf erfolgt über shareToken + fileName).
+  url?: string;
 }
 
 const parser = new XMLParser({ ignoreAttributes: false, removeNSPrefix: true });
