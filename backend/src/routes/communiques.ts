@@ -1,9 +1,11 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { Prisma } from '@prisma/client';
+import { Prisma, CommuniqueSource } from '@prisma/client';
 import prisma from '../prisma';
 import { requireAdmin } from '../middleware/auth';
-import { listShareFiles, fetchShareFile } from '../lib/webdav';
+import { listShareFiles } from '../lib/webdav';
+import { listHtmlFiles } from '../lib/htmlScrape';
+import { fetchDocumentFile } from '../lib/remoteSource';
 import { classifyFileName } from '../lib/classify';
 import { getCachedFile, setCachedFile } from '../lib/fileCache';
 import { notifyNewDocuments } from '../lib/push';
@@ -30,9 +32,16 @@ router.get('/:eventId', async (req, res, next) => {
 });
 
 const SourceSchema = z.object({
-  shareToken: z.string().min(1),
+  sourceType: z.enum(['WEBDAV', 'HTML']).default('WEBDAV'),
+  shareToken: z.string().optional(),
+  htmlPageUrls: z.array(z.string().url()).optional(),
   label: z.string().optional(),
-});
+}).refine(
+  d => d.sourceType === 'HTML'
+    ? (d.htmlPageUrls?.length ?? 0) > 0
+    : !!d.shareToken?.trim(),
+  { message: 'WEBDAV benötigt einen shareToken, HTML mindestens eine Seiten-URL.' },
+);
 
 // POST /api/communiques/:eventId — Share-Link hinterlegen (Admin)
 router.post('/:eventId', requireAdmin, async (req, res, next) => {
@@ -40,10 +49,19 @@ router.post('/:eventId', requireAdmin, async (req, res, next) => {
     const parsed = SourceSchema.safeParse(req.body);
     if (!parsed.success) { res.status(400).json(parsed.error.flatten()); return; }
 
+    const { sourceType, shareToken, htmlPageUrls, label } = parsed.data;
+    // Nur die zur Quellenart passenden Felder schreiben, die jeweils andere
+    // Konfiguration wird geleert (sauberer Wechsel WebDAV <-> HTML).
+    const data = {
+      sourceType,
+      shareToken: sourceType === 'WEBDAV' ? (shareToken?.trim() || null) : null,
+      htmlPageUrls: sourceType === 'HTML' ? (htmlPageUrls ?? []) : [],
+      ...(label !== undefined ? { label } : {}),
+    };
     const source = await prisma.communiqueSource.upsert({
       where: { eventId: req.params.eventId },
-      create: { eventId: req.params.eventId, ...parsed.data },
-      update: parsed.data,
+      create: { eventId: req.params.eventId, ...data },
+      update: data,
     });
     res.status(201).json(source);
   } catch (e) { next(e); }
@@ -55,7 +73,7 @@ router.post('/:eventId/poll', async (req, res, next) => {
     const source = await prisma.communiqueSource.findUnique({ where: { eventId: req.params.eventId } });
     if (!source) { res.status(404).json({ error: 'Keine Quelle hinterlegt' }); return; }
 
-    const newDocs = await pollSource(source.id, source.shareToken, source.eventId);
+    const newDocs = await pollSource(source);
     res.json({ newCount: newDocs.length, newDocs });
   } catch (e) { next(e); }
 });
@@ -119,7 +137,7 @@ router.get('/:eventId/file/:documentId', async (req, res, next) => {
     const cacheKey = `${doc.id}:${doc.remoteModifiedAt.toISOString()}`;
     let file = getCachedFile(cacheKey);
     if (!file) {
-      file = await fetchShareFile(doc.source.shareToken, doc.fileName);
+      file = await fetchDocumentFile(doc.source, doc);
       setCachedFile(cacheKey, file);
     }
 
@@ -162,7 +180,7 @@ router.post('/:eventId/documents/:documentId/reanalyze-mev', requireAdmin, async
       res.status(404).json({ error: 'Dokument nicht gefunden' });
       return;
     }
-    await analyzeMevForDocument(doc, doc.source.shareToken);
+    await analyzeMevForDocument(doc, doc.source);
     const updated = await prisma.communiqueDocument.findUnique({ where: { id: doc.id } });
     res.json(updated);
   } catch (e) { next(e); }
@@ -189,7 +207,7 @@ router.post('/:eventId/documents/:documentId/import-schedule', requireAdmin, asy
       return;
     }
 
-    await autoImportScheduleFromDocument(req.params.eventId, doc, doc.source.shareToken);
+    await autoImportScheduleFromDocument(req.params.eventId, doc, doc.source);
     res.status(204).send();
   } catch (e) { next(e); }
 });
@@ -199,8 +217,11 @@ router.post('/:eventId/documents/:documentId/import-schedule', requireAdmin, asy
  * neue Einträge speichern und Push auslösen. Wird sowohl vom manuellen
  * Poll-Endpunkt als auch vom Hintergrund-Interval in index.ts genutzt.
  */
-export async function pollSource(sourceId: string, shareToken: string, eventId: string) {
-  const remoteFiles = await listShareFiles(shareToken);
+export async function pollSource(source: CommuniqueSource) {
+  const { id: sourceId, eventId } = source;
+  const remoteFiles = source.sourceType === 'HTML'
+    ? await listHtmlFiles(source.htmlPageUrls)
+    : await listShareFiles(source.shareToken ?? '');
   const known = await prisma.communiqueDocument.findMany({ where: { sourceId } });
   const knownMap = new Map(known.map(d => [d.fileName, d]));
 
@@ -237,8 +258,8 @@ export async function pollSource(sourceId: string, shareToken: string, eventId: 
         const { docType, ak, discipline, disciplineCode, phaseLabel } = classifyFileName(f.fileName);
         return prisma.communiqueDocument.upsert({
           where: { sourceId_fileName: { sourceId, fileName: f.fileName } },
-          create: { sourceId, fileName: f.fileName, docType, ak, discipline, disciplineCode, phaseLabel, remoteModifiedAt: f.modifiedAt },
-          update: { remoteModifiedAt: f.modifiedAt, docType, ak, discipline, disciplineCode, phaseLabel },
+          create: { sourceId, fileName: f.fileName, docType, ak, discipline, disciplineCode, phaseLabel, remoteModifiedAt: f.modifiedAt, remoteUrl: f.url ?? null },
+          update: { remoteModifiedAt: f.modifiedAt, docType, ak, discipline, disciplineCode, phaseLabel, remoteUrl: f.url ?? null },
         });
       })
     );
@@ -275,7 +296,7 @@ export async function pollSource(sourceId: string, shareToken: string, eventId: 
       || needsRosterRecheck(d, startlists),
   );
   for (const doc of needsAnalysis) {
-    await analyzeMevForDocument(doc, shareToken);
+    await analyzeMevForDocument(doc, source);
   }
 
   // Zweiter Durchgang: Die Reihenfolge oben ist nicht garantiert — ein Dokument
@@ -287,13 +308,13 @@ export async function pollSource(sourceId: string, shareToken: string, eventId: 
       where: { sourceId, docType: 'STARTLISTE' },
     });
     for (const doc of refreshed.filter(d => needsRosterRecheck(d, refreshed))) {
-      await analyzeMevForDocument(doc, shareToken);
+      await analyzeMevForDocument(doc, source);
     }
   }
 
   const newZeitplanDocs = created.filter(d => d.docType === 'ZEITPLAN');
   for (const doc of newZeitplanDocs) {
-    await autoImportScheduleFromDocument(eventId, doc, shareToken);
+    await autoImportScheduleFromDocument(eventId, doc, source);
   }
 
   // ── Zeitplan-Verknüpfung nachziehen ───────────────────────────────────────
