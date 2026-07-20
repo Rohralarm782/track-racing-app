@@ -1,6 +1,7 @@
+import type { SourceType } from '@prisma/client';
 import Anthropic from '@anthropic-ai/sdk';
 import prisma from '../prisma';
-import { fetchShareFile } from './webdav';
+import { fetchDocumentFile } from './remoteSource';
 import { getSettings } from './settings';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -36,6 +37,7 @@ interface AnalyzableDoc {
   fileName: string;
   ak: string;
   disciplineCode?: string | null;
+  remoteUrl?: string | null; // nur HTML-Quellen; bei WebDAV null/undefined
 }
 
 /**
@@ -99,7 +101,7 @@ async function loadMevRoster(doc: AnalyzableDoc): Promise<Array<{ startNo: numbe
  */
 export async function analyzeMevForDocument(
   doc: AnalyzableDoc,
-  shareToken: string,
+  source: { sourceType: SourceType; shareToken: string | null },
 ): Promise<void> {
   try {
     const settings = await getSettings();
@@ -116,7 +118,7 @@ ${roster.map(r => `- Startnummer ${r.startNo ?? '?'} = ${r.name}`).join('\n')}
 Dann gelten GENAU diese Fahrer als "${lv}". Erkenne sie in der Tabelle vorrangig an der STARTNUMMER (innerhalb der Veranstaltung eindeutig), hilfsweise am Namen. Nimm keine anderen Fahrer auf.
 Hat die Tabelle dagegen eine LV-Spalte, ist AUSSCHLIESSLICH diese Spalte maßgeblich — die Liste oben dann ignorieren.`;
 
-    const file = await fetchShareFile(shareToken, doc.fileName);
+    const file = await fetchDocumentFile(source, { fileName: doc.fileName, remoteUrl: doc.remoteUrl ?? null });
     const base64 = file.data.toString('base64');
 
     const message = await anthropic.messages.create({
