@@ -40,6 +40,7 @@ router.post('/events/:id/schedule', requireAdmin, async (req, res, next) => {
           phase: e.phase ?? null,
           type: e.type,
           massStart: e.massStart,
+          plannedDurationMin: e.plannedDurationMin ?? null,
           order: i,
         })),
       });
@@ -57,6 +58,7 @@ router.post('/events/:id/schedule', requireAdmin, async (req, res, next) => {
 async function withEstimates<T extends {
   ak: string; disciplineLabel: string; massStart: boolean; type: string; phase: string | null;
   manualUnitCount: number | null;
+  plannedDurationMin: number | null;
   linkedDocument: { roundCount: number | null; heatCount: number | null } | null;
 }>(
   entries: T[],
