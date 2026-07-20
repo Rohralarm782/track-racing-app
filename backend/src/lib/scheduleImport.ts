@@ -16,7 +16,7 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const ZEITPLAN_PROMPT = `Analysiere diesen Zeitplan einer Bahnrad-Veranstaltung (kann mehrere Tage umfassen).
 Gib NUR JSON zurück (kein Markdown, kein Text davor/danach):
 
-{"entries":[{"day":1,"dayLabel":"Mittwoch","time":"09:00","ak":"Alle","disciplineLabel":"Warm-up für Sportlerinnen/Sportler aus Session 1","phase":null,"type":"INFO","massStart":false},{"day":1,"dayLabel":"Mittwoch","time":"10:00","ak":"U17m","disciplineLabel":"Punktefahren","phase":"1. Vorlauf","type":"RACE","massStart":true},{"day":1,"dayLabel":"Mittwoch","time":"16:10","ak":"Alle","disciplineLabel":"Warm-up für Sportlerinnen/Sportler aus Session 2","phase":null,"type":"INFO","massStart":false},{"day":1,"dayLabel":"Mittwoch","time":"17:50","ak":"U17m","disciplineLabel":"Punktefahren","phase":"Finale","type":"RACE","massStart":true}]}
+{"entries":[{"day":1,"dayLabel":"Mittwoch","time":"09:00","ak":"Alle","disciplineLabel":"Warm-up für Sportlerinnen/Sportler aus Session 1","phase":null,"type":"INFO","massStart":false,"plannedDurationMin":50},{"day":1,"dayLabel":"Mittwoch","time":"10:00","ak":"U17m","disciplineLabel":"Punktefahren","phase":"1. Vorlauf","type":"RACE","massStart":true,"plannedDurationMin":25},{"day":1,"dayLabel":"Mittwoch","time":"16:10","ak":"Alle","disciplineLabel":"Warm-up für Sportlerinnen/Sportler aus Session 2","phase":null,"type":"INFO","massStart":false,"plannedDurationMin":50},{"day":1,"dayLabel":"Mittwoch","time":"17:50","ak":"U17m","disciplineLabel":"Punktefahren","phase":"Finale","type":"RACE","massStart":true,"plannedDurationMin":30}]}
 
 Das Beispiel oben zeigt bewusst ZWEI Warm-up-Einträge (09:00 für Session 1, 16:10 für Session 2) — genau dieses Muster (ein Warm-up-Hinweis pro Session, jeweils mit eigener Uhrzeit) kommt in echten Zeitplänen praktisch immer vor. Beide MÜSSEN als eigene Einträge erscheinen, nicht nur der erste.
 
@@ -30,6 +30,7 @@ Regeln:
 - type: "RACE" für Wettkämpfe, "CEREMONY" für Siegerehrungen, "INFO" für Warm-Up/Bahn-Öffnung/Pausen/Ende-Hinweise
 - WICHTIG: JEDE Zeile im Dokument wird zu einem eigenen Eintrag — auch INFO-Zeilen wie Warm-up/Bahn-Öffnung, die sich fast wortgleich wiederholen (siehe Beispiel oben). Niemals eine wiederholte/ähnliche Zeile als Duplikat auslassen, nur weil der Text einer früheren Zeile ähnelt — jede Session hat typischerweise ihren EIGENEN Warm-up-Hinweis mit eigener Uhrzeit direkt vor der Session-Überschrift.
 - massStart: true bei Massenstart-Formaten (Punktefahren, Madison, Scratch, Ausscheidungsfahren, Temporunden), false bei Einzelstart-Formaten (Zeitfahren, Verfolgung, Sprint)
+- plannedDurationMin: die vom Veranstalter GEPLANTE Dauer dieses Programmpunkts in MINUTEN als ganze Zahl, falls der Zeitplan eine entsprechende Spalte hat (z.B. "Zeit (min.)", "Dauer", "Dauer (min)", "min"). Das ist die reine Dauer der EINEN Zeile, NICHT eine Uhrzeit und nicht die Summe. Gibt es keine solche Spalte oder ist die Zelle leer, weglassen (null). Niemals aus Beginn/Ende selbst ausrechnen — nur den in der Dauer-Spalte stehenden Wert übernehmen.
 - Reihenfolge der Einträge im JSON muss der zeitlichen Reihenfolge im Dokument entsprechen
 - Nur JSON, sonst nichts`;
 
@@ -64,6 +65,7 @@ export const ScheduleEntryInputSchema = z.object({
   phase: z.string().nullable().optional(),
   type: z.enum(['RACE', 'CEREMONY', 'INFO']).default('RACE'),
   massStart: z.boolean().default(false),
+  plannedDurationMin: z.number().int().min(0).nullable().optional(),
 });
 
 function normalizeLabel(s: string): string {
@@ -472,6 +474,7 @@ export async function autoImportScheduleFromDocument(
           phase: e.phase ?? null,
           type: e.type,
           massStart: e.massStart,
+          plannedDurationMin: e.plannedDurationMin ?? null,
           sourceDocumentId: doc.id,
           // Platzhalter, der die Reihenfolge INNERHALB dieses Imports erhält
           // (wird gleich neu berechnet, dient hier nur als Tiebreaker für
