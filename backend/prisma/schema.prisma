@@ -36,6 +36,11 @@ enum FlagType {
   DNS
 }
 
+enum SourceType {
+  WEBDAV // Nextcloud Public Share per WebDAV (share.spurtlinie.de) — Standard
+  HTML   // Öffentliche Webseite mit direkten PDF-Links (z.B. bahndm-buettgen.de)
+}
+
 enum DocType {
   STARTLISTE
   ERGEBNIS
@@ -288,7 +293,9 @@ model CommuniqueSource {
   id         String   @id @default(cuid())
   eventId    String   @unique
   event      Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  shareToken String   // Token aus der Nextcloud-Share-URL
+  sourceType SourceType @default(WEBDAV) // WEBDAV (Nextcloud) oder HTML (Webseite mit PDF-Links)
+  shareToken String?  // nur WEBDAV: Token aus der Nextcloud-Share-URL
+  htmlPageUrls String[] @default([]) // nur HTML: eine oder mehrere Seiten-URLs, die nach PDF-Links durchsucht werden
   label      String?  // optionaler Anzeigename, z.B. "LVM Bahn 2026"
   lastPolledAt DateTime?
   createdAt  DateTime @default(now())
@@ -306,7 +313,8 @@ model CommuniqueDocument {
   ak           String           @default("Alle") // z.B. "U17m", "Elite w", "Alle"
   discipline   Discipline       @default(ALLGEMEIN)
   isPinned     Boolean          @default(false)
-  remoteModifiedAt DateTime      // Änderungsdatum laut WebDAV
+  remoteModifiedAt DateTime      // Änderungsdatum laut WebDAV (bzw. Last-Modified des HTTP-Servers bei HTML-Quellen)
+  remoteUrl        String?       // nur HTML: absolute PDF-URL; bei WEBDAV null (Abruf über shareToken+fileName)
   discoveredAt DateTime         @default(now())
 
   // ─── Für die Zeitplan-Verknüpfung (Disziplin-Kürzel/Phase aus dem Dateinamen) ──
