@@ -218,6 +218,9 @@ export interface ScheduleEntry {
   linkedResultDocument: ScheduleEntryResultDoc | null;
   // Manuell eingetragene Runden-/Laufzahl, überschreibt Startliste + Rückfallgröße.
   manualUnitCount: number | null;
+  // Vom Veranstalter im Zeitplan geplante Dauer (Minuten), falls angegeben —
+  // wird in der Schätzung bevorzugt, solange keine Startliste/manuelle Zahl da ist.
+  plannedDurationMin: number | null;
   // Geschätzte Renndauer in Minuten (Formel + Kalibrierungsfaktor, siehe
   // durationEstimate.ts) — null, wenn (noch) nicht schätzbar, z.B. weil die
   // Runden-/Laufzahl aus der Startliste fehlt.
@@ -236,6 +239,7 @@ export interface DraftScheduleEntry {
   phase?: string | null;
   type: ScheduleEntryType;
   massStart: boolean;
+  plannedDurationMin?: number | null;
 }
 
 export interface EventStatus {
