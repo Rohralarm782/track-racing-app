@@ -7,9 +7,10 @@ import KioskButton from '../components/KioskButton';
 import AnsetzungImport from '../components/AnsetzungImport';
 import OmniumImport from '../components/OmniumImport';
 import { useAdmin } from '../components/Layout';
+import { parseSourceInput } from '../lib/communiqueSource';
 import {
   api, communiquesApi,
-  type CommuniqueSource, type CommuniqueSourceConfig,
+  type CommuniqueSource,
   type CommuniqueDocument as CommuniqueDocumentT, type Event as EventT,
 } from '../api/client';
 
@@ -24,31 +25,6 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
   const rawData = atob(base64);
   return Uint8Array.from([...rawData].map(c => c.charCodeAt(0)));
-}
-
-function extractShareToken(input: string): string | null {
-  const match = input.match(/\/s\/([A-Za-z0-9]+)/);
-  if (match) return match[1];
-  if (/^[A-Za-z0-9]{8,}$/.test(input)) return input;
-  return null;
-}
-
-// Erkennt aus der Setup-Eingabe automatisch die Quellenart:
-//   • Nextcloud-Share-Link (…/s/<token>) oder blanker Token         → WEBDAV
-//   • eine oder mehrere http(s)-Seiten-URLs (Zeile/Komma/Leerzeichen) → HTML
-// Der Token-Check läuft zuerst; eine reine Webseiten-URL (mit "://") kann ihn
-// nicht auslösen, fällt also sauber in den HTML-Zweig.
-function parseSourceInput(raw: string): CommuniqueSourceConfig | null {
-  const text = raw.trim();
-  if (!text) return null;
-
-  const token = extractShareToken(text);
-  if (token) return { sourceType: 'WEBDAV', shareToken: token };
-
-  const urls = text.split(/[\s,]+/).map(u => u.trim()).filter(u => /^https?:\/\//i.test(u));
-  if (urls.length > 0) return { sourceType: 'HTML', htmlPageUrls: urls };
-
-  return null;
 }
 
 function relativeTime(iso: string): string {
@@ -128,6 +104,7 @@ export default function CommuniquesPage() {
   const [selectedAKs, setSelectedAKs] = useState<Set<string>>(new Set(['Alle']));
   const [selectedDisciplines, setSelectedDisciplines] = useState<Set<string>>(new Set(['Alle']));
   const [searchQuery, setSearchQuery] = useState('');
+  const [showHidden, setShowHidden]   = useState(false);
 
   // Push
   const [pushSupported, setPushSupported]   = useState(true);
@@ -400,6 +377,27 @@ export default function CommuniquesPage() {
     }
   }
 
+  // Dokument als veraltet ausblenden (bzw. wieder einblenden). Analog zu
+  // togglePin, optimistisch. Ausgeblendete Dokumente verschwinden aus der
+  // Standardliste — z.B. eine alte Zeitplan-Version nach Upload einer neueren.
+  async function toggleHide(doc: CommuniqueDocumentT, e: React.MouseEvent) {
+    e.stopPropagation();
+    if (!eventId || !source) return;
+    const nextHidden = !doc.isHidden;
+    setSource({
+      ...source,
+      documents: source.documents.map(d => d.id === doc.id ? { ...d, isHidden: nextHidden } : d),
+    });
+    try {
+      await communiquesApi.toggleHide(eventId, doc.id, nextHidden);
+    } catch {
+      setSource(prev => prev ? {
+        ...prev,
+        documents: prev.documents.map(d => d.id === doc.id ? { ...d, isHidden: !nextHidden } : d),
+      } : prev);
+    }
+  }
+
   // Lädt die PDF-Bytes über unseren eigenen Proxy und wandelt sie in Base64 um,
   // damit sie in dieselbe KI-Analyse geht wie beim manuellen Datei-Upload.
   async function startAnsetzungImport(doc: CommuniqueDocumentT) {
@@ -522,7 +520,11 @@ export default function CommuniquesPage() {
   }
 
   const docs = source?.documents ?? [];
-  const filtered = docs
+  const hiddenCount = docs.filter(d => d.isHidden).length;
+  // Ausgeblendete (veraltete) Dokumente standardmäßig ausblenden — über den
+  // Schalter unten lassen sie sich wieder einblenden (dann leicht gedimmt).
+  const visibleDocs = showHidden ? docs : docs.filter(d => !d.isHidden);
+  const filtered = visibleDocs
     .filter(d => catFilter === 'alle' || d.docType === catFilter)
     .filter(d => selectedAKs.has('Alle') || d.ak === 'Alle' || selectedAKs.has(d.ak))
     .filter(d => selectedDisciplines.has('Alle') || d.discipline === 'ALLGEMEIN' || selectedDisciplines.has(d.discipline))
@@ -543,11 +545,11 @@ export default function CommuniquesPage() {
     });
 
   const counts: Record<string, number> = {
-    alle: docs.length,
-    STARTLISTE: docs.filter(d => d.docType === 'STARTLISTE').length,
-    ERGEBNIS: docs.filter(d => d.docType === 'ERGEBNIS').length,
-    ZEITPLAN: docs.filter(d => d.docType === 'ZEITPLAN').length,
-    SONSTIGES: docs.filter(d => d.docType === 'SONSTIGES').length,
+    alle: visibleDocs.length,
+    STARTLISTE: visibleDocs.filter(d => d.docType === 'STARTLISTE').length,
+    ERGEBNIS: visibleDocs.filter(d => d.docType === 'ERGEBNIS').length,
+    ZEITPLAN: visibleDocs.filter(d => d.docType === 'ZEITPLAN').length,
+    SONSTIGES: visibleDocs.filter(d => d.docType === 'SONSTIGES').length,
   };
 
   return (
@@ -877,6 +879,7 @@ export default function CommuniquesPage() {
                       display: 'flex', alignItems: 'flex-start', gap: 12, padding: '13px 14px',
                       background: d.isPinned ? '#fffbeb' : unread ? '#f8fafd' : 'var(--c-white)',
                       borderColor: d.isPinned ? '#fde68a' : unread ? '#bfdbfe' : 'var(--c-border)',
+                      opacity: d.isHidden ? 0.55 : 1,
                     }}
                   >
                     <div style={{
@@ -894,30 +897,52 @@ export default function CommuniquesPage() {
                         }}>
                           {d.fileName}
                         </span>
-                        {unread && <span className="badge badge-blue">NEU</span>}
+                        {unread && !d.isHidden && <span className="badge badge-blue">NEU</span>}
+                        {d.isHidden && <span className="badge badge-gray">ausgeblendet</span>}
                       </div>
                       <div className="text-xs text-muted">
                         {relativeTime(d.remoteModifiedAt)} · {d.ak}{d.discipline !== 'ALLGEMEIN' ? ` · ${DISCIPLINE_LABELS[d.discipline]}` : ''}
                       </div>
                     </div>
                     {isAdmin ? (
-                      <button
-                        onClick={e => togglePin(d, e)}
-                        title={d.isPinned ? 'Von oben lösen' : 'Oben anheften'}
-                        style={{
-                          border: 'none', background: 'transparent', cursor: 'pointer',
-                          fontSize: 16, padding: 4, flexShrink: 0, opacity: d.isPinned ? 1 : 0.35,
-                          lineHeight: 1,
-                        }}
-                      >
-                        📌
-                      </button>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2, flexShrink: 0 }}>
+                        <button
+                          onClick={e => togglePin(d, e)}
+                          title={d.isPinned ? 'Von oben lösen' : 'Oben anheften'}
+                          style={{
+                            border: 'none', background: 'transparent', cursor: 'pointer',
+                            fontSize: 16, padding: 4, opacity: d.isPinned ? 1 : 0.35, lineHeight: 1,
+                          }}
+                        >
+                          📌
+                        </button>
+                        <button
+                          onClick={e => toggleHide(d, e)}
+                          title={d.isHidden ? 'Wieder einblenden' : 'Als veraltet ausblenden'}
+                          style={{
+                            border: 'none', background: 'transparent', cursor: 'pointer',
+                            fontSize: 16, padding: 4, opacity: d.isHidden ? 1 : 0.35, lineHeight: 1,
+                          }}
+                        >
+                          {d.isHidden ? '↩️' : '🙈'}
+                        </button>
+                      </div>
                     ) : d.isPinned ? (
                       <span style={{ fontSize: 16, padding: 4, flexShrink: 0, lineHeight: 1 }}>📌</span>
                     ) : null}
                   </div>
                 );
               })}
+            </div>
+          )}
+
+          {isAdmin && hiddenCount > 0 && (
+            <div style={{ textAlign: 'center', marginTop: 10 }}>
+              <button className="btn btn-ghost btn-sm" onClick={() => setShowHidden(v => !v)}>
+                {showHidden
+                  ? 'Ausgeblendete verbergen'
+                  : `Ausgeblendete anzeigen (${hiddenCount})`}
+              </button>
             </div>
           )}
         </>
