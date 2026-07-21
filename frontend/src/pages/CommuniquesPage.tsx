@@ -115,6 +115,7 @@ export default function CommuniquesPage() {
   const [omniumBase64, setOmniumBase64] = useState<string | null>(null);
   const [omniumBusy, setOmniumBusy] = useState(false);
   const [zeitplanBusy, setZeitplanBusy] = useState(false);
+  const [printBusy, setPrintBusy] = useState(false);
   const [mevReanalyzeBusy, setMevReanalyzeBusy] = useState(false);
   const [error, setError]     = useState('');
 
@@ -432,6 +433,48 @@ export default function CommuniquesPage() {
       setError(e.message ?? 'Zeitplan-Import fehlgeschlagen');
     } finally {
       setZeitplanBusy(false);
+    }
+  }
+
+  // Druckt das Kommuniqué über den nativen PDF-Druck des Browsers. PDF-Bytes über
+  // den eigenen Proxy laden (gleiche Origin -> kein CORS), Blob-URL erzeugen und in
+  // einem versteckten iframe drucken. So bleibt die Original-Seitengeometrie des PDFs
+  // erhalten, statt die App-Oberfläche zu drucken. Schlägt der iframe-Druck fehl
+  // (z.B. iOS/Safari), öffnen wir das PDF in einem neuen Tab zum manuellen Drucken.
+  async function handlePrintDoc(doc: CommuniqueDocumentT) {
+    if (!eventId) return;
+    setPrintBusy(true); setError('');
+    try {
+      const res = await fetch(communiquesApi.fileUrl(eventId, doc.id));
+      if (!res.ok) throw new Error('PDF konnte nicht geladen werden');
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+
+      const iframe = document.createElement('iframe');
+      iframe.style.position = 'fixed';
+      iframe.style.right = '0';
+      iframe.style.bottom = '0';
+      iframe.style.width = '0';
+      iframe.style.height = '0';
+      iframe.style.border = '0';
+      iframe.src = objectUrl;
+
+      iframe.onload = () => {
+        try {
+          iframe.contentWindow?.focus();
+          iframe.contentWindow?.print();
+        } catch {
+          window.open(objectUrl, '_blank'); // Fallback: manuell drucken
+        }
+        // Aufräumen verzögert – sofortiges remove() bricht den Druckdialog ab.
+        setTimeout(() => { iframe.remove(); URL.revokeObjectURL(objectUrl); }, 60000);
+      };
+
+      document.body.appendChild(iframe);
+    } catch (e: any) {
+      setError(e.message ?? 'Drucken fehlgeschlagen');
+    } finally {
+      setPrintBusy(false);
     }
   }
 
@@ -911,6 +954,15 @@ export default function CommuniquesPage() {
               }}>
                 {viewingDoc.fileName}
               </span>
+              <button
+                onClick={() => handlePrintDoc(viewingDoc)}
+                className="btn btn-secondary btn-sm"
+                disabled={printBusy}
+                title="Kommuniqué drucken (Original-PDF-Layout)"
+                style={{ fontSize: 12, flexShrink: 0 }}
+              >
+                {printBusy ? 'Öffnet…' : '🖨 Drucken'}
+              </button>
               <button
                 onClick={() => setViewingDoc(null)}
                 className="btn btn-ghost btn-sm"
