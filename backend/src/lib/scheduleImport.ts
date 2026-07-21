@@ -3,7 +3,7 @@ import { z } from 'zod';
 import Anthropic from '@anthropic-ai/sdk';
 import prisma from '../prisma';
 import { fetchDocumentFile } from './remoteSource';
-import { parseCommuniqueNumber } from './classify';
+import { parseCommuniqueNumber, detectAK } from './classify';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -137,7 +137,7 @@ const DISCIPLINE_HINTS: Record<string, string[]> = {
   TR: ['temporunden'],
   VF: ['verfolgung'],
   MV: ['mannschaftsverfolgung'],
-  EV: ['einzelverfolgung', 'ev'],
+  EV: ['einzelverfolgung', 'einerverfolgung', 'ev'],
   AF: ['ausscheidungsfahren'],
   SC: ['scratch'],
   ZF: ['zeitfahren'],
@@ -260,9 +260,15 @@ function findBestMatch(
   docType: string,
 ): MatchableDoc | null {
   const entryCode = inferCodeForEntry(entry.disciplineLabel);
+  // AK beidseitig kanonisieren: Kommuniqué-Dateinamen liefern via detectAK die
+  // ausgeschriebene Form ("Elite m"), während der KI-Zeitplan-Import die
+  // BDR-Kurzform ("ME") oft unverändert übernimmt. Ein roher Stringvergleich
+  // ("Elite m" === "ME") schlägt dann fehl → gar kein Kandidat. detectAK ist
+  // für bereits normalisierte Werte idempotent, daher unbedenklich.
+  const entryAk = detectAK(entry.ak);
   const candidates = docs.filter(d =>
     d.docType === docType
-    && d.ak === entry.ak
+    && detectAK(d.ak) === entryAk
     && !isDisciplineConflict(entryCode, d.disciplineCode)
   );
   if (candidates.length === 0) return null;
