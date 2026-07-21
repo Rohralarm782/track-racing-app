@@ -313,6 +313,7 @@ model CommuniqueDocument {
   ak           String           @default("Alle") // z.B. "U17m", "Elite w", "Alle"
   discipline   Discipline       @default(ALLGEMEIN)
   isPinned     Boolean          @default(false)
+  isHidden     Boolean          @default(false)
   remoteModifiedAt DateTime      // Änderungsdatum laut WebDAV (bzw. Last-Modified des HTTP-Servers bei HTML-Quellen)
   remoteUrl        String?       // nur HTML: absolute PDF-URL; bei WEBDAV null (Abruf über shareToken+fileName)
   discoveredAt DateTime         @default(now())
