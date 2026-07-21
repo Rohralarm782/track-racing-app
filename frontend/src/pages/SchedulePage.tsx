@@ -9,6 +9,7 @@ import { useAdmin } from '../components/Layout';
 import {
   api, communiquesApi, scheduleApi,
   type Event as EventT, type ScheduleEntry, type EventStatus, type LiveStatusKey, type MevRider,
+  type CommuniqueDocument,
 } from '../api/client';
 
 const TYPE_ICON: Record<string, string> = { RACE: '🏁', CEREMONY: '🏅', INFO: 'ℹ️' };
@@ -134,6 +135,33 @@ function computeEstimatedTimes(
   return result;
 }
 
+// ── Vorschlags-Ranking fürs manuelle Zuordnen ────────────────────────────────
+// Bewertet, wie gut ein Dokument zu einem Zeitplan-Eintrag passt. Der stärkste
+// deterministische Anhalt ist die Altersklasse; Disziplin-Stichwort im
+// Dateinamen und übereinstimmende Phase geben Bonus. Konsistent zur Absicht des
+// Auto-Abgleichs (gleiche AK + Disziplin), ohne dessen K-Nummern-Logik nachzubauen.
+function normToken(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+function rankAssignDoc(entry: ScheduleEntry, doc: CommuniqueDocument): number {
+  let s = 0;
+  if (doc.ak && entry.ak && doc.ak === entry.ak) s += 4;
+  else if (doc.ak === 'Alle' || entry.ak === 'Alle') s += 1;
+
+  const hay = normToken(`${doc.fileName} ${doc.disciplineCode ?? ''} ${doc.phaseLabel ?? ''}`);
+  const words = entry.disciplineLabel.split(/\s+/).map(normToken).filter(w => w.length >= 4);
+  if (words.some(w => hay.includes(w))) s += 2;
+
+  if (entry.phase && doc.phaseLabel && normToken(doc.phaseLabel).includes(normToken(entry.phase))) s += 2;
+
+  if (doc.docType === 'STARTLISTE') s += 1;
+  if (doc.docType === 'ERGEBNIS') s -= 1; // Ergebnis eher nicht als Ansetzung
+  if (doc.docType === 'ZEITPLAN') s -= 3; // ein Zeitplan-PDF ist keine Renn-Ansetzung
+  return s;
+}
+// Ein Dokument gilt als "Vorschlag", wenn die AK sicher passt (Score ≥ 4).
+const ASSIGN_SUGGEST_THRESHOLD = 4;
+
 export default function SchedulePage() {
   const { id: eventId } = useParams<{ id: string }>();
   const { isAdmin } = useAdmin();
@@ -156,6 +184,12 @@ export default function SchedulePage() {
   const [updateAnnouncedTime, setUpdateAnnouncedTime] = useState('');
   const [updateBusy, setUpdateBusy]         = useState(false);
   const [rematchBusy, setRematchBusy]       = useState(false);
+
+  // ── Kommuniqué manuell zuordnen (Auswahl-Sheet) ──────────────────────────
+  const [docs, setDocs]                 = useState<CommuniqueDocument[]>([]);
+  const [assignEntry, setAssignEntry]   = useState<ScheduleEntry | null>(null);
+  const [assignSearch, setAssignSearch] = useState('');
+  const [assignBusy, setAssignBusy]     = useState(false);
 
   useEffect(() => { if (eventId) load(); }, [eventId]);
 
@@ -231,6 +265,46 @@ export default function SchedulePage() {
     }
   }
 
+  // ── Kommuniqué-Zuordnung (Auswahl-Sheet) ─────────────────────────────────
+  function openAssign(entry: ScheduleEntry) {
+    setAssignEntry(entry);
+    setAssignSearch('');
+  }
+  function closeAssign() {
+    setAssignEntry(null);
+    setAssignSearch('');
+  }
+  // documentId = null → Verknüpfung entfernen. Aktualisiert den Eintrag lokal,
+  // damit die Zeile sofort umspringt, ohne den ganzen Zeitplan neu zu laden.
+  async function linkDoc(documentId: string | null) {
+    if (!assignEntry) return;
+    setAssignBusy(true); setError('');
+    try {
+      const updated = await scheduleApi.linkDocument(assignEntry.id, documentId);
+      const linkedDoc = documentId ? docs.find(d => d.id === documentId) ?? null : null;
+      setEntries(prev => prev.map(e => e.id === assignEntry.id
+        ? {
+            ...e,
+            linkedDocumentId: updated.linkedDocumentId ?? documentId,
+            linkedDocument: linkedDoc
+              ? {
+                  id: linkedDoc.id, fileName: linkedDoc.fileName,
+                  remoteModifiedAt: linkedDoc.remoteModifiedAt,
+                  mevNames: linkedDoc.mevNames ?? [], mevRiders: linkedDoc.mevRiders ?? [],
+                  heatCount: linkedDoc.heatCount ?? null, roundCount: linkedDoc.roundCount ?? null,
+                  starterCount: linkedDoc.starterCount ?? null, mevAnalyzedAt: linkedDoc.mevAnalyzedAt ?? null,
+                }
+              : null,
+          }
+        : e));
+      closeAssign();
+    } catch (e: any) {
+      setError(e.message ?? 'Zuordnung fehlgeschlagen');
+    } finally {
+      setAssignBusy(false);
+    }
+  }
+
   async function load() {
     if (!eventId) return;
     setLoading(true); setError('');
@@ -245,6 +319,13 @@ export default function SchedulePage() {
       setStatus(st);
       if (list.length > 0 && !list.some(e => e.day === activeDay)) {
         setActiveDay(Math.min(...list.map(e => e.day)));
+      }
+      // Dokumentliste nur für Admins laden (fürs manuelle Zuordnen). Fehler hier
+      // sind unkritisch — dann bleibt die Auswahl im Sheet eben leer.
+      if (isAdmin) {
+        communiquesApi.get(eventId)
+          .then(src => setDocs((src?.documents ?? []).filter(d => !d.isHidden)))
+          .catch(() => setDocs([]));
       }
     } catch (e: any) {
       setError(e.message ?? 'Fehler beim Laden');
@@ -541,8 +622,16 @@ export default function SchedulePage() {
                           >
                             📄 Kommuniqué öffnen
                           </span>
-                        ) : (
+                        ) : !isAdmin ? (
                           <span style={{ whiteSpace: 'nowrap' }}>kein Kommuniqué zugeordnet</span>
+                        ) : null}
+                        {isAdmin && (
+                          <span
+                            style={{ color: 'var(--c-text-muted)', cursor: 'pointer', whiteSpace: 'nowrap', textDecoration: 'underline' }}
+                            onClick={() => openAssign(entry)}
+                          >
+                            {entry.linkedDocument ? 'ändern' : '＋ zuordnen'}
+                          </span>
                         )}
                         {entry.linkedResultDocument && (
                           <span
@@ -709,6 +798,99 @@ export default function SchedulePage() {
           <div style={{ flex: 1, minHeight: 0 }}>
             <PdfViewer url={communiquesApi.fileUrl(eventId, viewingDocId, viewingDoc?.remoteModifiedAt)} />
           </div>
+        </div>
+      </div>
+    )}
+
+    {assignEntry && (
+      <div className="modal-overlay" onClick={closeAssign}>
+        <div
+          className="modal"
+          style={{ maxWidth: 420, width: '100%', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}
+          onClick={e => e.stopPropagation()}
+        >
+          <div className="flex-between" style={{ marginBottom: 2 }}>
+            <p className="modal-title" style={{ margin: 0 }}>Kommuniqué zuordnen</p>
+            <button onClick={closeAssign} className="btn btn-ghost btn-sm" style={{ fontSize: 18, padding: '2px 8px' }}>✕</button>
+          </div>
+          <p className="text-xs text-muted" style={{ marginTop: 0, marginBottom: 10 }}>
+            {assignEntry.ak} · {assignEntry.disciplineLabel}{assignEntry.phase ? ` · ${assignEntry.phase}` : ''}
+          </p>
+          <input
+            className="form-input"
+            placeholder="Dateiname suchen…"
+            value={assignSearch}
+            onChange={e => setAssignSearch(e.target.value)}
+            style={{ marginBottom: 10 }}
+          />
+          {error && <div className="alert alert-error mb-3">{error}</div>}
+          <div style={{ overflowY: 'auto', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {(() => {
+              const q = assignSearch.trim().toLowerCase();
+              const ranked = docs
+                .map(d => ({ d, score: rankAssignDoc(assignEntry, d) }))
+                .filter(({ d }) => !q || d.fileName.toLowerCase().includes(q))
+                .sort((a, b) =>
+                  b.score - a.score ||
+                  (new Date(b.d.remoteModifiedAt).getTime() - new Date(a.d.remoteModifiedAt).getTime()));
+              if (ranked.length === 0) {
+                return <p className="text-sm text-muted" style={{ margin: 0 }}>
+                  {docs.length === 0 ? 'Keine Dokumente vorhanden. Quelle im ⚙️-Tab prüfen.' : 'Keine Treffer.'}
+                </p>;
+              }
+              const ICON: Record<string, string> = { STARTLISTE: '📋', ERGEBNIS: '🏁', ZEITPLAN: '📅', SONSTIGES: '📄' };
+              const sug = ranked.filter(r => r.score >= ASSIGN_SUGGEST_THRESHOLD);
+              const rest = ranked.filter(r => r.score < ASSIGN_SUGGEST_THRESHOLD);
+              const row = (d: CommuniqueDocument, suggest: boolean) => {
+                const selected = assignEntry.linkedDocumentId === d.id;
+                return (
+                  <button
+                    key={d.id}
+                    onClick={() => linkDoc(d.id)}
+                    disabled={assignBusy}
+                    style={{
+                      textAlign: 'left', border: '1px solid',
+                      borderColor: selected ? 'var(--c-primary)' : 'var(--c-border)',
+                      background: selected ? '#eff6ff' : 'var(--c-white)',
+                      borderRadius: 8, padding: '8px 10px', cursor: 'pointer',
+                      display: 'flex', gap: 8, alignItems: 'flex-start',
+                    }}
+                  >
+                    <span style={{ fontSize: 15, flexShrink: 0 }}>{ICON[d.docType] ?? '📄'}</span>
+                    <span style={{ minWidth: 0, flex: 1 }}>
+                      <span style={{ display: 'block', fontSize: 13, fontWeight: 600, wordBreak: 'break-word' }}>
+                        {d.fileName}
+                        {suggest && <span className="badge badge-blue" style={{ marginLeft: 6 }}>Vorschlag</span>}
+                      </span>
+                      <span className="text-xs text-muted">
+                        {d.ak}{d.phaseLabel ? ` · ${d.phaseLabel}` : ''} · {d.docType}
+                      </span>
+                    </span>
+                    {selected && <span style={{ color: 'var(--c-primary)', flexShrink: 0 }}>✓</span>}
+                  </button>
+                );
+              };
+              return (
+                <>
+                  {sug.map(r => row(r.d, true))}
+                  {sug.length > 0 && rest.length > 0 && (
+                    <div style={{ borderTop: '1px solid var(--c-border)', margin: '2px 0' }} />
+                  )}
+                  {rest.map(r => row(r.d, false))}
+                </>
+              );
+            })()}
+          </div>
+          {assignEntry.linkedDocumentId && (
+            <button
+              className="btn btn-ghost btn-sm"
+              style={{ marginTop: 10, color: 'var(--c-danger, #dc2626)', alignSelf: 'flex-start' }}
+              disabled={assignBusy}
+              onClick={() => linkDoc(null)}
+            >
+              Verknüpfung entfernen
+            </button>
+          )}
         </div>
       </div>
     )}
