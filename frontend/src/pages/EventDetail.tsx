@@ -5,6 +5,7 @@ import { useAdmin } from '../components/Layout';
 import StartlistImport from '../components/StartlistImport';
 import EventTabBar from '../components/EventTabBar';
 import SettingsGearButton from '../components/SettingsGearButton';
+import CommuniqueSourceSettings from '../components/CommuniqueSourceSettings';
 
 const FORMAT_LABEL: Record<string, string> = {
   INDIVIDUAL: 'Einzelrennen',
@@ -248,6 +249,8 @@ export default function EventDetail() {
             <div className="empty"><p>Einstellungen sind nur für Admins sichtbar.</p></div>
           ) : (
             <>
+              {id && <CommuniqueSourceSettings eventId={id} />}
+
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 20 }}>
                 <button className="btn btn-secondary" style={{ justifyContent: 'flex-start' }} onClick={() => setShowImport(true)}>
                   📄 Meldeliste importieren
