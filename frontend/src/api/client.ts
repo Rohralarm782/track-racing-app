@@ -140,6 +140,7 @@ export interface CommuniqueDocument {
   ak: string;
   discipline: Discipline;
   isPinned: boolean;
+  isHidden?: boolean;
   remoteModifiedAt: string;
   discoveredAt: string;
   remoteUrl?: string | null;
@@ -173,6 +174,9 @@ export interface CommuniqueSourceConfig {
   shareToken?: string;
   htmlPageUrls?: string[];
   label?: string;
+  // true = beim Speichern alle bereits gefundenen Dokumente dieser Quelle
+  // löschen (sinnvoll, wenn die Links komplett umgezogen sind).
+  purgeDocuments?: boolean;
 }
 
 // ─── Zeitplan ────────────────────────────────────────────────────────────────
@@ -306,6 +310,9 @@ export const communiquesApi = {
 
   togglePin: (eventId: string, documentId: string, pinned: boolean) =>
     api.patch<CommuniqueDocument>(`/api/communiques/${eventId}/documents/${documentId}/pin`, { pinned }),
+
+  toggleHide: (eventId: string, documentId: string, hidden: boolean) =>
+    api.patch<CommuniqueDocument>(`/api/communiques/${eventId}/documents/${documentId}/hide`, { hidden }),
 
   reanalyzeMev: (eventId: string, documentId: string) =>
     api.post<CommuniqueDocument>(`/api/communiques/${eventId}/documents/${documentId}/reanalyze-mev`, {}),
