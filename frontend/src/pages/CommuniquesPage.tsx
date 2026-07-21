@@ -897,39 +897,53 @@ export default function CommuniquesPage() {
             background: 'var(--c-white)',
           }}
         >
-          <div style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            padding: '10px 14px', borderBottom: '1px solid var(--c-border)', flexShrink: 0,
-          }}>
-            <span style={{
-              fontSize: 13.5, fontWeight: 600, overflow: 'hidden',
-              textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginRight: 10,
+          <div style={{ borderBottom: '1px solid var(--c-border)', flexShrink: 0 }}>
+            {/* Zeile 1: Dateiname + Schließen. Das ✕ liegt allein rechts und
+                bleibt dadurch immer sichtbar/antippbar — egal wie viele
+                Import-Buttons darunter stehen. */}
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              gap: 10, padding: '10px 14px 8px',
             }}>
-              {viewingDoc.fileName}
-            </span>
-            <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-              {isAdmin && viewingDoc.docType === 'ZEITPLAN' && (
-                <button
-                  onClick={() => startZeitplanImport(viewingDoc)}
-                  className="btn btn-primary btn-sm"
-                  disabled={zeitplanBusy}
-                  style={{ fontSize: 12 }}
-                >
-                  {zeitplanBusy ? 'Lädt…' : '📅 Zeitplan importieren'}
-                </button>
-              )}
-              {isAdmin && viewingDoc.docType === 'STARTLISTE' && (
-                <button
-                  onClick={() => handleReanalyzeMev(viewingDoc)}
-                  className="btn btn-secondary btn-sm"
-                  disabled={mevReanalyzeBusy}
-                  title="MEV-Namen, Lauf-Nummer, Laufzahl und Rundenzahl neu erkennen"
-                  style={{ fontSize: 12 }}
-                >
-                  {mevReanalyzeBusy ? 'Lädt…' : '🔁 MEV neu analysieren'}
-                </button>
-              )}
-              {isAdmin && (
+              <span style={{
+                fontSize: 13.5, fontWeight: 600, overflow: 'hidden',
+                textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: '1 1 auto', minWidth: 0,
+              }}>
+                {viewingDoc.fileName}
+              </span>
+              <button
+                onClick={() => setViewingDoc(null)}
+                className="btn btn-ghost btn-sm"
+                style={{ fontSize: 18, padding: '4px 10px', flexShrink: 0 }}
+              >
+                ✕
+              </button>
+            </div>
+            {/* Zeile 2: Import-Aktionen (nur Admin) — brechen bei Platzmangel
+                um, statt das ✕ aus dem Bild zu schieben. */}
+            {isAdmin && (
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '0 14px 10px' }}>
+                {viewingDoc.docType === 'ZEITPLAN' && (
+                  <button
+                    onClick={() => startZeitplanImport(viewingDoc)}
+                    className="btn btn-primary btn-sm"
+                    disabled={zeitplanBusy}
+                    style={{ fontSize: 12 }}
+                  >
+                    {zeitplanBusy ? 'Lädt…' : '📅 Zeitplan importieren'}
+                  </button>
+                )}
+                {viewingDoc.docType === 'STARTLISTE' && (
+                  <button
+                    onClick={() => handleReanalyzeMev(viewingDoc)}
+                    className="btn btn-secondary btn-sm"
+                    disabled={mevReanalyzeBusy}
+                    title="MEV-Namen, Lauf-Nummer, Laufzahl und Rundenzahl neu erkennen"
+                    style={{ fontSize: 12 }}
+                  >
+                    {mevReanalyzeBusy ? 'Lädt…' : '🔁 MEV neu analysieren'}
+                  </button>
+                )}
                 <button
                   onClick={() => startAnsetzungImport(viewingDoc)}
                   className="btn btn-primary btn-sm"
@@ -938,8 +952,6 @@ export default function CommuniquesPage() {
                 >
                   {ansetzungBusy ? 'Lädt…' : '🏁 Ansetzung importieren'}
                 </button>
-              )}
-              {isAdmin && (
                 <button
                   onClick={() => startOmniumImport(viewingDoc)}
                   className="btn btn-secondary btn-sm"
@@ -948,15 +960,8 @@ export default function CommuniquesPage() {
                 >
                   {omniumBusy ? 'Lädt…' : '📊 Vorpunkte importieren'}
                 </button>
-              )}
-              <button
-                onClick={() => setViewingDoc(null)}
-                className="btn btn-ghost btn-sm"
-                style={{ fontSize: 18, padding: '4px 10px' }}
-              >
-                ✕
-              </button>
-            </div>
+              </div>
+            )}
           </div>
           <div style={{ flex: 1, minHeight: 0 }}>
             <PdfViewer url={communiquesApi.fileUrl(eventId, viewingDoc.id)} />
