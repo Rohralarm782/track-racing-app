@@ -36,6 +36,11 @@ const SourceSchema = z.object({
   shareToken: z.string().optional(),
   htmlPageUrls: z.array(z.string().url()).optional(),
   label: z.string().optional(),
+  // true = beim Speichern alle bereits gefundenen Dokumente dieser Quelle
+  // löschen. Sinnvoll, wenn die Links komplett umgezogen sind: die alten
+  // CommuniqueDocument-Einträge zeigen dann auf tote PDF-URLs. Zeitplan-
+  // Verknüpfungen (linkedDocument*) sind per onDelete: SetNull abgesichert.
+  purgeDocuments: z.boolean().optional(),
 }).refine(
   d => d.sourceType === 'HTML'
     ? (d.htmlPageUrls?.length ?? 0) > 0
@@ -49,7 +54,7 @@ router.post('/:eventId', requireAdmin, async (req, res, next) => {
     const parsed = SourceSchema.safeParse(req.body);
     if (!parsed.success) { res.status(400).json(parsed.error.flatten()); return; }
 
-    const { sourceType, shareToken, htmlPageUrls, label } = parsed.data;
+    const { sourceType, shareToken, htmlPageUrls, label, purgeDocuments } = parsed.data;
     // Nur die zur Quellenart passenden Felder schreiben, die jeweils andere
     // Konfiguration wird geleert (sauberer Wechsel WebDAV <-> HTML).
     const data = {
@@ -63,6 +68,11 @@ router.post('/:eventId', requireAdmin, async (req, res, next) => {
       create: { eventId: req.params.eventId, ...data },
       update: data,
     });
+    // Alte Dokumente entfernen, wenn die Quelle umgezogen ist. Der nächste Poll
+    // (unmittelbar danach vom Frontend angestoßen) findet die aktuellen PDFs neu.
+    if (purgeDocuments) {
+      await prisma.communiqueDocument.deleteMany({ where: { sourceId: source.id } });
+    }
     res.status(201).json(source);
   } catch (e) { next(e); }
 });
@@ -161,6 +171,28 @@ router.patch('/:eventId/documents/:documentId/pin', requireAdmin, async (req, re
     const doc = await prisma.communiqueDocument.update({
       where: { id: existing.id },
       data: { isPinned: !!pinned },
+    });
+    res.json(doc);
+  } catch (e) { next(e); }
+});
+
+// PATCH /api/communiques/:eventId/documents/:documentId/hide — Als veraltet
+// ausblenden umschalten (Gegenstück zum Anheften). Das Dokument bleibt in der
+// DB und wird weiter gepollt, verschwindet aber aus der Standard-Dokumentliste.
+// Nützlich, wenn der Veranstalter eine neue Version unter neuem Dateinamen
+// hochlädt (z.B. Zeitplan K12 → K12A) und die alte Fassung nicht mehr stören
+// soll — insbesondere, damit Athleten nicht versehentlich ein veraltetes PDF öffnen.
+router.patch('/:eventId/documents/:documentId/hide', requireAdmin, async (req, res, next) => {
+  try {
+    const { hidden } = req.body as { hidden?: boolean };
+    const existing = await prisma.communiqueDocument.findFirst({
+      where: { id: req.params.documentId, source: { eventId: req.params.eventId } },
+      select: { id: true },
+    });
+    if (!existing) { res.status(404).json({ error: 'Dokument nicht gefunden' }); return; }
+    const doc = await prisma.communiqueDocument.update({
+      where: { id: existing.id },
+      data: { isHidden: !!hidden },
     });
     res.json(doc);
   } catch (e) { next(e); }
