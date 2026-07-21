@@ -1,5 +1,17 @@
 import type { DocType, Discipline } from '@prisma/client';
 
+// Manche Veranstalter trennen Dateinamens-Segmente mit Unterstrichen statt mit
+// Leerzeichen oder " - " (z.B. "K29-01-ME_EV_Quali_Ansetz.pdf"). Der Unterstrich
+// zählt in Regex als Wortzeichen (\w), sodass die \b-Wortgrenzen NICHT zwischen
+// "ME"/"EV" und dem angrenzenden Unterstrich greifen — AK und Disziplin-Kürzel
+// blieben sonst komplett unerkannt (AK fällt auf "Alle", Kürzel auf null zurück).
+// Deshalb VOR jeder wortgrenzenbasierten Erkennung Unterstriche zu Leerzeichen
+// normalisieren. detectDocType bleibt außen vor (reine Teilstring-Suche, greift
+// ohnehin), ebenso detectPhaseLabel (nutzt bewusst die " - "-Segmentierung).
+function separatorsToSpaces(fileName: string): string {
+  return fileName.replace(/_/g, ' ');
+}
+
 // ─── Dokumenttyp ────────────────────────────────────────────────────────────
 
 export function detectDocType(fileName: string): DocType {
@@ -31,6 +43,7 @@ function akSortKey(ak: string): number {
 }
 
 export function detectAK(fileName: string): string {
+  fileName = separatorsToSpaces(fileName);
   const found = new Set<string>();
 
   const classFirstRe = /\b(U1[3579]|Elite|Masters)[\s_-]*([mw])\b/gi;
@@ -64,6 +77,7 @@ const SPRINT_KEYWORDS = /(sprint|keirin|teamsprint|zeitfahren|kilometer|200\s?m|
 const AUSDAUER_KEYWORDS = /(punktefahren|madison|verfolgung|omnium|scratch|temporunden|ausscheidungsfahren|\bausscheidung\b|mannschaftsfahren|\bEV\b|\bMV\b)/i;
 
 export function detectDiscipline(fileName: string): Discipline {
+  fileName = separatorsToSpaces(fileName);
   if (SPRINT_KEYWORDS.test(fileName)) return 'SPRINT';
   if (AUSDAUER_KEYWORDS.test(fileName)) return 'AUSDAUER';
   return 'ALLGEMEIN';
@@ -95,9 +109,10 @@ const DISCIPLINE_CODE_WORDS = /\b(MA|PR|OM|MV|EV)\b/g;
 // "Halbfinale Sprint") und verhindert den Textvergleich mit dem Zeitplan-
 // Eintrag, dessen Phase diesen Zusatz nicht enthält (z.B. "Halbfinale 1.
 // Serie") — keine der beiden Zeichenketten ist dann mehr Teilstring der anderen.
-const DISCIPLINE_WORDS_FULL = /\b(Punktefahren|Madison|Omnium|Temporunden|Ausscheidungsfahren|Mannschaftsverfolgung|Einzelverfolgung|Verfolgung|Scratch|Teamsprint|Zeitfahren|Sprint|Keirin)\b/gi;
+const DISCIPLINE_WORDS_FULL = /\b(Punktefahren|Madison|Omnium|Temporunden|Ausscheidungsfahren|Mannschaftsverfolgung|Einzelverfolgung|Einerverfolgung|Verfolgung|Scratch|Teamsprint|Zeitfahren|Sprint|Keirin)\b/gi;
 
 export function detectDisciplineCode(fileName: string): string | null {
+  fileName = separatorsToSpaces(fileName);
   if (/\bMA\b/i.test(fileName) || /madison/i.test(fileName)) return 'MA';
   if (/\bPR\b/i.test(fileName) || /punktefahren/i.test(fileName)) return 'PR';
   if (/\bOM\b/i.test(fileName) || /omnium/i.test(fileName)) return 'OM';
@@ -106,7 +121,7 @@ export function detectDisciplineCode(fileName: string): string | null {
   // geprüft werden. Ein blankes "VF" wird bewusst NICHT als Verfolgung gewertet,
   // da es in Sprint-Dateinamen "Viertelfinale" bedeutet (Phase, keine Disziplin).
   if (/mannschaftsverfolgung/i.test(fileName) || /\bMV\b/i.test(fileName)) return 'MV';
-  if (/einzelverfolgung/i.test(fileName) || /\bEV\b/i.test(fileName)) return 'EV';
+  if (/einzelverfolgung|einerverfolgung/i.test(fileName) || /\bEV\b/i.test(fileName)) return 'EV';
   if (/verfolgung/i.test(fileName)) return 'VF';
   // "Ausscheidung" ist eine in der Praxis vorkommende Kurzform von
   // "Ausscheidungsfahren".
