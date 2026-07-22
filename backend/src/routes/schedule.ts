@@ -169,6 +169,22 @@ const StatusSchema = z.object({
   announcedTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
 });
 
+// Aktuelle Uhrzeit ("HH:MM") in deutscher Zeitzone — unabhängig davon, in
+// welcher Zeitzone der Server läuft. Auf Render läuft der Prozess in UTC, dort
+// würde new Date().getHours() im Sommer 2 h zu wenig liefern (10:14 → 8:14).
+// Intl mit timeZone Europe/Berlin ist DST-sicher (Sommer- wie Winterzeit).
+function nowMinutesBerlin(): number {
+  const parts = new Intl.DateTimeFormat('de-DE', {
+    timeZone: 'Europe/Berlin',
+    hourCycle: 'h23',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).formatToParts(new Date());
+  const nowH = Number(parts.find(p => p.type === 'hour')!.value);
+  const nowM = Number(parts.find(p => p.type === 'minute')!.value);
+  return nowH * 60 + nowM;
+}
+
 router.put('/events/:id/status', requireAdmin, async (req, res, next) => {
   try {
     const parsed = StatusSchema.safeParse(req.body);
@@ -192,8 +208,7 @@ router.put('/events/:id/status', requireAdmin, async (req, res, next) => {
       const [ah, am] = announcedTime.split(':').map(Number);
       offsetMinutes = (ah * 60 + am) - plannedMin;
     } else {
-      const now = new Date();
-      offsetMinutes = (now.getHours() * 60 + now.getMinutes()) - plannedMin;
+      offsetMinutes = nowMinutesBerlin() - plannedMin;
     }
 
     const status = await prisma.eventStatus.upsert({
