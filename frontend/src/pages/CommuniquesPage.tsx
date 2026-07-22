@@ -6,7 +6,7 @@ import SettingsGearButton from '../components/SettingsGearButton';
 import KioskButton from '../components/KioskButton';
 import AnsetzungImport from '../components/AnsetzungImport';
 import OmniumImport from '../components/OmniumImport';
-import { useAdmin } from '../components/Layout';
+import { useAdmin, useKiosk } from '../components/Layout';
 import { parseSourceInput } from '../lib/communiqueSource';
 import {
   api, communiquesApi,
@@ -82,6 +82,10 @@ function parseDocNumber(fileName: string): { num: number; suffix: string } {
 export default function CommuniquesPage() {
   const { id: eventId } = useParams<{ id: string }>();
   const { isAdmin } = useAdmin();
+  const kiosk = useKiosk();
+  // Im Kiosk-Modus sind Admin-Aktionen (Anheften, Ausblenden, Import) gesperrt,
+  // bis über die Kopfleiste per PIN entsperrt wurde. Sonst zählt allein isAdmin.
+  const canEdit = isAdmin && (!kiosk.active || kiosk.editing);
 
   const [event, setEvent]   = useState<EventT | null>(null);
   const [source, setSource] = useState<CommuniqueSource | null>(null);
@@ -523,7 +527,7 @@ export default function CommuniquesPage() {
   const hiddenCount = docs.filter(d => d.isHidden).length;
   // Ausgeblendete (veraltete) Dokumente standardmäßig ausblenden — über den
   // Schalter unten lassen sie sich wieder einblenden (dann leicht gedimmt).
-  const visibleDocs = showHidden ? docs : docs.filter(d => !d.isHidden);
+  const visibleDocs = (showHidden && canEdit) ? docs : docs.filter(d => !d.isHidden);
   const filtered = visibleDocs
     .filter(d => catFilter === 'alle' || d.docType === catFilter)
     .filter(d => selectedAKs.has('Alle') || d.ak === 'Alle' || selectedAKs.has(d.ak))
@@ -904,7 +908,7 @@ export default function CommuniquesPage() {
                         {relativeTime(d.remoteModifiedAt)} · {d.ak}{d.discipline !== 'ALLGEMEIN' ? ` · ${DISCIPLINE_LABELS[d.discipline]}` : ''}
                       </div>
                     </div>
-                    {isAdmin ? (
+                    {canEdit ? (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 2, flexShrink: 0 }}>
                         <button
                           onClick={e => togglePin(d, e)}
@@ -936,7 +940,7 @@ export default function CommuniquesPage() {
             </div>
           )}
 
-          {isAdmin && hiddenCount > 0 && (
+          {canEdit && hiddenCount > 0 && (
             <div style={{ textAlign: 'center', marginTop: 10 }}>
               <button className="btn btn-ghost btn-sm" onClick={() => setShowHidden(v => !v)}>
                 {showHidden
@@ -998,7 +1002,7 @@ export default function CommuniquesPage() {
             </div>
             {/* Zeile 2: Import-Aktionen (nur Admin) — brechen bei Platzmangel
                 um, statt das ✕ aus dem Bild zu schieben. */}
-            {isAdmin && (
+            {canEdit && (
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '0 14px 10px' }}>
                 {viewingDoc.docType === 'ZEITPLAN' && (
                   <button
@@ -1010,7 +1014,7 @@ export default function CommuniquesPage() {
                     {zeitplanBusy ? 'Lädt…' : '📅 Zeitplan importieren'}
                   </button>
                 )}
-                {viewingDoc.docType === 'STARTLISTE' && (
+                {(viewingDoc.docType === 'STARTLISTE' || viewingDoc.docType === 'SONSTIGES') && (
                   <button
                     onClick={() => handleReanalyzeMev(viewingDoc)}
                     className="btn btn-secondary btn-sm"
