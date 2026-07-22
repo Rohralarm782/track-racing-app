@@ -128,25 +128,39 @@ function computeEstimatedTimes(
       cumulative = toMinutes(entry.time);
     }
 
-    result.set(entry.id, fromMinutes(cumulative));
-
     const fullDur = entry.estimatedMinutes ?? (entry.type === 'CEREMONY' ? CEREMONY_ESTIMATE_MIN : null);
 
-    // Wie viele Minuten bis zum NÄCHSTEN Eintrag addiert werden, hängt beim
-    // aktuell gemeldeten Rennen vom Status ab — sonst wird ein bereits laufendes
-    // oder beendetes Rennen behandelt wie eines, das gerade erst anfängt:
-    //   FINISHED ("im Ziel") → Rennen vorbei, die beobachtete Zeit IST das Ende;
-    //                          nichts mehr addieren, Folgerennen ab jetzt.
-    //   RUNNING  ("läuft")   → nur die RESTdauer addieren (anteilig aus Lauf-
-    //                          bzw. Rundenfortschritt), nicht die volle Dauer.
-    //   STARTING / STARTS_AT → Rennen fängt (gerade) an → volle Dauer.
+    // Beim aktuell gemeldeten Rennen ist "cumulative" die JETZT-Zeit (geplante
+    // Zeit + offsetMinutes). Zwei Dinge hängen davon ab und werden hier je nach
+    // Status getrennt behandelt:
+    //   displayMin — welche Zeit in DIESER Zeile steht
+    //   forward    — wie viele Minuten bis zum NÄCHSTEN Eintrag addiert werden
+    //
+    //   FINISHED ("im Ziel") → Rennen vorbei: jetzt IST das Ende. Zeile zeigt den
+    //                          zurückgerechneten Start (jetzt − volle Dauer),
+    //                          Folgerennen beginnt ab jetzt (forward = 0).
+    //   RUNNING  ("läuft")   → Rennen läuft: aus dem Lauf-/Rundenfortschritt die
+    //                          verstrichene und die Restdauer schätzen. Zeile
+    //                          zeigt den zurückgerechneten echten Start
+    //                          (jetzt − verstrichen), damit sie nicht mit jedem
+    //                          Lauf Richtung "jetzt" wandert; Folgerennen liegt
+    //                          um die Restdauer dahinter.
+    //   STARTING / STARTS_AT → Rennen fängt (gerade) an → Zeile = jetzt, volle
+    //                          Dauer bis zum nächsten Rennen.
+    let displayMin = cumulative;
     let forward: number | null = fullDur;
-    if (isAnchor && status) {
-      if (status.statusKey === 'FINISHED') forward = 0;
-      else if (status.statusKey === 'RUNNING' && fullDur != null) {
-        forward = remainingRaceMinutes(entry, status, fullDur);
+    if (isAnchor && status && cumulative != null) {
+      if (status.statusKey === 'FINISHED') {
+        if (fullDur != null) displayMin = cumulative - fullDur;
+        forward = 0;
+      } else if (status.statusKey === 'RUNNING' && fullDur != null) {
+        const remaining = remainingRaceMinutes(entry, status, fullDur);
+        displayMin = cumulative - (fullDur - remaining); // echter Start ≈ jetzt − verstrichen
+        forward = remaining;
       }
     }
+
+    result.set(entry.id, fromMinutes(displayMin));
 
     cumulative = forward != null && cumulative != null ? cumulative + forward : null;
   }
