@@ -124,9 +124,30 @@ router.patch('/schedule-entries/:id', requireAdmin, async (req, res, next) => {
     if (linkedDocumentId !== undefined) data.linkedDocumentId = linkedDocumentId;
     if (linkedResultDocumentId !== undefined) data.linkedResultDocumentId = linkedResultDocumentId;
     if (manualUnitCount !== undefined) data.manualUnitCount = manualUnitCount;
-    const entry = await prisma.scheduleEntry.update({
-      where: { id: req.params.id },
-      data: data as any,
+
+    // linkedDocumentId und linkedResultDocumentId sind @unique — ein Kommuniqué
+    // darf nur an EINEM Eintrag hängen. Klebt dasselbe Dokument schon (per
+    // Auto-Match) an einem anderen Eintrag, bräche die Zuordnung hier sonst mit
+    // einem P2002-Constraint-Fehler ab (→ "Interner Serverfehler"). Die manuelle
+    // Zuordnung ist die maßgebliche Korrektur: also das Dokument zuerst vom alten
+    // Eintrag lösen, dann hier neu setzen — beides in einer Transaktion.
+    const entry = await prisma.$transaction(async (tx) => {
+      if (typeof linkedDocumentId === 'string' && linkedDocumentId) {
+        await tx.scheduleEntry.updateMany({
+          where: { linkedDocumentId, id: { not: req.params.id } },
+          data: { linkedDocumentId: null },
+        });
+      }
+      if (typeof linkedResultDocumentId === 'string' && linkedResultDocumentId) {
+        await tx.scheduleEntry.updateMany({
+          where: { linkedResultDocumentId, id: { not: req.params.id } },
+          data: { linkedResultDocumentId: null },
+        });
+      }
+      return tx.scheduleEntry.update({
+        where: { id: req.params.id },
+        data: data as any,
+      });
     });
 
     // Wird ein Kommuniqué von Hand verknüpft, MEV-Analyse direkt anstoßen —
