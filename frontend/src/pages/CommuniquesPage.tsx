@@ -127,6 +127,8 @@ export default function CommuniquesPage() {
 
   const [lastChecked, setLastChecked] = useState<Date | null>(null);
   const [viewingDoc, setViewingDoc] = useState<CommuniqueDocumentT | null>(null);
+  // Dokument, für das gerade der Ausblenden-Bestätigungsdialog offen ist.
+  const [pendingHide, setPendingHide] = useState<CommuniqueDocumentT | null>(null);
   const [sortMode, setSortMode] = useState<'chrono' | 'number'>(
     () => (localStorage.getItem('communique_sort_mode') as 'chrono' | 'number') ?? 'chrono'
   );
@@ -381,13 +383,23 @@ export default function CommuniquesPage() {
     }
   }
 
-  // Dokument als veraltet ausblenden (bzw. wieder einblenden). Analog zu
-  // togglePin, optimistisch. Ausgeblendete Dokumente verschwinden aus der
-  // Standardliste — z.B. eine alte Zeitplan-Version nach Upload einer neueren.
-  async function toggleHide(doc: CommuniqueDocumentT, e: React.MouseEvent) {
+  // Klick auf den Ausblenden-Button. Ausblenden erfordert IMMER eine
+  // Bestätigung (setzt pendingHide -> Dialog). Wieder-Einblenden ist harmlos
+  // und reversibel und läuft direkt durch.
+  function requestHideToggle(doc: CommuniqueDocumentT, e: React.MouseEvent) {
     e.stopPropagation();
+    if (doc.isHidden) {
+      void applyHide(doc, false);
+    } else {
+      setPendingHide(doc);
+    }
+  }
+
+  // Führt das Aus-/Einblenden aus. Analog zu togglePin, optimistisch.
+  // Ausgeblendete Dokumente verschwinden aus der Standardliste — z.B. eine
+  // alte Zeitplan-Version nach Upload einer neueren.
+  async function applyHide(doc: CommuniqueDocumentT, nextHidden: boolean) {
     if (!eventId || !source) return;
-    const nextHidden = !doc.isHidden;
     setSource({
       ...source,
       documents: source.documents.map(d => d.id === doc.id ? { ...d, isHidden: nextHidden } : d),
@@ -921,7 +933,7 @@ export default function CommuniquesPage() {
                           📌
                         </button>
                         <button
-                          onClick={e => toggleHide(d, e)}
+                          onClick={e => requestHideToggle(d, e)}
                           title={d.isHidden ? 'Wieder einblenden' : 'Als veraltet ausblenden'}
                           style={{
                             border: 'none', background: 'transparent', cursor: 'pointer',
@@ -1046,6 +1058,54 @@ export default function CommuniquesPage() {
           </div>
           <div style={{ flex: 1, minHeight: 0 }}>
             <PdfViewer url={communiquesApi.fileUrl(eventId, viewingDoc.id)} />
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Bestätigung vor dem Ausblenden — erscheint IMMER, wenn ein Dokument
+        ausgeblendet werden soll. */}
+    {pendingHide && (
+      <div
+        onClick={() => setPendingHide(null)}
+        style={{
+          position: 'fixed', inset: 0, background: 'rgba(17,17,17,0.75)',
+          zIndex: 1100, display: 'flex', alignItems: 'center',
+          justifyContent: 'center', padding: 16,
+        }}
+      >
+        <div
+          onClick={e => e.stopPropagation()}
+          style={{
+            background: 'var(--c-white)', borderRadius: 12, padding: '20px 22px',
+            maxWidth: 400, width: '100%', boxShadow: '0 10px 40px rgba(0,0,0,0.3)',
+          }}
+        >
+          <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 10 }}>
+            Dokument ausblenden?
+          </div>
+          <div style={{
+            fontSize: 14, lineHeight: 1.5, marginBottom: 20,
+            color: 'var(--c-text-muted)',
+          }}>
+            „{pendingHide.fileName}“ wird aus der Standardliste entfernt und ist
+            für Athlet:innen nicht mehr sichtbar. Du kannst es jederzeit wieder
+            einblenden.
+          </div>
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+            <button className="btn btn-ghost" onClick={() => setPendingHide(null)}>
+              Abbrechen
+            </button>
+            <button
+              className="btn btn-primary"
+              onClick={() => {
+                const doc = pendingHide;
+                setPendingHide(null);
+                void applyHide(doc, true);
+              }}
+            >
+              Ausblenden
+            </button>
           </div>
         </div>
       </div>
