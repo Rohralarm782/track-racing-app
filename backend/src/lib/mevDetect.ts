@@ -17,7 +17,7 @@ const START_POSITIONS = ['ZG', 'GG', 'B', 'M'];
  * automatisch neu. Bei JEDER inhaltlichen Änderung an Prompt oder Auswertung
  * hochzählen — sonst behalten bereits analysierte Dokumente ihr altes Ergebnis.
  */
-export const MEV_ANALYSIS_VERSION = 4;
+export const MEV_ANALYSIS_VERSION = 5;
 
 export interface MevRider {
   name: string;
@@ -152,17 +152,18 @@ Regeln:
 - name: "Vorname Nachname", keine Startnummer/Verein/UCI-ID
 - startNo: die Startnummer dieses Fahrers laut Spalte "Start-Nr." o.ä., sonst null
 - lauf / laufLabel: beide beziehen sich AUSSCHLIESSLICH auf eine echte Lauf-Spalte der Tabelle (Spaltenüberschrift "Lauf", "Heat", "Paarung" o.ä.). Gibt es keine solche Spalte, sind BEIDE null. Die Startnummer ("Start-Nr.") ist NIEMALS die Lauf-Nummer — verwechsle die beiden Spalten nicht. Auch eine Überschrift wie "Vorlauf 1" über der Tabelle ist KEINE Lauf-Angabe im Sinne dieser Felder: dann beide null.
+  * ENTSCHEIDEND ist allein die SPALTENÜBERSCHRIFT: Hat die Tabelle eine mit "Lauf"/"Heat"/"Paarung" überschriebene Spalte, ist das eine echte Lauf-Spalte — AUCH dann, wenn dort nur fortlaufende Zahlen 1, 2, 3 … N stehen und jeder Lauf nur EINEN Fahrer enthält (völlig normal beim Einzel-Zeitfahren, wo jede Fahrerin einzeln startet). Übernimm diese Zahl dann als lauf und zähle heatCount entsprechend. Solche fortlaufenden Zahlen NICHT als bloßen Zeilenindex abtun. Das Verbot oben betrifft ausschließlich Tabellen OHNE Lauf-Spalte, wo sonst fälschlich die Start-Nr. als Lauf herhalten müsste.
   * lauf: der Wert der Lauf-Spalte, wenn er eine reine Zahl ist (z.B. "9" -> 9), sonst null
   * laufLabel: der Text der Lauf-Spalte, wenn er KEINE reine Zahl ist — z.B. bei Sprint-Finals steht dort "Platz 1/2" bzw. "Platz 3/4", bei Hoffnungsläufen o.ä. auch anderer Text. Wortlaut aus dem Dokument übernehmen (Zeilenumbrüche in der Zelle als Leerzeichen). Ist der Wert eine reine Zahl, dann null.
   * Ein Fahrer hat also entweder lauf ODER laufLabel gesetzt, nie beides.
 - team: der Wert aus der Team-/Mannschaft-Spalte (z.B. "${lv} 2"), falls eine solche Spalte existiert, sonst null. NICHT der Vereinsname aus der "Verein"-Spalte — das Team-Kürzel besteht meist aus Landesverband-Kürzel + Nummer.
 - Bei Team-Paaren/Mannschaften (z.B. Madison, Teamsprint, Mannschaftsverfolgung) ALLE Fahrer des Teams einzeln auflisten, falls einer oder mehrere "${lv}" sind; alle bekommen denselben lauf- und team-Wert
 - startPos: die Startposition dieses Fahrers/Teams. Genau einer dieser vier Werte oder null:
-  * Einzelstart-Formate (Zeitfahren, Einzel-/Mannschaftsverfolgung — zwei Starter je Lauf): "ZG" (Zielgerade) oder "GG" (Gegengerade). Die Zuordnung steht NICHT in der Tabelle, sondern in einem Hinweissatz unter der Tabelle, z.B. "Die erstgenannte Fahrerin startet von der Zielgeraden". Diesen Satz wörtlich auswerten und auf die Zeilen-Reihenfolge INNERHALB des Laufs anwenden: bei dieser Formulierung startet der im Lauf zuerst genannte Fahrer von "ZG", der zweite von "GG". Steht dort stattdessen "Gegengeraden", gilt es genau umgekehrt. Fehlt der Hinweissatz, ist die Position unbekannt -> null.
+  * Einzelstart-Formate (Zeitfahren, Einzel-/Mannschaftsverfolgung — je nach Format EIN oder ZWEI Starter pro Lauf; beim 1000m-Zeitfahren startet oft nur eine Fahrerin pro Lauf, das ist normal und macht die Lauf-Spalte nicht ungültig): "ZG" (Zielgerade) oder "GG" (Gegengerade). Die Zuordnung steht NICHT in der Tabelle, sondern in einem Hinweissatz unter der Tabelle, z.B. "Die erstgenannte Fahrerin startet von der Zielgeraden". Diesen Satz wörtlich auswerten und auf die Zeilen-Reihenfolge INNERHALB des Laufs anwenden: bei dieser Formulierung startet der im Lauf zuerst genannte Fahrer von "ZG", der zweite (falls vorhanden) von "GG". Steht dort stattdessen "Gegengeraden", gilt es genau umgekehrt. Fehlt der Hinweissatz, ist die Position unbekannt -> null.
   * Massenstart-Formate (Punktefahren, Madison, Scratch, Ausscheidungsfahren): "B" (Ballustrade/Balustrade) oder "M" (Messlinie/Mess-linie). Die Startaufstellung besteht dort aus ZWEI nebeneinander oder untereinander stehenden Tabellen bzw. einer Spalte mit genau diesen Überschriften — maßgeblich ist, in welcher der beiden der Fahrer steht. Die zweite Tabelle kann auch "Cote d'Azur" überschrieben sein — das ist die Messlinien-Gruppe -> "M".
   * In allen anderen Fällen: null
 - startSlot: NUR bei Massenstart (startPos "B" oder "M"): die Position des Fahrers INNERHALB seiner Startreihe, also die 1-basierte Zeilennummer in genau der Tabelle, in der er steht (erste Zeile der Ballustrade-Tabelle = 1, zweite = 2, usw.; die Messlinien-/Cote-d'Azur-Tabelle wird separat ab 1 gezählt). Leerzeilen am Tabellenende nicht mitzählen. Gibt es eine eigene, GEFÜLLTE Positions-Spalte, deren Wert verwenden. Bei Einzelstart (startPos "ZG"/"GG") und wenn startPos null ist: immer null.
-- heatCount: Gesamtzahl unterschiedlicher Werte in der Lauf-Spalte der GESAMTEN Tabelle (nicht nur bei "${lv}"-Zeilen) — Text-Werte wie "Platz 1/2" zählen genauso mit wie Zahlen. null, falls die Tabelle keine Lauf-Spalte hat.
+- heatCount: Gesamtzahl unterschiedlicher Werte in der Lauf-Spalte der GESAMTEN Tabelle (nicht nur bei "${lv}"-Zeilen) — Text-Werte wie "Platz 1/2" zählen genauso mit wie Zahlen. Leerzeilen ohne Fahrer am Tabellenende (z.B. eine vornummerierte Zeile "10." ohne Namen) NICHT mitzählen. null, falls die Tabelle keine Lauf-Spalte hat.
 - starterCount: Gesamtzahl der Fahrer/Teams (Zeilen) in der Tabelle, unabhängig von einer Lauf-Spalte
 - roundCount: die im Dokument genannte Rundenzahl. Aktiv danach suchen (siehe oben) — nur null zurückgeben, wenn wirklich nirgends im Dokument eine Rundenzahl steht
 - Leeres Array für mevRiders, wenn kein "${lv}"-Fahrer gefunden wird
