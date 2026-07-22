@@ -96,7 +96,7 @@ function mevSummary(riders: MevRider[], heatTimeFor?: (r: MevRider) => string | 
   const joined = parts.join(', ');
   // Schwelle etwas höher als früher (46), da die Lauf-Startzeit den Text
   // verlängert — sonst würde zu schnell auf "N Fahrer" zurückgefallen.
-  if (joined.length <= 60) return joined;
+  if (joined.length <= 130) return joined;
   return `${riders.length} Fahrer`;
 }
 
