@@ -29,9 +29,15 @@ export function useAdmin() {
 interface KioskCtx {
   active: boolean;
   startKiosk: (eventId: string) => void;
+  // Admin-Bearbeitung im Kiosk freigeschaltet? Wird über die Kiosk-Kopfleiste
+  // mit PIN entsperrt (siehe KioskShell), nie gespeichert, gilt nur pro Sitzung.
+  editing: boolean;
+  setEditing: (v: boolean) => void;
 }
 
-const KioskContext = createContext<KioskCtx>({ active: false, startKiosk: () => {} });
+const KioskContext = createContext<KioskCtx>({
+  active: false, startKiosk: () => {}, editing: false, setEditing: () => {},
+});
 
 export function useKiosk() {
   return useContext(KioskContext);
@@ -53,9 +59,14 @@ export default function Layout() {
   const [kioskEventId, setKioskEventId] = useState<string | null>(
     () => sessionStorage.getItem('kiosk_active_event'));
 
+  // Bewusst NICHT in sessionStorage: ein Reload soll immer gesperrt starten,
+  // damit die unbeaufsichtigte Anzeige nie versehentlich entsperrt hochkommt.
+  const [kioskEditing, setKioskEditing] = useState(false);
+
   const startKiosk = useCallback((eventId: string) => {
     sessionStorage.setItem('kiosk_active_event', eventId);
     setKioskEventId(eventId);
+    setKioskEditing(false);
     // Direkt im Klick (User-Geste) darf Vollbild angefordert werden.
     document.documentElement.requestFullscreen?.().catch(() => {});
   }, []);
@@ -63,6 +74,7 @@ export default function Layout() {
   const stopKiosk = useCallback(() => {
     sessionStorage.removeItem('kiosk_active_event');
     setKioskEventId(null);
+    setKioskEditing(false);
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   }, []);
 
@@ -89,10 +101,18 @@ export default function Layout() {
 
   return (
     <AdminContext.Provider value={{ isAdmin: !!token, token, logout, openLogin: () => setShowLogin(true) }}>
-    <KioskContext.Provider value={{ active: kioskEventId != null, startKiosk }}>
+    <KioskContext.Provider value={{
+      active: kioskEventId != null, startKiosk,
+      editing: kioskEditing, setEditing: setKioskEditing,
+    }}>
       {kioskEventId ? (
         /* ── Kiosk-Kopfleiste statt Header ── */
-        <KioskShell eventId={kioskEventId} onExit={stopKiosk} />
+        <KioskShell
+          eventId={kioskEventId}
+          editing={kioskEditing}
+          setEditing={setKioskEditing}
+          onExit={stopKiosk}
+        />
       ) : (
       /* ── Header ── */
       <header className="header">
