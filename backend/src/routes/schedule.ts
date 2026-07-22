@@ -5,6 +5,7 @@ import { requireAdmin } from '../middleware/auth';
 import { analyzeZeitplanPdf, autoMatch, loadScheduleWithLinks, ScheduleEntryInputSchema } from '../lib/scheduleImport';
 import { estimateMinutes, recalibrateFromStatusUpdate, usedFallback } from '../lib/durationEstimate';
 import { getSettings } from '../lib/settings';
+import { analyzeMevForDocument } from '../lib/mevDetect';
 
 const router = Router();
 
@@ -127,6 +128,30 @@ router.patch('/schedule-entries/:id', requireAdmin, async (req, res, next) => {
       where: { id: req.params.id },
       data: data as any,
     });
+
+    // Wird ein Kommuniqué von Hand verknüpft, MEV-Analyse direkt anstoßen —
+    // unabhängig vom docType. Grund: Rahmenprogramm-Startlisten (z.B.
+    // "ME_250m_Zeitfahren.pdf") werden mangels Startlisten-Schlüsselwörtern als
+    // SONSTIGES eingestuft, wodurch weder der Poll-Zyklus noch der übliche
+    // STARTLISTE-Filter die MEV-Analyse auslösen. Die manuelle Verknüpfung ist
+    // hier das Signal, dass es doch eine relevante Startliste ist. Blockierend,
+    // damit die anschließende Neu-Abfrage im Frontend die frischen MEV-Daten
+    // sieht; ein Analysefehler darf die Verknüpfung selbst aber nie scheitern
+    // lassen.
+    if (typeof linkedDocumentId === 'string' && linkedDocumentId) {
+      const doc = await prisma.communiqueDocument.findUnique({
+        where: { id: linkedDocumentId },
+        include: { source: true },
+      });
+      if (doc) {
+        try {
+          await analyzeMevForDocument(doc, doc.source);
+        } catch (err) {
+          console.error('MEV-Analyse nach manueller Verknüpfung fehlgeschlagen:', err);
+        }
+      }
+    }
+
     res.json(entry);
   } catch (e) { next(e); }
 });
