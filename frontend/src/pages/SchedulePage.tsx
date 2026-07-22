@@ -5,7 +5,7 @@ import EventTabBar from '../components/EventTabBar';
 import SettingsGearButton from '../components/SettingsGearButton';
 import KioskButton from '../components/KioskButton';
 import ScheduleImport from '../components/ScheduleImport';
-import { useAdmin } from '../components/Layout';
+import { useAdmin, useKiosk } from '../components/Layout';
 import {
   api, communiquesApi, scheduleApi,
   type Event as EventT, type ScheduleEntry, type EventStatus, type LiveStatusKey, type MevRider,
@@ -59,17 +59,21 @@ function agoLabel(iso: string): string {
 // Die Lauf-Spalte enthält nicht immer eine Zahl — bei Sprint-Finals steht dort
 // "Platz 1/2" bzw. "Platz 3/4" (laufLabel). Der Text wird dann unverändert
 // gezeigt, ohne "Lauf"-Präfix.
-function riderDetail(r: MevRider): string {
+// heatTime (falls vorhanden) ist die geschätzte Startzeit des Laufs im
+// Einzelstart, z.B. "Thea (Lauf 8, GG, ~10:40)". Die Tilde signalisiert eine
+// Schätzung. Wird pro Fahrer vom Aufrufer über mevSummary(heatTimeFor) geliefert.
+function riderDetail(r: MevRider, heatTime?: string | null): string {
   const bits: string[] = [];
   if (r.lauf != null) bits.push(`Lauf ${r.lauf}`);
   else if (r.laufLabel) bits.push(r.laufLabel);
   // Im Massenstart zusätzlich der Platz in der Reihe: "B 10" = Zehnter an der
   // Ballustrade. Im Einzelstart gibt es keinen Platz, dort bleibt es bei "ZG"/"GG".
   if (r.startPos) bits.push(r.startSlot != null ? `${r.startPos} ${r.startSlot}` : r.startPos);
+  if (heatTime) bits.push(`~${heatTime}`);
   return bits.length > 0 ? ` (${bits.join(', ')})` : '';
 }
 
-function mevSummary(riders: MevRider[]): string | null {
+function mevSummary(riders: MevRider[], heatTimeFor?: (r: MevRider) => string | null): string | null {
   if (!riders || riders.length === 0) return null;
 
   const hasTeams = riders.some(r => r.team);
@@ -83,14 +87,16 @@ function mevSummary(riders: MevRider[]): string | null {
       const key = `${label}::${r.lauf ?? r.laufLabel ?? ''}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      parts.push(`${label}${riderDetail(r)}`);
+      parts.push(`${label}${riderDetail(r, heatTimeFor?.(r))}`);
     }
   } else {
-    parts = riders.map(r => `${r.name.trim().split(/\s+/)[0]}${riderDetail(r)}`);
+    parts = riders.map(r => `${r.name.trim().split(/\s+/)[0]}${riderDetail(r, heatTimeFor?.(r))}`);
   }
 
   const joined = parts.join(', ');
-  if (joined.length <= 46) return joined;
+  // Schwelle etwas höher als früher (46), da die Lauf-Startzeit den Text
+  // verlängert — sonst würde zu schnell auf "N Fahrer" zurückgefallen.
+  if (joined.length <= 60) return joined;
   return `${riders.length} Fahrer`;
 }
 
@@ -221,6 +227,10 @@ const ASSIGN_SUGGEST_THRESHOLD = 4;
 export default function SchedulePage() {
   const { id: eventId } = useParams<{ id: string }>();
   const { isAdmin } = useAdmin();
+  const kiosk = useKiosk();
+  // Im Kiosk-Modus sind Admin-Aktionen gesperrt, bis über die Kopfleiste per PIN
+  // entsperrt wurde (kiosk.editing). Außerhalb des Kiosk zählt allein isAdmin.
+  const canEdit = isAdmin && (!kiosk.active || kiosk.editing);
 
   const [event, setEvent]     = useState<EventT | null>(null);
   const [entries, setEntries] = useState<ScheduleEntry[]>([]);
@@ -354,6 +364,14 @@ export default function SchedulePage() {
           }
         : e));
       closeAssign();
+      // Beim Verknüpfen stößt das Backend die MEV-Analyse an (auch für als
+      // SONSTIGES eingestufte Rahmenprogramm-Startlisten). Die frisch erkannten
+      // MEV-Fahrer stecken noch nicht in der optimistischen Aktualisierung oben
+      // — deshalb den Zeitplan leise nachladen (ohne Voll-Spinner), sodass sie
+      // ohne Reload erscheinen.
+      if (documentId && eventId) {
+        scheduleApi.list(eventId).then(setEntries).catch(() => {});
+      }
     } catch (e: any) {
       setError(e.message ?? 'Zuordnung fehlgeschlagen');
     } finally {
@@ -452,7 +470,7 @@ export default function SchedulePage() {
       <div className="flex-between mb-4" style={{ alignItems: 'flex-start' }}>
         <h1 style={{ margin: 0 }}>{event?.name ?? 'Zeitplan'}</h1>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          {isAdmin && entries.length > 0 && (
+          {canEdit && entries.length > 0 && (
             <button
               className="btn btn-ghost btn-sm"
               onClick={handleRematch}
@@ -475,7 +493,7 @@ export default function SchedulePage() {
       {entries.length === 0 ? (
         <div className="empty">
           <p>Noch kein Zeitplan importiert.</p>
-          {isAdmin && (
+          {canEdit && (
             <button className="btn btn-primary" onClick={() => setShowImport(true)}>
               📄 Zeitplan importieren
             </button>
@@ -503,7 +521,7 @@ export default function SchedulePage() {
                   {dayLabelFor(d)}
                 </button>
               ))}
-              {isAdmin && (
+              {canEdit && (
                 <button
                   onClick={() => handleDeleteDay(activeDay)}
                   title={`${dayLabelFor(activeDay)} löschen`}
@@ -548,7 +566,7 @@ export default function SchedulePage() {
                   <p className="text-sm text-muted" style={{ margin: 0 }}>Noch kein Stand hinterlegt</p>
                 )}
               </div>
-              {isAdmin && (
+              {canEdit && (
                 <button className="btn btn-primary btn-sm" style={{ flexShrink: 0 }} onClick={openUpdateModal}>
                   Aktualisieren
                 </button>
@@ -576,8 +594,19 @@ export default function SchedulePage() {
                 const showEstimateAsPrimary = isBucketTime || diffMin > ESTIMATE_DISPLAY_THRESHOLD_MIN;
                 const displayTime = showEstimateAsPrimary ? estimatedTime : entry.time;
                 const showNominalSecondary = showEstimateAsPrimary && !isBucketTime;
-                const mev = entry.linkedDocument ? mevSummary(entry.linkedDocument.mevRiders) : null;
                 const heatCount = entry.linkedDocument?.heatCount ?? null;
+                // Einzelstart (Zeitfahren/Einerverfolgung): grob geschätzte
+                // Startzeit je Lauf = Rennstart + (Lauf−1)/Laufzahl × Renndauer.
+                // Nur bei bekanntem Lauf/Laufzahl/Dauer und NICHT im Massenstart
+                // (dort starten alle gemeinsam, eine Lauf-Zeit wäre sinnlos).
+                const raceStartMin = toMinutes(displayTime);
+                const estMin = entry.estimatedMinutes;
+                const heatTimeFor = (r: MevRider): string | null => {
+                  if (entry.massStart) return null;
+                  if (r.lauf == null || heatCount == null || heatCount <= 0 || estMin == null) return null;
+                  return fromMinutes(raceStartMin + ((r.lauf - 1) / heatCount) * estMin);
+                };
+                const mev = entry.linkedDocument ? mevSummary(entry.linkedDocument.mevRiders, heatTimeFor) : null;
 
                 const prevEntry = idx > 0 ? dayEntries[idx - 1] : null;
                 const nextEntry = idx < dayEntries.length - 1 ? dayEntries[idx + 1] : null;
@@ -656,7 +685,7 @@ export default function SchedulePage() {
                           {heatCount} {heatCount === 1 ? 'Lauf' : 'Läufe'}
                         </span>
                       )}
-                      {entry.type === 'RACE' && isAdmin && entry.estimateIsFallback && (
+                      {entry.type === 'RACE' && canEdit && entry.estimateIsFallback && (
                         <span
                           onClick={() => handleSetManualCount(entry)}
                           title={`${entry.massStart ? 'Rundenzahl' : 'Laufzahl'} manuell eintragen (Schätzung beruht auf einer Rückfallgröße)`}
@@ -678,10 +707,10 @@ export default function SchedulePage() {
                           >
                             📄 Kommuniqué öffnen
                           </span>
-                        ) : !isAdmin ? (
+                        ) : !canEdit ? (
                           <span style={{ whiteSpace: 'nowrap' }}>kein Kommuniqué zugeordnet</span>
                         ) : null}
-                        {isAdmin && (
+                        {canEdit && (
                           <span
                             style={{ color: 'var(--c-text-muted)', cursor: 'pointer', whiteSpace: 'nowrap', textDecoration: 'underline' }}
                             onClick={() => openAssign(entry)}
@@ -722,7 +751,7 @@ export default function SchedulePage() {
             })()}
           </div>
 
-          {isAdmin && (
+          {canEdit && (
             <button
               className="btn btn-ghost btn-sm mt-3"
               onClick={() => setShowImport(true)}
