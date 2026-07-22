@@ -120,19 +120,61 @@ function computeEstimatedTimes(
   let cumulative: number | null = null;
 
   for (const entry of dayEntries) {
-    if (status && currentEntryDay === entry.day && status.scheduleEntryId === entry.id) {
-      cumulative = toMinutes(entry.time) + status.offsetMinutes;
+    const isAnchor = !!status && currentEntryDay === entry.day && status.scheduleEntryId === entry.id;
+
+    if (isAnchor) {
+      cumulative = toMinutes(entry.time) + status!.offsetMinutes;
     } else if (entry.type === 'INFO' || cumulative == null) {
       cumulative = toMinutes(entry.time);
     }
 
     result.set(entry.id, fromMinutes(cumulative));
 
-    const dur = entry.estimatedMinutes ?? (entry.type === 'CEREMONY' ? CEREMONY_ESTIMATE_MIN : null);
-    cumulative = dur != null ? cumulative + dur : null;
+    const fullDur = entry.estimatedMinutes ?? (entry.type === 'CEREMONY' ? CEREMONY_ESTIMATE_MIN : null);
+
+    // Wie viele Minuten bis zum NÄCHSTEN Eintrag addiert werden, hängt beim
+    // aktuell gemeldeten Rennen vom Status ab — sonst wird ein bereits laufendes
+    // oder beendetes Rennen behandelt wie eines, das gerade erst anfängt:
+    //   FINISHED ("im Ziel") → Rennen vorbei, die beobachtete Zeit IST das Ende;
+    //                          nichts mehr addieren, Folgerennen ab jetzt.
+    //   RUNNING  ("läuft")   → nur die RESTdauer addieren (anteilig aus Lauf-
+    //                          bzw. Rundenfortschritt), nicht die volle Dauer.
+    //   STARTING / STARTS_AT → Rennen fängt (gerade) an → volle Dauer.
+    let forward: number | null = fullDur;
+    if (isAnchor && status) {
+      if (status.statusKey === 'FINISHED') forward = 0;
+      else if (status.statusKey === 'RUNNING' && fullDur != null) {
+        forward = remainingRaceMinutes(entry, status, fullDur);
+      }
+    }
+
+    cumulative = forward != null && cumulative != null ? cumulative + forward : null;
   }
 
   return result;
+}
+
+// Restdauer eines bereits laufenden Rennens, geschätzt aus dem gemeldeten
+// Fortschritt. Bei Einzelstart zählt roundsLeft den AKTUELLEN Lauf (X von Y
+// Läufen), bei Massenstart die noch verbleibenden Runden. Immer auf [0, fullDur]
+// begrenzt, damit eine unplausible Meldung die Folgezeiten nicht sprengt.
+function remainingRaceMinutes(entry: ScheduleEntry, status: EventStatus, fullDur: number): number {
+  const clamp = (m: number) => Math.max(0, Math.min(fullDur, Math.round(m)));
+  const x = status.roundsLeft;
+
+  if (entry.massStart === false) {
+    const heats = entry.linkedDocument?.heatCount ?? null;
+    if (heats && heats > 0 && x != null && x >= 1) {
+      // Wir stecken mitten in Lauf X → grob (Y − X + 0.5) Läufe stehen noch aus.
+      return clamp(fullDur * (heats - x + 0.5) / heats);
+    }
+  } else {
+    const rounds = entry.linkedDocument?.roundCount ?? null;
+    if (rounds && rounds > 0 && x != null) return clamp(fullDur * x / rounds);
+  }
+
+  // Kein verlässlicher Fortschritt bekannt: als grobe Restschätzung die Hälfte.
+  return clamp(fullDur / 2);
 }
 
 // ── Vorschlags-Ranking fürs manuelle Zuordnen ────────────────────────────────
