@@ -22,7 +22,16 @@ const SettingsSchema = z.object({
   afPerRoundMin: z.number().min(0).optional(),
   afClearMin: z.number().min(0).optional(),
   pursuitSetupMin: z.number().min(0).optional(),
-  distanceRaceMinutes: z.record(z.number().min(0)).optional(),
+  // Neu: Renndauer je Distanz getrennt nach m/w. Alte Flat-Zahlen bleiben
+  // zulässig (werden serverseitig via parseDistanceTable auf {m,w} migriert).
+  distanceRaceMinutes: z
+    .record(
+      z.union([
+        z.number().min(0),
+        z.object({ m: z.number().min(0), w: z.number().min(0) }),
+      ]),
+    )
+    .optional(),
   sprintPerHeatMin: z.number().min(0).optional(),
   teamsprintPerHeatMin: z.number().min(0).optional(),
   keirinPerHeatMin: z.number().min(0).optional(),
