@@ -406,7 +406,10 @@ export interface AppSettings {
   afPerRoundMin: number;
   afClearMin: number;
   pursuitSetupMin: number;
-  distanceRaceMinutes: Record<string, number>;
+  // Renndauer je Distanz getrennt nach Geschlecht (m/w). Bestehende Datensätze
+  // können übergangsweise noch flache Zahlen enthalten, bis einmal gespeichert
+  // wurde — die UI normalisiert das beim Anzeigen (siehe TimeEstimateSettings).
+  distanceRaceMinutes: Record<string, { m: number; w: number }>;
   sprintPerHeatMin: number;
   teamsprintPerHeatMin: number;
   keirinPerHeatMin: number;
