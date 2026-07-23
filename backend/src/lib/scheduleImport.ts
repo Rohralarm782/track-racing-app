@@ -300,6 +300,49 @@ function findBestMatch(
   return scored[0].doc;
 }
 
+// ── Ergebnis über die bereits verknüpfte Startliste finden (starker Anker) ──
+// Ergebnis-Dateinamen tragen oft KEINE Phasenangabe (nur "K210 - U17w Sprint.pdf")
+// und ihre K-Nummern folgen selten derselben Sequenz wie die Startlisten — dadurch
+// greifen Phasen-Bonus (+2) und Rang-Bonus (+3) im generischen findBestMatch nicht,
+// und der bloße Disziplin-Hint (+1) ist bei mehreren Ergebnissen derselben
+// AK+Disziplin mehrdeutig → gar kein Treffer. Deshalb werden Ergebnisse aktuell
+// fast nie automatisch zugeordnet.
+//
+// Die bereits (auto ODER manuell) verknüpfte Startliste ist aber ein verlässlicher
+// Anker: Gehört die Startliste zu "U17w Sprint Halbfinale", ist das Ergebnis mit
+// hoher Sicherheit das ERGEBNIS-Dokument gleicher AK + gleichem Disziplin-Kürzel
+// (+ ggf. Phase). Der Disziplin-Code der Startliste wurde beim Startlisten-Matching
+// bereits gegen den Eintrag validiert — ein Konflikt ist hier also ausgeschlossen.
+// Bleibt es mehrdeutig, wird bewusst NICHT geraten (konsistent mit findBestMatch).
+function findResultViaStartlist(
+  startlist: MatchableDoc,
+  available: MatchableDoc[],
+): MatchableDoc | null {
+  if (startlist.disciplineCode === null) return null; // ohne Kürzel kein sicherer Anker
+  const slAk = detectAK(startlist.ak);
+  const candidates = available.filter(d =>
+    d.docType === 'ERGEBNIS'
+    && detectAK(d.ak) === slAk
+    && d.disciplineCode === startlist.disciplineCode
+  );
+  if (candidates.length === 0) return null;
+  if (candidates.length === 1) return candidates[0];
+
+  // Mehrere Ergebnisse gleicher AK+Disziplin (z.B. Vorlauf + Finale desselben
+  // Sprints) → über die Phase der Startliste eindeutig machen. Nur bei GENAU
+  // einem Phasen-Treffer verknüpfen, sonst offen lassen.
+  if (startlist.phaseLabel) {
+    const slPhase = normalize(startlist.phaseLabel);
+    const byPhase = candidates.filter(d => {
+      if (!d.phaseLabel) return false;
+      const p = normalize(d.phaseLabel);
+      return p.includes(slPhase) || slPhase.includes(p);
+    });
+    if (byPhase.length === 1) return byPhase[0];
+  }
+  return null; // mehrdeutig — lieber keine als eine falsche Zuordnung
+}
+
 // Zwei unabhängige Durchläufe: Startliste/Ansetzung (wie bisher) und Ergebnis
 // (neu). Jeder Durchlauf hat seinen eigenen Dokumenten-Pool und sein eigenes
 // "bereits verknüpft"-Set, da ein Rennen z.B. schon eine Startliste, aber
@@ -357,9 +400,24 @@ export async function autoMatch(eventId: string) {
 
     for (const entry of openEntries) {
       const available = docs.filter(d => !alreadyLinked.has(d.id));
-      const match = findBestMatch(entry, available, entryRank.get(entry.id), docRank, docType);
+
+      // Ergebnis-Sonderweg: zuerst über die bereits verknüpfte Startliste (starker
+      // Anker, siehe findResultViaStartlist), dann als Rückfall das generische
+      // Matching. entry.linkedDocumentId ist auch für in DIESEM Lauf gesetzte
+      // Startlisten aktuell, weil der Startlisten-Durchlauf die lokale Kopie
+      // unten mitzieht (die passes laufen STARTLISTE → ERGEBNIS).
+      let match: MatchableDoc | null = null;
+      if (docType === 'ERGEBNIS' && entry.linkedDocumentId) {
+        const startlist = docById.get(entry.linkedDocumentId);
+        if (startlist) match = findResultViaStartlist(startlist, available);
+      }
+      if (!match) {
+        match = findBestMatch(entry, available, entryRank.get(entry.id), docRank, docType);
+      }
+
       if (match) {
         await prisma.scheduleEntry.update({ where: { id: entry.id }, data: { [field]: match.id } as any });
+        (entry as any)[field] = match.id; // lokale Kopie mitziehen (Ergebnis-Pass liest linkedDocumentId)
         alreadyLinked.add(match.id);
       }
     }
