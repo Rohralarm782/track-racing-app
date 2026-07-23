@@ -57,8 +57,26 @@ export default function TimeEstimateSettings() {
     setSaved(false);
   }
 
-  function patchDistance(key: string, value: number) {
-    setSettings(s => s ? { ...s, distanceRaceMinutes: { ...s.distanceRaceMinutes, [key]: value } } : s);
+  // Normalisiert einen Distanz-Eintrag auf {m,w} — verträgt auch den alten
+  // flachen Einzelwert, falls die Einstellungen noch nicht neu gespeichert
+  // wurden (dann gilt der Wert für m und w gleichermaßen).
+  function asGenderMinutes(v: unknown): { m: number; w: number } {
+    if (typeof v === 'number') return { m: v, w: v };
+    if (v && typeof v === 'object') {
+      const o = v as { m?: unknown; w?: unknown };
+      const m = typeof o.m === 'number' ? o.m : (typeof o.w === 'number' ? o.w : 0);
+      const w = typeof o.w === 'number' ? o.w : (typeof o.m === 'number' ? o.m : 0);
+      return { m, w };
+    }
+    return { m: 0, w: 0 };
+  }
+
+  function patchDistance(key: string, gender: 'm' | 'w', value: number) {
+    setSettings(s => {
+      if (!s) return s;
+      const cur = asGenderMinutes((s.distanceRaceMinutes as Record<string, unknown>)?.[key]);
+      return { ...s, distanceRaceMinutes: { ...s.distanceRaceMinutes, [key]: { ...cur, [gender]: value } } };
+    });
     setSaved(false);
   }
 
@@ -130,23 +148,27 @@ export default function TimeEstimateSettings() {
 
       <div className="card mb-3">
         <p className="text-sm" style={{ fontWeight: 600, marginBottom: 4 }}>Verfolgung / Zeitfahren</p>
-        <p className="text-xs text-muted" style={{ marginBottom: 10 }}>Pro Lauf = Startaufstellung + übliche Renndauer nach Distanz.</p>
-        <div style={{ marginBottom: 10, maxWidth: 160 }}>
+        <p className="text-xs text-muted" style={{ marginBottom: 10 }}>
+          Pro Lauf = Startaufstellung + übliche Renndauer nach Distanz. Rennzeit getrennt nach
+          m/w — das Geschlecht kommt aus der Altersklasse (…m / …w).
+        </p>
+        <div style={{ marginBottom: 12, maxWidth: 160 }}>
           <NumField label="Startaufstellung/Lauf" value={settings.pursuitSetupMin} suffix="Min." onChange={v => patch({ pursuitSetupMin: v })} />
         </div>
-        <div className="grid-3" style={{ gap: 10 }}>
-          {Object.entries(distances).filter(([k]) => k !== 'default').map(([dist, min]) => (
-            <NumField
-              key={dist}
-              label={dist}
-              value={min}
-              step={0.1}
-              suffix="Min."
-              onChange={v => patchDistance(dist, v)}
-            />
-          ))}
-          <NumField label="unbekannte Distanz" value={distances.default ?? 3} suffix="Min." onChange={v => patchDistance('default', v)} />
-        </div>
+        {[...Object.keys(distances).filter(k => k !== 'default'), 'default'].map(dist => {
+          const val = asGenderMinutes((distances as Record<string, unknown>)[dist]);
+          return (
+            <div key={dist} style={{ marginBottom: 10 }}>
+              <p className="text-xs" style={{ fontWeight: 600, marginBottom: 4 }}>
+                {dist === 'default' ? 'unbekannte Distanz' : dist}
+              </p>
+              <div className="grid-2" style={{ gap: 10 }}>
+                <NumField label="m" value={val.m} step={0.05} suffix="Min." onChange={v => patchDistance(dist, 'm', v)} />
+                <NumField label="w" value={val.w} step={0.05} suffix="Min." onChange={v => patchDistance(dist, 'w', v)} />
+              </div>
+            </div>
+          );
+        })}
       </div>
 
       <div className="card mb-3">
