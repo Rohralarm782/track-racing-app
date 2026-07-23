@@ -502,8 +502,11 @@ model AppSettings {
   // Verfolgung/Zeitfahren: Startaufstellung + übliche Renndauer (siehe
   // distanceRaceMinutes), pro Lauf, mal Laufzahl
   pursuitSetupMin Float @default(1)
-  // JSON-Objekt {"4000m": 4.5, "3000m": 3.5, "2000m": 2.5, "1000m": 1.1, "500m": 0.583, "default": 3.0}
-  distanceRaceMinutes Json @default("{\"4000m\":4.5,\"3000m\":3.5,\"2000m\":2.5,\"1000m\":1.1,\"500m\":0.583,\"default\":3.0}")
+  // JSON-Objekt, übliche Renndauer je Distanz getrennt nach Geschlecht (m/w):
+  // {"4000m": {"m":4.5,"w":4.5}, ... , "default": {"m":3.0,"w":3.0}}
+  // Alte Flat-Werte ({"3000m":3.5}) werden von parseDistanceTable transparent
+  // auf {m,w} migriert (Einzelwert für beide), daher ist kein Backfill nötig.
+  distanceRaceMinutes Json @default("{\"4000m\":{\"m\":4.5,\"w\":4.5},\"3000m\":{\"m\":3.5,\"w\":3.5},\"2000m\":{\"m\":2.5,\"w\":2.5},\"1000m\":{\"m\":1.1,\"w\":1.1},\"500m\":{\"m\":0.583,\"w\":0.583},\"default\":{\"m\":3.0,\"w\":3.0}}")
 
   sprintPerHeatMin     Float @default(2)
   teamsprintPerHeatMin Float @default(2)
