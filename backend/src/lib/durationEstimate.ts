@@ -3,12 +3,45 @@ import { inferCodeForEntry } from './scheduleImport';
 import { getSettings, parseDistanceTable, type DistanceRaceMinutes } from './settings';
 import type { AppSettings } from '@prisma/client';
 
-function typicalRaceMinutes(disciplineLabel: string, distances: DistanceRaceMinutes): number {
-  for (const [key, min] of Object.entries(distances)) {
+/**
+ * Geschlecht aus dem (freien) Altersklassen-Text ableiten, z.B. "U17m",
+ * "Elite w", "Frauen", "weibliche Jugend", "MU17", "WU15". Kein eindeutiges
+ * Signal (z.B. "Alle", gemischte Klasse) → null; der Aufrufer nimmt dann den
+ * m-Wert als Default (siehe typicalRaceMinutes).
+ */
+export function genderFromAk(ak: string | null | undefined): 'm' | 'w' | null {
+  if (!ak) return null;
+  const s = ak.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
+  // Ausgeschriebene, eindeutige Wörter zuerst.
+  if (/(weiblich|frauen|damen|juniorinnen|schulerinnen|madchen)/.test(s)) return 'w';
+  if (/(mannlich|manner|herren|junioren|knaben)/.test(s)) return 'm';
+  // Kürzel direkt an der U-Klasse: "mu17"/"wu15" bzw. "u17m"/"u19w" bzw. "w17".
+  let hit = s.match(/(?:^|[^a-z])([mw])\s?u?\s?\d{1,2}(?![a-z])/);
+  if (hit) return hit[1] as 'm' | 'w';
+  hit = s.match(/u?\s?\d{1,2}\s*([mw])(?![a-z])/);
+  if (hit) return hit[1] as 'm' | 'w';
+  // Freistehendes Token m/w (z.B. "Elite w", "Elite m").
+  const tokens = s.split(/[^a-z0-9]+/).filter(Boolean);
+  if (tokens.includes('w')) return 'w';
+  if (tokens.includes('m')) return 'm';
+  return null;
+}
+
+// Übliche Renndauer nach Distanz UND Geschlecht. Distanz wird — wie bisher —
+// per Wortgrenze aus dem disciplineLabel gematcht ("3000m"); fehlt sie, greift
+// "default". Der Wert wird dann geschlechtsspezifisch ausgelesen; ohne
+// eindeutiges Geschlecht (gender === null) fällt es auf den m-Wert zurück.
+function typicalRaceMinutes(
+  disciplineLabel: string,
+  gender: 'm' | 'w' | null,
+  distances: DistanceRaceMinutes,
+): number {
+  const g: 'm' | 'w' = gender ?? 'm';
+  for (const [key, val] of Object.entries(distances)) {
     if (key === 'default') continue;
-    if (new RegExp(`\\b${key}\\b`, 'i').test(disciplineLabel)) return min;
+    if (new RegExp(`\\b${key}\\b`, 'i').test(disciplineLabel)) return val[g];
   }
-  return distances.default;
+  return distances.default[g];
 }
 
 /**
@@ -19,7 +52,7 @@ function typicalRaceMinutes(disciplineLabel: string, distances: DistanceRaceMinu
  * schätzbar.
  */
 export function baseFormulaMinutes(
-  entry: { disciplineLabel: string; massStart: boolean; type: string },
+  entry: { ak: string; disciplineLabel: string; massStart: boolean; type: string },
   unitCount: number,
   settings: AppSettings,
 ): number | null {
@@ -34,7 +67,7 @@ export function baseFormulaMinutes(
   if (code === 'KE') return settings.keirinPerHeatMin * unitCount;
   if (code === 'VF' || code === 'MV' || code === 'EV' || code === 'ZF') {
     const distances = parseDistanceTable(settings.distanceRaceMinutes);
-    const perHeat = settings.pursuitSetupMin + typicalRaceMinutes(entry.disciplineLabel, distances);
+    const perHeat = settings.pursuitSetupMin + typicalRaceMinutes(entry.disciplineLabel, genderFromAk(entry.ak), distances);
     return perHeat * unitCount;
   }
   // Massenstart-Sammelkategorie: Punktefahren, Madison, Scratch, Temporunden,
@@ -92,7 +125,7 @@ function hasRealUnitCount(
  * ankern im Frontend auf ihre eigene geplante Uhrzeit.
  */
 function baseDurationMinutes(
-  entry: { disciplineLabel: string; massStart: boolean; type: string; phase: string | null; manualUnitCount?: number | null; plannedDurationMin?: number | null },
+  entry: { ak: string; disciplineLabel: string; massStart: boolean; type: string; phase: string | null; manualUnitCount?: number | null; plannedDurationMin?: number | null },
   linkedDoc: { roundCount: number | null; heatCount: number | null } | null | undefined,
   settings: AppSettings,
 ): number | null {
