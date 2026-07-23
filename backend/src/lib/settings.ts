@@ -2,9 +2,15 @@ import prisma from '../prisma';
 
 const SETTINGS_ID = 'singleton';
 
+/** Renndauer (Min.) getrennt nach Geschlecht — m = männlich, w = weiblich. */
+export interface GenderMinutes {
+  m: number;
+  w: number;
+}
+
 export interface DistanceRaceMinutes {
-  [distance: string]: number;
-  default: number;
+  [distance: string]: GenderMinutes;
+  default: GenderMinutes;
 }
 
 /**
@@ -19,15 +25,38 @@ export async function getSettings() {
   return prisma.appSettings.create({ data: { id: SETTINGS_ID } });
 }
 
+/**
+ * Normalisiert einen einzelnen Distanz-Eintrag auf {m,w}. Akzeptiert dabei
+ * BEIDE Formate:
+ *   - alt (flach):  3.5            → { m: 3.5, w: 3.5 }  (Einzelwert für beide)
+ *   - neu (m/w):    { m, w }       → unverändert; fehlt eine Seite, wird sie von
+ *                                    der anderen bzw. dem Fallback aufgefüllt.
+ * So ist die Umstellung rückwärtskompatibel und braucht keinen Backfill.
+ */
+function toGenderMinutes(value: unknown, fallback: GenderMinutes): GenderMinutes {
+  if (typeof value === 'number') return { m: value, w: value };
+  if (value && typeof value === 'object') {
+    const o = value as Record<string, unknown>;
+    const m = typeof o.m === 'number' ? o.m : (typeof o.w === 'number' ? o.w : fallback.m);
+    const w = typeof o.w === 'number' ? o.w : (typeof o.m === 'number' ? o.m : fallback.w);
+    return { m, w };
+  }
+  return { ...fallback };
+}
+
 export function parseDistanceTable(json: unknown): DistanceRaceMinutes {
   const fallback: DistanceRaceMinutes = {
-    '4000m': 4.5, '3000m': 3.5, '2000m': 2.5, '1000m': 1.1, '500m': 0.583, default: 3.0,
+    '4000m': { m: 4.5, w: 4.5 }, '3000m': { m: 3.5, w: 3.5 }, '2000m': { m: 2.5, w: 2.5 },
+    '1000m': { m: 1.1, w: 1.1 }, '500m': { m: 0.583, w: 0.583 }, default: { m: 3.0, w: 3.0 },
   };
   if (!json || typeof json !== 'object') return fallback;
   const obj = json as Record<string, unknown>;
-  const result: DistanceRaceMinutes = { default: typeof obj.default === 'number' ? obj.default : 3.0 };
+  const result: DistanceRaceMinutes = {
+    default: toGenderMinutes(obj.default, fallback.default),
+  };
   for (const [key, value] of Object.entries(obj)) {
-    if (typeof value === 'number') result[key] = value;
+    if (key === 'default') continue;
+    result[key] = toGenderMinutes(value, fallback[key] ?? fallback.default);
   }
   return result;
 }
