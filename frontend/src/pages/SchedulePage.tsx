@@ -224,6 +224,19 @@ function rankAssignDoc(entry: ScheduleEntry, doc: CommuniqueDocument): number {
 // Ein Dokument gilt als "Vorschlag", wenn die AK sicher passt (Score ≥ 4).
 const ASSIGN_SUGGEST_THRESHOLD = 4;
 
+// Dritte-Serie-/Belle-Eintrag im Sprint erkennen. Best-of-3: pro Paarung 2 feste
+// Läufe + eine 3. Serie ("Belle") NUR bei 1:1 — die steht im Zeitplan als eigener
+// Eintrag mit Phase wie "Finale 3. Serie" oder "Finale 3. S.". Nur dort blenden wir
+// den Belle-Zähler ein, mit dem gesteuert wird, wie viele Bellen tatsächlich
+// gefahren werden (0 = alle Paarungen 2:0 → Serie entfällt komplett, 0 min → alles
+// dahinter rückt vor). Teamsprint ist ausgenommen (kein best-of-3).
+const BELLE_PHASE_RE = /belle|3\s*\.\s*s(erie)?\b/i;
+function isBelleEntry(entry: { disciplineLabel: string; phase: string | null }): boolean {
+  if (!entry.phase) return false;
+  const isSprint = /sprint/i.test(entry.disciplineLabel) && !/teamsprint/i.test(entry.disciplineLabel);
+  return isSprint && BELLE_PHASE_RE.test(entry.phase);
+}
+
 export default function SchedulePage() {
   const { id: eventId } = useParams<{ id: string }>();
   const { isAdmin } = useAdmin();
@@ -250,6 +263,12 @@ export default function SchedulePage() {
   const [updateAnnouncedTime, setUpdateAnnouncedTime] = useState('');
   const [updateBusy, setUpdateBusy]         = useState(false);
   const [rematchBusy, setRematchBusy]       = useState(false);
+
+  // Schieber "Vergangene anzeigen" — blendet Einträge VOR dem aktuellen
+  // Live-Stand aus (siehe isPastEntry unten). Bewusst nach dem zuletzt
+  // gemeldeten Stand, NICHT nach Uhrzeit (die ist laut Schema nur informativ
+  // und driftet am Renntag). Default: vergangene ausgeblendet.
+  const [showPast, setShowPast] = useState(false);
 
   // ── Kommuniqué manuell zuordnen (Auswahl-Sheet) ──────────────────────────
   const [docs, setDocs]                 = useState<CommuniqueDocument[]>([]);
@@ -328,6 +347,24 @@ export default function SchedulePage() {
       await load();
     } catch (e: any) {
       setError(e.message ?? 'Speichern fehlgeschlagen');
+    }
+  }
+
+  // Belle-Zähler (3. Serie) setzen — nutzt dasselbe manualUnitCount wie oben.
+  // Bei Sprint entspricht die "Laufzahl" der Anzahl gefahrener Bellen; 0 ergibt
+  // über die Formel (sprintPerHeatMin × 0) exakt 0 min, d.h. die 3. Serie
+  // entfällt und alle folgenden Programmpunkte rücken in der Schätzung nach vorne.
+  // Optimistisch aktualisieren, damit +/− trackside sofort reagiert; load()
+  // holt danach die neuberechneten Schätzzeiten für die Folgeeinträge nach.
+  async function handleSetBelle(entry: ScheduleEntry, newCount: number) {
+    const value = Math.max(0, newCount);
+    setEntries(prev => prev.map(e => e.id === entry.id ? { ...e, manualUnitCount: value } : e));
+    try {
+      await scheduleApi.setManualUnitCount(entry.id, value);
+      await load();
+    } catch (e: any) {
+      setError(e.message ?? 'Speichern fehlgeschlagen');
+      await load(); // bei Fehler echten Stand zurückholen
     }
   }
 
@@ -450,6 +487,14 @@ export default function SchedulePage() {
 
   const currentEntryOrder = status && entries.find(e => e.id === status.scheduleEntryId)?.order;
   const currentEntryDay = status && entries.find(e => e.id === status.scheduleEntryId)?.day;
+
+  // "Vergangen" = liegt VOR dem aktuellen Live-Stand (gleiche Logik wie die
+  // isPast-Zeile in der Renn-Liste unten). order ist eine veranstaltungsweite
+  // Reihenfolge, daher genügt der Vergleich mit currentEntryOrder.
+  const isPastEntry = (e: ScheduleEntry) =>
+    status != null && currentEntryDay === e.day && currentEntryOrder != null && e.order < currentEntryOrder;
+  const pastCount = dayEntries.filter(isPastEntry).length;
+  const visibleDayEntries = showPast ? dayEntries : dayEntries.filter(e => !isPastEntry(e));
 
   // Das gerade geöffnete Dokument (Ansetzung ODER Ergebnis) heraussuchen, um
   // seine remoteModifiedAt als Cache-Version an die PDF-URL zu hängen.
@@ -574,6 +619,26 @@ export default function SchedulePage() {
             </div>
           </div>
 
+          {/* Schieber: vergangene Rennen (vor dem Live-Stand) ein-/ausblenden.
+              Nur zeigen, wenn es überhaupt etwas auszublenden gibt. */}
+          {pastCount > 0 && (
+            <label style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              gap: 10, background: 'var(--c-white)', border: '1px solid var(--c-border)',
+              borderRadius: 10, padding: '9px 12px', marginBottom: 10, cursor: 'pointer', fontSize: 14,
+            }}>
+              <span style={{ color: 'var(--c-text-muted)' }}>
+                {showPast ? 'Vergangene ausblenden' : `${pastCount} vergangene ausgeblendet`}
+              </span>
+              <input
+                type="checkbox"
+                checked={showPast}
+                onChange={e => setShowPast(e.target.checked)}
+                style={{ width: 18, height: 18 }}
+              />
+            </label>
+          )}
+
           {/* Zeitplan-Liste (alle Rennen & Siegerehrungen des Tages) */}
           <div className="card" style={{ padding: '4px 14px' }}>
             {(() => {
@@ -583,9 +648,9 @@ export default function SchedulePage() {
               // im Anschluss" — dann lieber nur die Schätzung zeigen statt einer
               // zweiten, irreführenden Zeile mit der (nichtssagenden) PDF-Zeit.
               const timeCounts = new Map<string, number>();
-              for (const e of dayEntries) timeCounts.set(e.time, (timeCounts.get(e.time) ?? 0) + 1);
+              for (const e of visibleDayEntries) timeCounts.set(e.time, (timeCounts.get(e.time) ?? 0) + 1);
 
-              return dayEntries.map((entry, idx) => {
+              return visibleDayEntries.map((entry, idx) => {
                 const isCurrent = status?.scheduleEntryId === entry.id;
                 const isPast = status != null && currentEntryDay === entry.day && currentEntryOrder != null && entry.order < currentEntryOrder;
                 const estimatedTime = estimatedTimes.get(entry.id) ?? entry.time;
@@ -608,8 +673,8 @@ export default function SchedulePage() {
                 };
                 const mev = entry.linkedDocument ? mevSummary(entry.linkedDocument.mevRiders, heatTimeFor) : null;
 
-                const prevEntry = idx > 0 ? dayEntries[idx - 1] : null;
-                const nextEntry = idx < dayEntries.length - 1 ? dayEntries[idx + 1] : null;
+                const prevEntry = idx > 0 ? visibleDayEntries[idx - 1] : null;
+                const nextEntry = idx < visibleDayEntries.length - 1 ? visibleDayEntries[idx + 1] : null;
                 const isLastOfBlock = (entry.type === 'RACE' || entry.type === 'CEREMONY') && nextEntry?.type === 'INFO';
                 const isBlockTransition = entry.type === 'INFO' && prevEntry != null
                   && (prevEntry.type === 'RACE' || prevEntry.type === 'CEREMONY');
@@ -700,6 +765,37 @@ export default function SchedulePage() {
                         className="text-xs text-muted"
                         style={{ marginTop: 3, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '4px 10px' }}
                       >
+                        {canEdit && isBelleEntry(entry) && (
+                          <span
+                            title="Wie viele Bellen (3. Serie) werden gefahren? 0 = Serie entfällt, folgende Rennen rücken vor."
+                            style={{
+                              display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap',
+                              background: '#fffbeb', border: '1px solid #fcd34d', color: '#92400e',
+                              borderRadius: 999, padding: '2px 4px 2px 10px', fontWeight: 600,
+                            }}
+                          >
+                            Belle
+                            <button
+                              onClick={() => handleSetBelle(entry, (entry.manualUnitCount ?? 0) - 1)}
+                              disabled={(entry.manualUnitCount ?? 0) <= 0}
+                              aria-label="Belle weniger"
+                              style={{
+                                border: 'none', background: 'transparent', color: 'inherit', fontSize: 16,
+                                lineHeight: 1, cursor: 'pointer', padding: '0 4px',
+                                opacity: (entry.manualUnitCount ?? 0) <= 0 ? 0.4 : 1,
+                              }}
+                            >−</button>
+                            <b style={{ minWidth: 12, textAlign: 'center' }}>{entry.manualUnitCount ?? '–'}</b>
+                            <button
+                              onClick={() => handleSetBelle(entry, (entry.manualUnitCount ?? 0) + 1)}
+                              aria-label="Belle mehr"
+                              style={{
+                                border: 'none', background: 'transparent', color: 'inherit', fontSize: 16,
+                                lineHeight: 1, cursor: 'pointer', padding: '0 4px',
+                              }}
+                            >＋</button>
+                          </span>
+                        )}
                         {entry.linkedDocument ? (
                           <span
                             style={{ color: 'var(--c-primary)', cursor: 'pointer', whiteSpace: 'nowrap' }}
