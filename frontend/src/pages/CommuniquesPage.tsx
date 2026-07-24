@@ -78,6 +78,24 @@ function parseDocNumber(fileName: string): { num: number; suffix: string } {
   return { num: parseInt(match[1], 10), suffix: match[2] ?? '' };
 }
 
+// Kurzbezeichnung „K12B" aus einem Dateinamen — für den Hinweis „ersetzt durch …".
+// Fällt auf den Dateinamen zurück, wenn keine K-Nummer erkennbar ist.
+function docNumberLabel(fileName: string): string {
+  const { num, suffix } = parseDocNumber(fileName);
+  return num === Number.MAX_SAFE_INTEGER ? fileName : `K${num}${suffix}`;
+}
+
+// Grund, warum ein Dokument NICHT in der Standardliste steht (für Athleten
+// unsichtbar). Automatik (Ersetzung/Fehlen) hat Vorrang vor dem manuellen
+// Ausblenden, da sie den Zustand präziser beschreibt.
+type HiddenReason = 'superseded' | 'missing' | 'manual';
+function hiddenReason(d: CommuniqueDocumentT): HiddenReason | null {
+  if (d.supersededById) return 'superseded';
+  if (d.missingSince) return 'missing';
+  if (d.isHidden) return 'manual';
+  return null;
+}
+
 // ── Komponente ─────────────────────────────────────────────────────────────
 export default function CommuniquesPage() {
   const { id: eventId } = useParams<{ id: string }>();
@@ -536,10 +554,12 @@ export default function CommuniquesPage() {
   }
 
   const docs = source?.documents ?? [];
-  const hiddenCount = docs.filter(d => d.isHidden).length;
-  // Ausgeblendete (veraltete) Dokumente standardmäßig ausblenden — über den
-  // Schalter unten lassen sie sich wieder einblenden (dann leicht gedimmt).
-  const visibleDocs = (showHidden && canEdit) ? docs : docs.filter(d => !d.isHidden);
+  // „Nicht sichtbar" = manuell ausgeblendet ODER automatisch ersetzt (K12→K12B)
+  // ODER fehlt in der Quelle. Für Athleten (und in der Standardansicht) alle drei
+  // ausblenden; Admins können sie über den Schalter unten einblenden (dann
+  // gedimmt, mit Grund-Badge).
+  const hiddenCount = docs.filter(d => hiddenReason(d) !== null).length;
+  const visibleDocs = (showHidden && canEdit) ? docs : docs.filter(d => hiddenReason(d) === null);
   const filtered = visibleDocs
     .filter(d => catFilter === 'alle' || d.docType === catFilter)
     .filter(d => selectedAKs.has('Alle') || d.ak === 'Alle' || selectedAKs.has(d.ak))
@@ -895,7 +915,7 @@ export default function CommuniquesPage() {
                       display: 'flex', alignItems: 'flex-start', gap: 12, padding: '13px 14px',
                       background: d.isPinned ? '#fffbeb' : unread ? '#f8fafd' : 'var(--c-white)',
                       borderColor: d.isPinned ? '#fde68a' : unread ? '#bfdbfe' : 'var(--c-border)',
-                      opacity: d.isHidden ? 0.55 : 1,
+                      opacity: hiddenReason(d) ? 0.55 : 1,
                     }}
                   >
                     <div style={{
@@ -913,14 +933,20 @@ export default function CommuniquesPage() {
                         }}>
                           {d.fileName}
                         </span>
-                        {unread && !d.isHidden && <span className="badge badge-blue">NEU</span>}
-                        {d.isHidden && <span className="badge badge-gray">ausgeblendet</span>}
+                        {unread && !hiddenReason(d) && <span className="badge badge-blue">NEU</span>}
+                        {hiddenReason(d) === 'superseded' && (
+                          <span className="badge badge-yellow">
+                            ersetzt{d.supersededBy ? ` durch ${docNumberLabel(d.supersededBy.fileName)}` : ''}
+                          </span>
+                        )}
+                        {hiddenReason(d) === 'missing' && <span className="badge badge-gray">fehlt in Quelle</span>}
+                        {hiddenReason(d) === 'manual' && <span className="badge badge-gray">ausgeblendet</span>}
                       </div>
                       <div className="text-xs text-muted">
                         {relativeTime(d.remoteModifiedAt)} · {d.ak}{d.discipline !== 'ALLGEMEIN' ? ` · ${DISCIPLINE_LABELS[d.discipline]}` : ''}
                       </div>
                     </div>
-                    {canEdit ? (
+                    {canEdit && hiddenReason(d) !== 'superseded' && hiddenReason(d) !== 'missing' ? (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 2, flexShrink: 0 }}>
                         <button
                           onClick={e => togglePin(d, e)}
@@ -956,8 +982,8 @@ export default function CommuniquesPage() {
             <div style={{ textAlign: 'center', marginTop: 10 }}>
               <button className="btn btn-ghost btn-sm" onClick={() => setShowHidden(v => !v)}>
                 {showHidden
-                  ? 'Ausgeblendete verbergen'
-                  : `Ausgeblendete anzeigen (${hiddenCount})`}
+                  ? 'Nicht sichtbare verbergen'
+                  : `Nicht sichtbare anzeigen (${hiddenCount})`}
               </button>
             </div>
           )}
