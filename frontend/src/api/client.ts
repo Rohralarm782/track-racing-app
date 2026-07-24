@@ -152,6 +152,14 @@ export interface CommuniqueDocument {
   starterCount?: number | null;
   roundCount?: number | null;
   mevAnalyzedAt?: string | null;
+  // Automatische Ersetzung: gesetzt, wenn eine neuere Fassung desselben
+  // Kommuniqués existiert (K12 → K12B). supersededBy trägt den Nachfolger für
+  // die Anzeige „ersetzt durch K12B".
+  supersededById?: string | null;
+  supersededBy?: { id: string; fileName: string } | null;
+  // Gesetzt, wenn die Datei beim letzten vollständigen Poll nicht mehr in der
+  // Quelle lag (ISO-Zeitstempel des ersten Fehlens).
+  missingSince?: string | null;
 }
 
 export type CommuniqueSourceType = 'WEBDAV' | 'HTML';
