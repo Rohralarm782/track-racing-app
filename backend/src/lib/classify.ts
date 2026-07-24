@@ -174,6 +174,20 @@ export function parseCommuniqueNumber(fileName: string): number {
   return match ? parseInt(match[1], 10) : Number.MAX_SAFE_INTEGER;
 }
 
+// Wie parseCommuniqueNumber, aber zusätzlich mit dem Buchstaben-Suffix, das
+// eine korrigierte Neuveröffentlichung kennzeichnet ("K12" → "" , "K12A" → "A",
+// "K12B" → "B"). Grundlage für die automatische Ersetzung (siehe
+// applySupersessions in communiques.ts): innerhalb derselben K-Nummer +
+// identischer Klassifizierung gewinnt der höchste Suffix. number ist
+// MAX_SAFE_INTEGER, wenn gar keine K-Nummer erkennbar ist (dann nicht
+// versionierbar). Suffix wird großgeschrieben zurückgegeben, damit der
+// Vergleich unabhängig von der Schreibweise im Dateinamen ist.
+export function parseCommuniqueVersion(fileName: string): { number: number; suffix: string } {
+  const match = fileName.match(/^K?\s*(\d+)\s*([A-Za-z]*)/);
+  if (!match) return { number: Number.MAX_SAFE_INTEGER, suffix: '' };
+  return { number: parseInt(match[1], 10), suffix: (match[2] ?? '').toUpperCase() };
+}
+
 // ─── Kombiniert ─────────────────────────────────────────────────────────────
 
 export function classifyFileName(fileName: string): {
