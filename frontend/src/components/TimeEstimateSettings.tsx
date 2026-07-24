@@ -181,6 +181,19 @@ export default function TimeEstimateSettings() {
       </div>
 
       <div className="card mb-3">
+        <p className="text-sm" style={{ fontWeight: 600, marginBottom: 4 }}>Siegerehrungen</p>
+        <p className="text-xs text-muted" style={{ marginBottom: 10 }}>
+          Mehrere direkt aufeinander folgende Ehrungen werden als Block gerechnet:
+          Basis + Zuschlag je weiterer Ehrung. Einzelehrung → Basis. Eine im Zeitplan
+          geplante Dauer hat weiterhin Vorrang.
+        </p>
+        <div className="grid-2" style={{ gap: 10 }}>
+          <NumField label="Basis pro Block" value={settings.ceremonyBaseMin} step={1} suffix="Min." onChange={v => patch({ ceremonyBaseMin: v })} />
+          <NumField label="Zuschlag je weiterer Ehrung" value={settings.ceremonyPerExtraMin} step={1} suffix="Min." onChange={v => patch({ ceremonyPerExtraMin: v })} />
+        </div>
+      </div>
+
+      <div className="card mb-3">
         <p className="text-sm" style={{ fontWeight: 600, marginBottom: 10 }}>Anzeige</p>
         <div className="grid-2" style={{ gap: 10 }}>
           <NumField label="Cool-down zwischen Blöcken" value={settings.pauseBufferMin} step={1} suffix="Min." onChange={v => patch({ pauseBufferMin: v })} />
