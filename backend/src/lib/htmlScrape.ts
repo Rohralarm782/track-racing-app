@@ -65,10 +65,19 @@ async function headLastModified(url: string): Promise<Date> {
  * Durchsucht alle angegebenen Seiten nach .pdf-Links und liefert je Datei
  * fileName, modifiedAt (Last-Modified) und die absolute url.
  * Ein Fehler auf einer einzelnen Seite bricht die anderen nicht ab.
+ *
+ * `complete` ist true, wenn ALLE Seiten erfolgreich geladen wurden — nur dann
+ * ist die Liste vollständig genug, um daraus auf „diese Datei fehlt jetzt in der
+ * Quelle" zu schließen (siehe missingSince/pollSource). Schlägt auch nur eine
+ * Seite fehl, könnten ihre PDF-Links fehlen, ohne dass die Dateien wirklich
+ * entfernt wurden — dann darf die Missing-Erkennung nicht greifen. Ein
+ * fehlgeschlagener HEAD (Datum) zählt NICHT als unvollständig, da die Datei
+ * selbst gefunden wurde (Datum fällt nur auf den Epoch-0-Sentinel zurück).
  */
-export async function listHtmlFiles(pageUrls: string[]): Promise<RemoteFile[]> {
+export async function listHtmlFiles(pageUrls: string[]): Promise<{ files: RemoteFile[]; complete: boolean }> {
   // absolute PDF-URL -> Anzeige-Dateiname (dedupliziert seitenübergreifend)
   const found = new Map<string, string>();
+  let complete = true;
 
   for (const pageUrl of pageUrls) {
     let html: string;
@@ -80,6 +89,7 @@ export async function listHtmlFiles(pageUrls: string[]): Promise<RemoteFile[]> {
       html = await res.text();
     } catch (err) {
       console.error(`HTML-Quelle konnte nicht geladen werden (${pageUrl}):`, err);
+      complete = false; // eine Seite fehlt → Missing-Erkennung diesen Poll aussetzen
       continue;
     }
 
@@ -118,7 +128,7 @@ export async function listHtmlFiles(pageUrls: string[]): Promise<RemoteFile[]> {
     results.push(...dated);
   }
 
-  return results;
+  return { files: results, complete };
 }
 
 /**
