@@ -56,7 +56,11 @@ export function baseFormulaMinutes(
   unitCount: number,
   settings: AppSettings,
 ): number | null {
-  if (entry.type === 'CEREMONY') return 5;
+  // Einzel-/Basiswert einer Siegerehrung. Die blockweise Verrechnung mehrerer
+  // aufeinanderfolgender Ehrungen (Basis + Zuschlag je weiterer) passiert in
+  // ceremonyBlockMinutes(), weil dafür der Kontext der Nachbareinträge nötig
+  // ist — hier steht nur der Wert einer für sich stehenden Ehrung.
+  if (entry.type === 'CEREMONY') return settings.ceremonyBaseMin;
   if (entry.type !== 'RACE') return null;
 
   const code = inferCodeForEntry(entry.disciplineLabel);
@@ -156,6 +160,49 @@ export function usedFallback(
   if (known != null) return false;
   if (entry.plannedDurationMin != null && entry.plannedDurationMin > 0) return false;
   return true;
+}
+
+/**
+ * Blockweise Dauer für Siegerehrungen. Mehrere DIREKT aufeinander folgende
+ * Ehrungen (kein Rennen/keine Info dazwischen, gleicher Tag) teilen sich die
+ * Rüstzeit: der Block kostet ceremonyBaseMin + ceremonyPerExtraMin × (N − 1).
+ * Verteilt auf die einzelnen Einträge heißt das: die ERSTE Ehrung des Blocks
+ * bekommt die Basis, jede WEITERE den Zuschlag — die Summe ergibt exakt die
+ * Blockdauer, und die fortlaufende Uhr im Frontend (computeEstimatedTimes)
+ * stimmt Zeile für Zeile.
+ *
+ * Ehrungen mit einer vom Veranstalter geplanten Dauer (plannedDurationMin)
+ * bleiben unangetastet: sie behalten ihren geplanten Wert und unterbrechen den
+ * Formel-Lauf wie ein Nicht-Ehrungs-Eintrag (der nächste Auto-Ehrungs-Block
+ * beginnt danach wieder mit der Basis).
+ *
+ * Gibt eine Map entryId → Minuten NUR für die blockweise verrechneten
+ * (Auto-)Ehrungen zurück; alle anderen Einträge fehlen bewusst und behalten
+ * ihre reguläre Schätzung.
+ */
+export function ceremonyBlockMinutes(
+  entries: Array<{ id: string; type: string; day: number; plannedDurationMin: number | null }>,
+  settings: AppSettings,
+): Map<string, number> {
+  const out = new Map<string, number>();
+  let runIndex = -1;               // Position im aktuellen Ehrungs-Lauf; -1 = kein Lauf aktiv
+  let prevDay: number | null = null;
+  for (const e of entries) {
+    const isAutoCeremony =
+      e.type === 'CEREMONY' && !(e.plannedDurationMin != null && e.plannedDurationMin > 0);
+    if (isAutoCeremony && prevDay === e.day && runIndex >= 0) {
+      runIndex += 1;               // Lauf läuft weiter → weitere Ehrung
+    } else if (isAutoCeremony) {
+      runIndex = 0;                // neuer Lauf (Tageswechsel oder vorher unterbrochen)
+    } else {
+      runIndex = -1;               // Rennen/Info/geplante Ehrung unterbricht den Lauf
+    }
+    if (isAutoCeremony) {
+      out.set(e.id, runIndex === 0 ? settings.ceremonyBaseMin : settings.ceremonyPerExtraMin);
+    }
+    prevDay = e.day;
+  }
+  return out;
 }
 
 /**
