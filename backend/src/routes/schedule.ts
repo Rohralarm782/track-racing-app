@@ -3,7 +3,7 @@ import { z } from 'zod';
 import prisma from '../prisma';
 import { requireAdmin } from '../middleware/auth';
 import { analyzeZeitplanPdf, autoMatch, loadScheduleWithLinks, ScheduleEntryInputSchema } from '../lib/scheduleImport';
-import { estimateMinutes, recalibrateFromStatusUpdate, usedFallback } from '../lib/durationEstimate';
+import { ceremonyBlockMinutes, estimateMinutes, recalibrateFromStatusUpdate, usedFallback } from '../lib/durationEstimate';
 import { getSettings } from '../lib/settings';
 import { analyzeMevForDocument } from '../lib/mevDetect';
 
@@ -57,6 +57,7 @@ router.post('/events/:id/schedule', requireAdmin, async (req, res, next) => {
 // da nicht jeder Aufrufer (z.B. autoMatch) das braucht. Lädt die Einstellungen
 // (Formel-Werte) EINMAL für die ganze Liste statt pro Eintrag neu.
 async function withEstimates<T extends {
+  id: string; day: number;
   ak: string; disciplineLabel: string; massStart: boolean; type: string; phase: string | null;
   manualUnitCount: number | null;
   plannedDurationMin: number | null;
@@ -65,11 +66,18 @@ async function withEstimates<T extends {
   entries: T[],
 ): Promise<Array<T & { estimatedMinutes: number | null; estimateIsFallback: boolean }>> {
   const settings = await getSettings();
-  return Promise.all(entries.map(async e => ({
-    ...e,
-    estimatedMinutes: await estimateMinutes(e, e.linkedDocument, settings),
-    estimateIsFallback: usedFallback(e, e.linkedDocument),
-  })));
+  // Siegerehrungen blockweise vorab verrechnen (mehrere aufeinanderfolgende
+  // Ehrungen teilen sich die Rüstzeit). Setzt voraus, dass entries nach order
+  // sortiert sind — liefert loadScheduleWithLinks (orderBy: order asc).
+  const ceremonyMin = ceremonyBlockMinutes(entries, settings);
+  return Promise.all(entries.map(async e => {
+    const base = await estimateMinutes(e, e.linkedDocument, settings);
+    return {
+      ...e,
+      estimatedMinutes: ceremonyMin.has(e.id) ? ceremonyMin.get(e.id)! : base,
+      estimateIsFallback: usedFallback(e, e.linkedDocument),
+    };
+  }));
 }
 
 // GET /api/events/:id/schedule — Liste inkl. verknüpftem Kommuniqué
