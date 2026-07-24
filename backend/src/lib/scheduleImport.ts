@@ -373,7 +373,10 @@ export async function autoMatch(eventId: string) {
 
   const [allRaceEntries, docs] = await Promise.all([
     prisma.scheduleEntry.findMany({ where: { eventId, type: 'RACE' } }),
-    prisma.communiqueDocument.findMany({ where: { sourceId: source.id } }),
+    // Ersetzte Dokumente (supersededById gesetzt) sind veraltet und dürfen nicht
+    // mehr verknüpft werden — der Poll hat bestehende Verknüpfungen bereits auf
+    // den Nachfolger umgehängt (siehe applySupersessions in communiques.ts).
+    prisma.communiqueDocument.findMany({ where: { sourceId: source.id, supersededById: null } }),
   ]);
 
   const passes: Array<{ docType: 'STARTLISTE' | 'ERGEBNIS'; field: 'linkedDocumentId' | 'linkedResultDocumentId' }> = [
