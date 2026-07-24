@@ -318,6 +318,16 @@ model CommuniqueDocument {
   remoteUrl        String?       // nur HTML: absolute PDF-URL; bei WEBDAV null (Abruf über shareToken+fileName)
   discoveredAt DateTime         @default(now())
 
+  // War die Datei beim letzten VOLLSTÄNDIGEN Poll nicht mehr in der Quelle?
+  // Dann Zeitstempel des ersten Fehlens, sonst null. Wird nur gesetzt, wenn das
+  // Listing komplett war (WebDAV wirft bei Fehler; HTML meldet complete=false bei
+  // Teil-Ausfall — siehe pollSource), damit ein Quellen-Aussetzer keine gültigen
+  // Dokumente fälschlich als „fehlend" markiert. Taucht die Datei wieder auf,
+  // wird das Feld beim nächsten Poll wieder auf null gesetzt. Rein für die
+  // Anzeige/Sichtbarkeit — die Verknüpfung im Zeitplan bleibt (MEV-Daten liegen
+  // bereits gespeichert vor).
+  missingSince DateTime?
+
   // ─── Für die Zeitplan-Verknüpfung (Disziplin-Kürzel/Phase aus dem Dateinamen) ──
   disciplineCode String?  // z.B. "MA", "PR", "OM", "TR", "VF" — aus Dateinamen erkannt
   phaseLabel     String?  // z.B. "1. VL", "A-Lauf", "Finale" — aus Dateinamen erkannt
@@ -331,6 +341,19 @@ model CommuniqueDocument {
   roundCount    Int?      // Rundenzahl des Rennens (Massenstart-Formate); bei Ausscheidungsfahren = starterCount*2 statt Textfund (siehe mevDetect.ts)
   mevAnalyzedAt DateTime? // wann die MEV-Analyse zuletzt gelaufen ist (null = noch nicht analysiert)
   mevVersion    Int       @default(0) // Stand des Analyse-Prompts (siehe MEV_ANALYSIS_VERSION in mevDetect.ts); kleiner = wird beim nächsten Poll neu analysiert
+
+  // ─── Automatische Ersetzung (K12 → K12A → K12B) ────────────────────────────
+  // Wird eine neuere Fassung DESSELBEN Kommuniqués veröffentlicht (gleiche
+  // K-Nummer + identische AK/Disziplin/Phase, höherer Buchstaben-Suffix), zeigt
+  // supersededById auf die neueste Fassung. Ersetzte Dokumente verschwinden aus
+  // der Standardliste (auch für Athleten) und werden vom Zeitplan-Matching als
+  // Kandidaten ausgeschlossen; der Poll hängt bestehende Zeitplan-Verknüpfungen
+  // automatisch auf den Nachfolger um (siehe applySupersessions in communiques.ts).
+  // onDelete: SetNull, damit das Löschen des Nachfolgers nicht die Vorgänger
+  // mitreißt. Idempotent: bei jedem Poll neu berechnet.
+  supersededById String?
+  supersededBy   CommuniqueDocument?  @relation("Supersession", fields: [supersededById], references: [id], onDelete: SetNull)
+  supersedes     CommuniqueDocument[] @relation("Supersession")
 
   scheduleEntry ScheduleEntry?
   // Reverse von linkedResultDocumentId (siehe ScheduleEntry) — falls DIESES
