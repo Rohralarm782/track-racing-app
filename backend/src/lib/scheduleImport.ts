@@ -343,6 +343,23 @@ function findResultViaStartlist(
   return null; // mehrdeutig — lieber keine als eine falsche Zuordnung
 }
 
+// Sprint best-of-3: mehrere Serien einer Phase ("1. S.", "2. S.", "3. S.")
+// teilen sich EINE Startliste bzw. EIN Ergebnis. Anker ist immer die 1. Serie;
+// die 2./3. Serie bekommen KEINE eigene Verknüpfung — sie erben Startliste,
+// Ergebnis und Dauer in der Anzeige vom Anker (siehe SchedulePage). Ohne diese
+// Ausnahme hängt das generische Matching den ankerlosen 2./3.-Serie-Einträgen
+// fremde Sprint-Ergebnisse gleicher AK an (z.B. Quali- oder Hoffnungslauf-
+// Ergebnis). Erkennung: Sprint (kein Teamsprint) + Phase endet auf "N. S." /
+// "N. Serie" mit N >= 2.
+const SPRINT_SERIE_RE = /\s+(\d+)\.\s*s(?:erie)?\.?\s*$/i;
+function nonLeadSprintSerie(entry: { disciplineLabel: string; phase: string | null }): boolean {
+  if (!entry.phase) return false;
+  const isSprint = /sprint/i.test(entry.disciplineLabel) && !/teamsprint/i.test(entry.disciplineLabel);
+  if (!isSprint) return false;
+  const m = entry.phase.match(SPRINT_SERIE_RE);
+  return m != null && parseInt(m[1], 10) >= 2;
+}
+
 // Zwei unabhängige Durchläufe: Startliste/Ansetzung (wie bisher) und Ergebnis
 // (neu). Jeder Durchlauf hat seinen eigenen Dokumenten-Pool und sein eigenes
 // "bereits verknüpft"-Set, da ein Rennen z.B. schon eine Startliste, aber
@@ -374,6 +391,19 @@ export async function autoMatch(eventId: string) {
   // mit passender Disziplin bleibt dagegen unangetastet.
   const docById = new Map(docs.map(d => [d.id, d]));
   for (const entry of allRaceEntries) {
+    // Nicht-Anker-Serien (2./3. S.) dürfen NIE eine eigene Verknüpfung tragen —
+    // vorhandene (falsche) Links lösen, damit das Dokument wieder frei wird und
+    // der Anker (1. S.) es behält. Die 2./3. S. erben zur Anzeige vom Anker.
+    if (nonLeadSprintSerie(entry)) {
+      for (const { field } of passes) {
+        if (!entry[field]) continue;
+        const doc = docById.get(entry[field] as string);
+        await prisma.scheduleEntry.update({ where: { id: entry.id }, data: { [field]: null } as any });
+        (entry as any)[field] = null;
+        console.log(`Zeitplan-Matching: Nicht-Anker-Serie entkoppelt — "${entry.disciplineLabel} ${entry.phase ?? ''}" (${entry.ak}) erbt vom Anker (war: ${doc?.fileName ?? '?'})`);
+      }
+      continue;
+    }
     const entryCode = inferCodeForEntry(entry.disciplineLabel);
     for (const { field } of passes) {
       const linkedId = entry[field];
@@ -395,7 +425,10 @@ export async function autoMatch(eventId: string) {
     const alreadyLinked = new Set(
       allRaceEntries.filter(e => e[field]).map(e => e[field] as string)
     );
-    const openEntries = allRaceEntries.filter(e => !e[field]);
+    // Nicht-Anker-Serien (2./3. S.) bleiben absichtlich unverknüpft — sie erben
+    // vom Anker (1. S.). Nur so bekommt das Dokument keinen fremden 2./3.-Serie-
+    // Eintrag angehängt.
+    const openEntries = allRaceEntries.filter(e => !e[field] && !nonLeadSprintSerie(e));
     const docRank = rankDocs(docs, docType);
 
     for (const entry of openEntries) {
