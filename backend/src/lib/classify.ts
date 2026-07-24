@@ -101,7 +101,7 @@ const TYPE_WORDS = /\b(Ansetzung|Ansetz|Ansatz|Ergebnis|Ergeb|Endstand|Strafen|Z
 // Eindeutige Disziplin-Kürzel/Wörter, die aus der Phase entfernt werden, weil
 // sie bereits über disciplineCode abgebildet sind. "VF" bewusst ausgenommen
 // (siehe oben).
-const DISCIPLINE_CODE_WORDS = /\b(MA|PR|OM|MV|EV)\b/g;
+const DISCIPLINE_CODE_WORDS = /\b(MA|PR|OM|MV|EV|TS)\b/g;
 // Ausgeschriebene Disziplin-Namen, die ebenfalls aus der Phase entfernt
 // werden — nicht alle Disziplinen haben ein kurzes Kürzel im Dateinamen
 // (z.B. "Sprint", "Zeitfahren", "Keirin" stehen immer ausgeschrieben da).
@@ -120,7 +120,11 @@ export function detectDisciplineCode(fileName: string): string | null {
   // Mannschafts-/Einzelverfolgung MÜSSEN vor dem generischen "verfolgung"-Fallback
   // geprüft werden. Ein blankes "VF" wird bewusst NICHT als Verfolgung gewertet,
   // da es in Sprint-Dateinamen "Viertelfinale" bedeutet (Phase, keine Disziplin).
-  if (/mannschaftsverfolgung/i.test(fileName) || /\bMV\b/i.test(fileName)) return 'MV';
+  // "MS-Verfolgung" / "MS Verfolgung" ist eine bei manchen Veranstaltern übliche
+  // Kurzform von "Mannschaftsverfolgung" — muss vor dem generischen
+  // "verfolgung"-Fallback (→ VF) abgefangen werden, sonst wird sie als
+  // Einer-/Verfolgung fehlklassifiziert.
+  if (/mannschaftsverfolgung/i.test(fileName) || /\bMV\b/i.test(fileName) || /\bMS[\s-]?Verfolgung\b/i.test(fileName)) return 'MV';
   if (/einzelverfolgung|einerverfolgung/i.test(fileName) || /\bEV\b/i.test(fileName)) return 'EV';
   if (/verfolgung/i.test(fileName)) return 'VF';
   // "Ausscheidung" ist eine in der Praxis vorkommende Kurzform von
@@ -136,25 +140,47 @@ export function detectDisciplineCode(fileName: string): string | null {
   // aber konsistente Reihenfolge von spezifisch zu generisch).
   if (/keirin/i.test(fileName)) return 'KE';
   // Teamsprint MUSS vor dem generischen "sprint"-Fallback geprüft werden.
-  if (/teamsprint/i.test(fileName)) return 'TS';
+  // Manche Veranstalter schreiben nur das Kürzel "TS" (z.B. "WE_TS-Quali") statt
+  // "Teamsprint" — beides als TS werten. \bTS\b greift nach separatorsToSpaces
+  // auch bei unterstrich-/bindestrich-getrennten Segmenten.
+  if (/teamsprint/i.test(fileName) || /\bTS\b/.test(fileName)) return 'TS';
   if (/\bsprint\b/i.test(fileName)) return 'SP';
   return null;
 }
 
+// Geschlecht-zuerst-Altersklasse (BDR-Kurzform: "ME", "WE", "MU17", "WU19"),
+// die — anders als AK_WORD/AK_SEGMENT (klasse-zuerst) — sonst als vermeintlicher
+// Phasen-Text hängen bliebe (z.B. "ME Finale" statt "Finale").
+const GENDER_FIRST_AK_WORD = /\b[MW](E|U1[3579])\b/g;
+
 // Extrahiert den "Rest" des Dateinamens nach Entfernen von Kommuniqué-Nummer,
 // Altersklasse, Typ-Schlagwort (Ansetzung/Ergebnis/…) und eindeutigem
 // Disziplin-Kürzel — was übrig bleibt, ist die Phase/Runde (z.B. "Quali",
-// "Finale", "1.VL", "VF" bei Sprint = Viertelfinale). Arbeitet wortweise statt
-// über feste Trennzeichen-Positionen, da reale Dateinamen meist nur einen
-// einzigen " - "-Trenner haben (z.B. "K19 - U17w Ansatz Quali EV.pdf").
+// "Finale", "1.VL", "VF" bei Sprint = Viertelfinale).
+//
+// Trennzeichen: reale Dateinamen mischen " - " (mit Leerzeichen), "-" (ohne
+// Leerzeichen, z.B. "K28-01-U19w-EV-Quali") und "_" ("..._Quali_Ansetz").
+// Früher wurde NUR an " - " getrennt — bei den beiden anderen Stilen blieb der
+// ganze Name EIN Segment, das erste (die K-Nummer) wurde als "alles" verworfen
+// und es kam durchweg null heraus. Deshalb wird jetzt an allen drei Varianten
+// einheitlich zerlegt. Verworfen werden gezielt nur die führende K-Block-Marke
+// und – im block+laufnr-Format – die unmittelbar folgende Unternummer (01/03/…),
+// NICHT spätere Zahlen-Token wie "5-8" (Platzierungsläufe) oder "500m".
 export function detectPhaseLabel(fileName: string): string | null {
   const base = fileName.replace(/\.pdf$/i, '');
-  const segments = base.split(' - ').map(s => s.trim()).filter(Boolean);
-  const rest = segments.slice(1).filter(seg => !AK_SEGMENT.test(seg));
+  const tokens = base.split(/\s-\s|[-_]/).map(s => s.trim()).filter(Boolean);
+
+  // Führende K-Block-Marke entfernen ("K28", "K198B") …
+  if (tokens.length > 0 && /^K?\d+[A-Za-z]*$/i.test(tokens[0])) tokens.shift();
+  // … und danach eine reine Unternummer ("01", "03", "01A") als nächstes Token.
+  if (tokens.length > 0 && /^\d{1,2}[A-Za-z]?$/.test(tokens[0])) tokens.shift();
+
+  const rest = tokens.filter(seg => !AK_SEGMENT.test(seg));
   if (rest.length === 0) return null;
 
   let joined = rest.join(' ');
   joined = joined.replace(AK_WORD, ' ');
+  joined = joined.replace(GENDER_FIRST_AK_WORD, ' ');
   joined = joined.replace(TYPE_WORDS, ' ');
   joined = joined.replace(DISCIPLINE_CODE_WORDS, ' ');
   joined = joined.replace(DISCIPLINE_WORDS_FULL, ' ');
@@ -164,28 +190,43 @@ export function detectPhaseLabel(fileName: string): string | null {
 }
 
 // ─── Kommuniqué-Nummer ──────────────────────────────────────────────────────
-// Kommuniqués sind block-nummeriert in der Reihenfolge des Ablaufprogramms
-// (z.B. "K198", "K198B"). Dient als robustes, textunabhängiges Signal für die
-// Zeitplan-Verknüpfung (siehe schedule.ts): innerhalb derselben AK+Disziplin
-// entspricht die K-Nummer-Reihenfolge der zeitlichen Reihenfolge im Zeitplan —
-// unabhängig davon, wie die Phase im Dateinamen geschrieben ist.
+// Kommuniqués sind block-nummeriert in der Reihenfolge des Ablaufprogramms.
+// Zwei Schreibweisen kommen in der Praxis vor:
+//   • kompakt:        "K198", "K198B"          (Block + optionaler Korrektur-Suffix)
+//   • block+laufnr:   "K28-01", "K28-03", "K21-01A"
+//                     (Block + zweistellige Unternummer + optionaler Suffix)
+// Im zweiten Format zählt die UNTERNUMMER (01, 03, …) die Programmpunkte des
+// Blocks durch (z.B. 01=Quali, 03=Finale) — sie MUSS in die Sortier-/Versions-
+// nummer einfließen. Der alte Parser las nur den Block ("28"), wodurch Quali,
+// Runde und Finale desselben Blocks als dieselbe Kommuniqué galten: die
+// Rang-Sortierung wurde unbrauchbar und applySupersessions "ersetzte" die
+// verschiedenen Phasen gegenseitig. Deshalb wird jetzt Block*1000 + Unternummer
+// als zusammengesetzte, dennoch monoton steigende Nummer zurückgegeben
+// (Unternummern bleiben real weit unter 1000). Fehlt die Unternummer (kompaktes
+// Format), ist sie 0 — "K198" → 198000, "K199" → 199000, Reihenfolge bleibt
+// korrekt. Dient als robustes, textunabhängiges Signal für die Zeitplan-
+// Verknüpfung (siehe schedule.ts): innerhalb derselben AK+Disziplin entspricht
+// die Reihenfolge der zeitlichen Reihenfolge im Zeitplan.
+const COMMUNIQUE_RE = /^K?\s*(\d+)(?:-0*(\d+))?\s*([A-Za-z]*)/;
+
 export function parseCommuniqueNumber(fileName: string): number {
-  const match = fileName.match(/^K?\s*(\d+)/);
-  return match ? parseInt(match[1], 10) : Number.MAX_SAFE_INTEGER;
+  return parseCommuniqueVersion(fileName).number;
 }
 
 // Wie parseCommuniqueNumber, aber zusätzlich mit dem Buchstaben-Suffix, das
-// eine korrigierte Neuveröffentlichung kennzeichnet ("K12" → "" , "K12A" → "A",
-// "K12B" → "B"). Grundlage für die automatische Ersetzung (siehe
-// applySupersessions in communiques.ts): innerhalb derselben K-Nummer +
-// identischer Klassifizierung gewinnt der höchste Suffix. number ist
-// MAX_SAFE_INTEGER, wenn gar keine K-Nummer erkennbar ist (dann nicht
-// versionierbar). Suffix wird großgeschrieben zurückgegeben, damit der
-// Vergleich unabhängig von der Schreibweise im Dateinamen ist.
+// eine korrigierte Neuveröffentlichung kennzeichnet ("K28-01" → "" ,
+// "K28-01A" → "A", "K198B" → "B"). Grundlage für die automatische Ersetzung
+// (siehe applySupersessions in communiques.ts): innerhalb derselben
+// zusammengesetzten Nummer (Block+Unternummer) + identischer Klassifizierung
+// gewinnt der höchste Suffix. number ist MAX_SAFE_INTEGER, wenn gar keine
+// K-Nummer erkennbar ist (dann nicht versionierbar). Suffix wird
+// großgeschrieben zurückgegeben, damit der Vergleich schreibweisenunabhängig ist.
 export function parseCommuniqueVersion(fileName: string): { number: number; suffix: string } {
-  const match = fileName.match(/^K?\s*(\d+)\s*([A-Za-z]*)/);
+  const match = fileName.match(COMMUNIQUE_RE);
   if (!match) return { number: Number.MAX_SAFE_INTEGER, suffix: '' };
-  return { number: parseInt(match[1], 10), suffix: (match[2] ?? '').toUpperCase() };
+  const block = parseInt(match[1], 10);
+  const seq = match[2] ? parseInt(match[2], 10) : 0;
+  return { number: block * 1000 + seq, suffix: (match[3] ?? '').toUpperCase() };
 }
 
 // ─── Kombiniert ─────────────────────────────────────────────────────────────
