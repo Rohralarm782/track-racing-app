@@ -991,7 +991,18 @@ export default function SchedulePage() {
                   onClick={() => setUpdateRounds(r => Math.max(0, r - 1))}
                   style={{ width: 26, height: 26, borderRadius: 6, border: '1px solid var(--c-border)', background: 'var(--c-white)', fontSize: 14, cursor: 'pointer' }}
                 >−</button>
-                <span style={{ fontSize: 15, fontWeight: 500, minWidth: 20, textAlign: 'center' }}>{updateRounds}</span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={updateRounds}
+                  onChange={e => {
+                    const digits = e.target.value.replace(/\D/g, '');
+                    setUpdateRounds(digits === '' ? 0 : Math.min(999, parseInt(digits, 10)));
+                  }}
+                  onFocus={e => e.target.select()}
+                  style={{ width: 52, textAlign: 'center', fontSize: 15, fontWeight: 500, borderRadius: 6, border: '1px solid var(--c-border)', background: 'var(--c-white)', padding: '3px 4px' }}
+                />
                 <button
                   onClick={() => setUpdateRounds(r => r + 1)}
                   style={{ width: 26, height: 26, borderRadius: 6, border: '1px solid var(--c-border)', background: 'var(--c-white)', fontSize: 14, cursor: 'pointer' }}
