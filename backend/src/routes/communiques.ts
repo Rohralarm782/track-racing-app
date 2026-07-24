@@ -6,7 +6,7 @@ import { requireAdmin } from '../middleware/auth';
 import { listShareFiles } from '../lib/webdav';
 import { listHtmlFiles } from '../lib/htmlScrape';
 import { fetchDocumentFile } from '../lib/remoteSource';
-import { classifyFileName } from '../lib/classify';
+import { classifyFileName, parseCommuniqueVersion } from '../lib/classify';
 import { getCachedFile, setCachedFile } from '../lib/fileCache';
 import { notifyNewDocuments } from '../lib/push';
 import { analyzeMevForDocument, needsRosterRecheck, MEV_ANALYSIS_VERSION } from '../lib/mevDetect';
@@ -24,7 +24,14 @@ router.get('/:eventId', async (req, res, next) => {
   try {
     const source = await prisma.communiqueSource.findUnique({
       where: { eventId: req.params.eventId },
-      include: { documents: { orderBy: { remoteModifiedAt: 'desc' } } },
+      include: {
+        documents: {
+          orderBy: { remoteModifiedAt: 'desc' },
+          // supersededBy für die Anzeige „ersetzt durch K12B" im Admin-Bereich.
+          // supersededById und missingSince sind Skalare und kommen ohnehin mit.
+          include: { supersededBy: { select: { id: true, fileName: true } } },
+        },
+      },
     });
     if (!source) { res.json(null); return; }
     res.json(source);
@@ -245,15 +252,127 @@ router.post('/:eventId/documents/:documentId/import-schedule', requireAdmin, asy
 });
 
 /**
+ * Automatische Ersetzung veralteter Kommuniqués (K12 → K12A → K12B).
+ *
+ * Gruppiert alle Dokumente einer Quelle nach K-Nummer + IDENTISCHER
+ * Klassifizierung (AK + Disziplin-Kürzel + Phase + Dokumenttyp). Trägt eine
+ * Gruppe mehr als ein Dokument, gewinnt der höchste Buchstaben-Suffix; alle
+ * anderen bekommen supersededById = Gewinner-ID gesetzt und verschwinden damit
+ * aus der Standardliste. Anschließend werden Zeitplan-Verknüpfungen, die noch
+ * auf eine ausgeblendete Fassung zeigen, auf den Gewinner umgehängt.
+ *
+ * Bewusst konservativ: Nur bei EXAKT gleicher Klassifizierung. So verdrängen
+ * sich z.B. „K160 Quali" und „K160B Finale" (unterschiedliche Phase) NICHT
+ * gegenseitig — beides sind legitime, verschiedene Startlisten. Ohne erkennbare
+ * K-Nummer (number = MAX_SAFE_INTEGER) ist ein Dokument nicht versionierbar und
+ * bleibt unangetastet. Idempotent: bei jedem Poll neu berechnet, setzt nur
+ * tatsächlich abweichende Felder.
+ */
+export async function applySupersessions(sourceId: string): Promise<void> {
+  const docs = await prisma.communiqueDocument.findMany({
+    where: { sourceId },
+    select: {
+      id: true, fileName: true, ak: true, disciplineCode: true,
+      phaseLabel: true, docType: true, supersededById: true,
+    },
+  });
+
+  const groups = new Map<string, typeof docs>();
+  for (const d of docs) {
+    const { number } = parseCommuniqueVersion(d.fileName);
+    if (number === Number.MAX_SAFE_INTEGER) continue; // keine K-Nummer → nicht versionierbar
+    const key = [number, d.ak, d.disciplineCode ?? '', d.phaseLabel ?? '', d.docType].join('::');
+    const bucket = groups.get(key);
+    if (bucket) bucket.push(d); else groups.set(key, [d]);
+  }
+
+  // Soll-Zustand: pro Dokument die ID der neuesten Fassung (bzw. null).
+  const desired = new Map<string, string | null>();
+  for (const d of docs) desired.set(d.id, null);
+  const relink: Array<{ loserId: string; winnerId: string }> = [];
+
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    const winner = [...group].sort((a, b) =>
+      parseCommuniqueVersion(a.fileName).suffix.localeCompare(parseCommuniqueVersion(b.fileName).suffix)
+    ).at(-1)!;
+    for (const d of group) {
+      if (d.id === winner.id) continue;
+      desired.set(d.id, winner.id);
+      relink.push({ loserId: d.id, winnerId: winner.id });
+    }
+  }
+
+  // Nur geänderte supersededById-Felder schreiben.
+  for (const d of docs) {
+    const next = desired.get(d.id) ?? null;
+    if ((d.supersededById ?? null) !== next) {
+      await prisma.communiqueDocument.update({ where: { id: d.id }, data: { supersededById: next } });
+    }
+  }
+
+  // Zeitplan-Verknüpfungen vom veralteten Dokument auf den Nachfolger umhängen.
+  // Einzeln mit try/catch, damit eine (sehr seltene) Unique-Kollision — falls
+  // der Nachfolger bereits an einem anderen Eintrag hängt — den Poll nicht
+  // abbricht. linkedDocumentId/linkedResultDocumentId sind jeweils @unique.
+  for (const { loserId, winnerId } of relink) {
+    for (const field of ['linkedDocumentId', 'linkedResultDocumentId'] as const) {
+      const entries = await prisma.scheduleEntry.findMany({ where: { [field]: loserId }, select: { id: true } });
+      for (const e of entries) {
+        try {
+          await prisma.scheduleEntry.update({ where: { id: e.id }, data: { [field]: winnerId } as any });
+        } catch (err) {
+          console.error(`Umhängen ${field} ${loserId} → ${winnerId} fehlgeschlagen:`, err);
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Markiert Dokumente, deren Datei nicht mehr in der (vollständig gelesenen)
+ * Quelle liegt, mit missingSince (Zeitpunkt des ersten Fehlens). Taucht eine
+ * Datei wieder auf, wird missingSince wieder gelöscht. Setzt nur tatsächlich
+ * abweichende Felder. Die Verknüpfung im Zeitplan bleibt bewusst bestehen —
+ * die MEV-Daten sind bereits gespeichert und weiter nutzbar.
+ */
+export async function markMissingDocuments(sourceId: string, remoteFileNames: string[]): Promise<void> {
+  const remote = new Set(remoteFileNames);
+  const docs = await prisma.communiqueDocument.findMany({
+    where: { sourceId },
+    select: { id: true, fileName: true, missingSince: true },
+  });
+  const now = new Date();
+  for (const d of docs) {
+    const present = remote.has(d.fileName);
+    if (!present && d.missingSince === null) {
+      await prisma.communiqueDocument.update({ where: { id: d.id }, data: { missingSince: now } });
+    } else if (present && d.missingSince !== null) {
+      await prisma.communiqueDocument.update({ where: { id: d.id }, data: { missingSince: null } });
+    }
+  }
+}
+
+/**
  * Kernlogik: Ordner abfragen, neue/geänderte Dateien gegen DB abgleichen,
  * neue Einträge speichern und Push auslösen. Wird sowohl vom manuellen
  * Poll-Endpunkt als auch vom Hintergrund-Interval in index.ts genutzt.
  */
 export async function pollSource(source: CommuniqueSource) {
   const { id: sourceId, eventId } = source;
-  const remoteFiles = source.sourceType === 'HTML'
-    ? await listHtmlFiles(source.htmlPageUrls)
-    : await listShareFiles(source.shareToken ?? '');
+  // listingComplete = die Remote-Liste ist vollständig genug, um daraus auf
+  // „Datei fehlt jetzt in der Quelle" zu schließen. WebDAV wirft bei Fehler
+  // (bricht den Poll ab, kein Fehlalarm möglich) → immer true. HTML meldet
+  // complete=false, wenn eine Seite nicht geladen werden konnte.
+  let listingComplete = true;
+  let remoteFiles;
+  if (source.sourceType === 'HTML') {
+    const html = await listHtmlFiles(source.htmlPageUrls);
+    remoteFiles = html.files;
+    listingComplete = html.complete;
+  } else {
+    remoteFiles = await listShareFiles(source.shareToken ?? '');
+  }
   const known = await prisma.communiqueDocument.findMany({ where: { sourceId } });
   const knownMap = new Map(known.map(d => [d.fileName, d]));
 
@@ -347,6 +466,32 @@ export async function pollSource(source: CommuniqueSource) {
   const newZeitplanDocs = created.filter(d => d.docType === 'ZEITPLAN');
   for (const doc of newZeitplanDocs) {
     await autoImportScheduleFromDocument(eventId, doc, source);
+  }
+
+  // ── Automatische Ersetzung (K12 → K12A → K12B) ─────────────────────────────
+  // Nur nötig, wenn sich Dokumente geändert haben — eine neue Fassung ist immer
+  // ein „created" (neuer Dateiname). Blendet veraltete Fassungen aus und hängt
+  // bestehende Zeitplan-Verknüpfungen auf den Nachfolger um. Läuft VOR autoMatch,
+  // damit ersetzte Dokumente dort schon als Kandidaten ausgeschlossen sind.
+  if (created.length > 0 || toReclassify.length > 0) {
+    try {
+      await applySupersessions(sourceId);
+    } catch (err) {
+      console.error('Automatische Ersetzung nach Poll fehlgeschlagen:', err);
+    }
+  }
+
+  // ── „Fehlt in Quelle" ──────────────────────────────────────────────────────
+  // Läuft bei JEDEM vollständigen Poll (nicht nur bei Änderungen), da eine Datei
+  // aus der Quelle verschwinden kann, ohne dass etwas Neues auftaucht. Bei
+  // unvollständigem Listing (HTML-Teilausfall) übersprungen, um keine gültigen
+  // Dokumente fälschlich als fehlend zu markieren.
+  if (listingComplete) {
+    try {
+      await markMissingDocuments(sourceId, remoteFiles.map(f => f.fileName));
+    } catch (err) {
+      console.error('Missing-Erkennung nach Poll fehlgeschlagen:', err);
+    }
   }
 
   // ── Zeitplan-Verknüpfung nachziehen ───────────────────────────────────────
