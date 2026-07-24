@@ -237,6 +237,20 @@ function isBelleEntry(entry: { disciplineLabel: string; phase: string | null }):
   return isSprint && BELLE_PHASE_RE.test(entry.phase);
 }
 
+// Sprint best-of-3: die Serien einer Phase ("1. S.", "2. S.", "3. S.") teilen sich
+// EINE Startliste/EIN Ergebnis. Anker ist immer die 1. Serie; die höheren Serien
+// erben Startliste, Ergebnis und Dauer vom Anker (siehe Backend nonLeadSprintSerie).
+// parseSprintSerie zerlegt die Phase in Basis ("Viertelfinale") und Seriennummer.
+function isSprintEntry(entry: { disciplineLabel: string }): boolean {
+  return /sprint/i.test(entry.disciplineLabel) && !/teamsprint/i.test(entry.disciplineLabel);
+}
+function parseSprintSerie(phase: string | null): { base: string; serie: number | null } {
+  if (!phase) return { base: '', serie: null };
+  const m = phase.match(/^(.*?)\s+(\d+)\.\s*s(?:erie)?\.?\s*$/i);
+  if (m) return { base: m[1].trim(), serie: parseInt(m[2], 10) };
+  return { base: phase.trim(), serie: null };
+}
+
 export default function SchedulePage() {
   const { id: eventId } = useParams<{ id: string }>();
   const { isAdmin } = useAdmin();
@@ -494,7 +508,49 @@ export default function SchedulePage() {
   const isPastEntry = (e: ScheduleEntry) =>
     status != null && currentEntryDay === e.day && currentEntryOrder != null && e.order < currentEntryOrder;
   const pastCount = dayEntries.filter(isPastEntry).length;
-  const visibleDayEntries = showPast ? dayEntries : dayEntries.filter(e => !isPastEntry(e));
+
+  // ── Sprint-Serien-Vererbung ──────────────────────────────────────────────
+  // Anker je (AK | Phasen-Basis) über die GESAMTE Veranstaltung bestimmen (die
+  // niedrigste Serie, i.d.R. "1. S."). Höhere Serien erben Startliste, Ergebnis
+  // und Dauer vom Anker — die 2./3. S. haben backendseitig bewusst keine eigene
+  // Verknüpfung (siehe nonLeadSprintSerie in scheduleImport.ts).
+  const sprintLeadByEntryId = new Map<string, ScheduleEntry>();
+  {
+    const leadByKey = new Map<string, ScheduleEntry>();
+    for (const e of entries) {
+      if (!isSprintEntry(e)) continue;
+      const { base, serie } = parseSprintSerie(e.phase);
+      if (serie == null) continue;
+      const key = `${e.ak}|${base}`;
+      const cur = leadByKey.get(key);
+      if (!cur || serie < (parseSprintSerie(cur.phase).serie ?? Infinity)) leadByKey.set(key, e);
+    }
+    for (const e of entries) {
+      if (!isSprintEntry(e)) continue;
+      const { base, serie } = parseSprintSerie(e.phase);
+      if (serie == null) continue;
+      const lead = leadByKey.get(`${e.ak}|${base}`);
+      if (lead && lead.id !== e.id) sprintLeadByEntryId.set(e.id, lead);
+    }
+  }
+
+  // Erbe Startliste/Ergebnis/Dauer vom Anker. Die Belle (3. S.) behält ihre
+  // eigene Dauer NUR, wenn der Belle-Zähler gesetzt ist (manualUnitCount != null);
+  // sonst erbt auch sie die Anker-Dauer als Default (Anzeige-Dokumente immer geerbt).
+  const resolveEntry = (e: ScheduleEntry): ScheduleEntry => {
+    const lead = sprintLeadByEntryId.get(e.id);
+    if (!lead) return e;
+    const keepOwnEstimate = isBelleEntry(e) && e.manualUnitCount != null;
+    return {
+      ...e,
+      linkedDocument: lead.linkedDocument,
+      linkedResultDocument: lead.linkedResultDocument,
+      estimatedMinutes: keepOwnEstimate ? e.estimatedMinutes : lead.estimatedMinutes,
+      estimateIsFallback: keepOwnEstimate ? e.estimateIsFallback : lead.estimateIsFallback,
+    };
+  };
+  const resolvedDayEntries = dayEntries.map(resolveEntry);
+  const visibleDayEntries = showPast ? resolvedDayEntries : resolvedDayEntries.filter(e => !isPastEntry(e));
 
   // Das gerade geöffnete Dokument (Ansetzung ODER Ergebnis) heraussuchen, um
   // seine remoteModifiedAt als Cache-Version an die PDF-URL zu hängen.
@@ -642,7 +698,7 @@ export default function SchedulePage() {
           {/* Zeitplan-Liste (alle Rennen & Siegerehrungen des Tages) */}
           <div className="card" style={{ padding: '4px 14px' }}>
             {(() => {
-              const estimatedTimes = computeEstimatedTimes(dayEntries, status, currentEntryDay);
+              const estimatedTimes = computeEstimatedTimes(resolvedDayEntries, status, currentEntryDay);
               // Teilen sich mehrere Einträge exakt dieselbe PDF-Uhrzeit, ist das
               // keine echte Uhrzeit pro Rennen, sondern nur "diese Rennen folgen
               // im Anschluss" — dann lieber nur die Schätzung zeigen statt einer
@@ -750,7 +806,7 @@ export default function SchedulePage() {
                           {heatCount} {heatCount === 1 ? 'Lauf' : 'Läufe'}
                         </span>
                       )}
-                      {entry.type === 'RACE' && canEdit && entry.estimateIsFallback && (
+                      {entry.type === 'RACE' && canEdit && entry.estimateIsFallback && !sprintLeadByEntryId.has(entry.id) && (
                         <span
                           onClick={() => handleSetManualCount(entry)}
                           title={`${entry.massStart ? 'Rundenzahl' : 'Laufzahl'} manuell eintragen (Schätzung beruht auf einer Rückfallgröße)`}
@@ -806,12 +862,17 @@ export default function SchedulePage() {
                         ) : !canEdit ? (
                           <span style={{ whiteSpace: 'nowrap' }}>kein Kommuniqué zugeordnet</span>
                         ) : null}
-                        {canEdit && (
+                        {canEdit && !sprintLeadByEntryId.has(entry.id) && (
                           <span
                             style={{ color: 'var(--c-text-muted)', cursor: 'pointer', whiteSpace: 'nowrap', textDecoration: 'underline' }}
                             onClick={() => openAssign(entry)}
                           >
                             {entry.linkedDocument ? 'ändern' : '＋ zuordnen'}
+                          </span>
+                        )}
+                        {canEdit && sprintLeadByEntryId.has(entry.id) && (
+                          <span style={{ color: 'var(--c-text-muted)', whiteSpace: 'nowrap', fontStyle: 'italic' }}>
+                            erbt von 1. Serie
                           </span>
                         )}
                         {entry.linkedResultDocument && (
