@@ -423,6 +423,8 @@ export interface AppSettings {
   keirinPerHeatMin: number;
   pauseBufferMin: number;
   estimateThresholdMin: number;
+  ceremonyBaseMin: number;
+  ceremonyPerExtraMin: number;
   fallbackRoundCountPr: number;
   fallbackRoundCountTr: number;
   fallbackRoundCountDefault: number;
