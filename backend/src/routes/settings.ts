@@ -37,6 +37,8 @@ const SettingsSchema = z.object({
   keirinPerHeatMin: z.number().min(0).optional(),
   pauseBufferMin: z.number().int().min(0).optional(),
   estimateThresholdMin: z.number().int().min(0).optional(),
+  ceremonyBaseMin: z.number().int().min(0).optional(),
+  ceremonyPerExtraMin: z.number().int().min(0).optional(),
   fallbackRoundCountPr: z.number().int().min(0).optional(),
   fallbackRoundCountTr: z.number().int().min(0).optional(),
   fallbackRoundCountDefault: z.number().int().min(0).optional(),
