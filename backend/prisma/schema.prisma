@@ -406,12 +406,19 @@ model ScheduleEntry {
 
   linkedDocumentId String?             @unique
   linkedDocument    CommuniqueDocument? @relation(fields: [linkedDocumentId], references: [id], onDelete: SetNull)
+  // true = linkedDocument wurde VON HAND verknüpft (PATCH /schedule-entries/:id).
+  // autoMatch fasst solche Verknüpfungen nie an (weder Disziplin-Selbstheilung
+  // noch Nicht-Anker-Serien-Entkopplung), damit ein Poll/Abgleich die bewusste
+  // Korrektur nicht wieder auflöst. Auto-Verknüpfungen setzen das Flag auf false.
+  linkedDocumentManual Boolean @default(false)
 
   // Verknüpftes Ergebnis-Kommuniqué, sobald verfügbar — bewusst getrennt von
   // linkedDocument (Startliste/Ansetzung), damit die dortigen MEV-Namen auch
   // nach Veröffentlichung des Ergebnisses weiter angezeigt werden können.
   linkedResultDocumentId String?             @unique
   linkedResultDocument    CommuniqueDocument? @relation("ScheduleEntryResult", fields: [linkedResultDocumentId], references: [id], onDelete: SetNull)
+  // Wie linkedDocumentManual, aber für das Ergebnis-Kommuniqué.
+  linkedResultManual Boolean @default(false)
 
   // Welches ZEITPLAN-Kommuniqué diesen Eintrag automatisch erzeugt hat (siehe
   // autoImportScheduleFromDocument). Getrennt von linkedDocumentId (das die
