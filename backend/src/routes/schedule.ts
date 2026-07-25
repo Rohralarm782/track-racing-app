@@ -128,9 +128,19 @@ router.patch('/schedule-entries/:id', requireAdmin, async (req, res, next) => {
       res.json(await prisma.scheduleEntry.findUnique({ where: { id: req.params.id } }));
       return;
     }
-    const data: Record<string, string | number | null> = {};
-    if (linkedDocumentId !== undefined) data.linkedDocumentId = linkedDocumentId;
-    if (linkedResultDocumentId !== undefined) data.linkedResultDocumentId = linkedResultDocumentId;
+    const data: Record<string, string | number | boolean | null> = {};
+    // Wird ein Kommuniqué von Hand verknüpft, das Ergebnis als „manuell" markieren,
+    // damit autoMatch die Zuordnung beim nächsten Poll/Abgleich nicht wieder auflöst
+    // (Disziplin-Selbstheilung, Nicht-Anker-Serie). Beim Lösen von Hand (id = null)
+    // fällt der Eintrag bewusst wieder ins Auto-Matching zurück (Flag = false).
+    if (linkedDocumentId !== undefined) {
+      data.linkedDocumentId = linkedDocumentId;
+      data.linkedDocumentManual = typeof linkedDocumentId === 'string' && linkedDocumentId.length > 0;
+    }
+    if (linkedResultDocumentId !== undefined) {
+      data.linkedResultDocumentId = linkedResultDocumentId;
+      data.linkedResultManual = typeof linkedResultDocumentId === 'string' && linkedResultDocumentId.length > 0;
+    }
     if (manualUnitCount !== undefined) data.manualUnitCount = manualUnitCount;
 
     // linkedDocumentId und linkedResultDocumentId sind @unique — ein Kommuniqué
