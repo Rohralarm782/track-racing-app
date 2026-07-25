@@ -379,9 +379,13 @@ export async function autoMatch(eventId: string) {
     prisma.communiqueDocument.findMany({ where: { sourceId: source.id, supersededById: null } }),
   ]);
 
-  const passes: Array<{ docType: 'STARTLISTE' | 'ERGEBNIS'; field: 'linkedDocumentId' | 'linkedResultDocumentId' }> = [
-    { docType: 'STARTLISTE', field: 'linkedDocumentId' },
-    { docType: 'ERGEBNIS', field: 'linkedResultDocumentId' },
+  const passes: Array<{
+    docType: 'STARTLISTE' | 'ERGEBNIS';
+    field: 'linkedDocumentId' | 'linkedResultDocumentId';
+    manualField: 'linkedDocumentManual' | 'linkedResultManual';
+  }> = [
+    { docType: 'STARTLISTE', field: 'linkedDocumentId', manualField: 'linkedDocumentManual' },
+    { docType: 'ERGEBNIS', field: 'linkedResultDocumentId', manualField: 'linkedResultManual' },
   ];
 
   // ── Selbstheilung: widersprüchliche Verknüpfungen lösen ───────────────────
@@ -398,8 +402,11 @@ export async function autoMatch(eventId: string) {
     // vorhandene (falsche) Links lösen, damit das Dokument wieder frei wird und
     // der Anker (1. S.) es behält. Die 2./3. S. erben zur Anzeige vom Anker.
     if (nonLeadSprintSerie(entry)) {
-      for (const { field } of passes) {
+      for (const { field, manualField } of passes) {
         if (!entry[field]) continue;
+        // Von Hand gesetzte Verknüpfung ist eine bewusste Entscheidung und wird
+        // nie automatisch entkoppelt — auch nicht bei Nicht-Anker-Serien.
+        if ((entry as any)[manualField]) continue;
         const doc = docById.get(entry[field] as string);
         await prisma.scheduleEntry.update({ where: { id: entry.id }, data: { [field]: null } as any });
         (entry as any)[field] = null;
@@ -408,9 +415,15 @@ export async function autoMatch(eventId: string) {
       continue;
     }
     const entryCode = inferCodeForEntry(entry.disciplineLabel);
-    for (const { field } of passes) {
+    for (const { field, manualField } of passes) {
       const linkedId = entry[field];
       if (!linkedId) continue;
+      // Von Hand gesetzte Verknüpfung bleibt IMMER bestehen, selbst bei
+      // scheinbarem Disziplin-Widerspruch — der Mensch korrigiert hier bewusst
+      // das (falsche) Auto-Matching, u.a. wenn der Disziplin-Code aus dem
+      // Dateinamen falsch erkannt wurde. Ohne diese Ausnahme löste der nächste
+      // Poll die Korrektur wieder auf.
+      if ((entry as any)[manualField]) continue;
       const doc = docById.get(linkedId);
       if (!doc || !isDisciplineConflict(entryCode, doc.disciplineCode)) continue;
       await prisma.scheduleEntry.update({ where: { id: entry.id }, data: { [field]: null } as any });
@@ -424,7 +437,7 @@ export async function autoMatch(eventId: string) {
   // manuell oder in einem früheren Lauf verknüpft wurde.
   const entryRank = rankEntries(allRaceEntries);
 
-  for (const { docType, field } of passes) {
+  for (const { docType, field, manualField } of passes) {
     const alreadyLinked = new Set(
       allRaceEntries.filter(e => e[field]).map(e => e[field] as string)
     );
@@ -452,8 +465,12 @@ export async function autoMatch(eventId: string) {
       }
 
       if (match) {
-        await prisma.scheduleEntry.update({ where: { id: entry.id }, data: { [field]: match.id } as any });
+        // Automatisch gesetzte Verknüpfung → manuell-Flag ausdrücklich auf false,
+        // damit ein evtl. veraltetes Flag (z.B. nach gelöschtem Dokument) nicht
+        // fälschlich eine Auto-Zuordnung vor der Selbstheilung schützt.
+        await prisma.scheduleEntry.update({ where: { id: entry.id }, data: { [field]: match.id, [manualField]: false } as any });
         (entry as any)[field] = match.id; // lokale Kopie mitziehen (Ergebnis-Pass liest linkedDocumentId)
+        (entry as any)[manualField] = false;
         alreadyLinked.add(match.id);
       }
     }
