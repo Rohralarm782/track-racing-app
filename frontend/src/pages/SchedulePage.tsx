@@ -101,6 +101,11 @@ function mevSummary(riders: MevRider[], heatTimeFor?: (r: MevRider) => string | 
 }
 
 const CEREMONY_ESTIMATE_MIN = 5;
+// Feste Abräumzeit nach "im Ziel": die Fahrer sind im Ziel und verlassen die
+// Bahn — bis das nächste Rennen starten kann, vergehen noch rund 2 Minuten.
+// Bewusst disziplinübergreifend konstant (siehe Absprache), unabhängig von der
+// in estimatedMinutes steckenden Renndauer.
+const FINISHED_CLEAR_MIN = 2;
 const ESTIMATE_DISPLAY_THRESHOLD_MIN = 5;
 const PAUSE_BUFFER_MIN = 20; // Cool-down-Puffer nach dem letzten Rennen eines Blocks
 
@@ -142,9 +147,12 @@ function computeEstimatedTimes(
     //   displayMin — welche Zeit in DIESER Zeile steht
     //   forward    — wie viele Minuten bis zum NÄCHSTEN Eintrag addiert werden
     //
-    //   FINISHED ("im Ziel") → Rennen vorbei: jetzt IST das Ende. Zeile zeigt den
-    //                          zurückgerechneten Start (jetzt − volle Dauer),
-    //                          Folgerennen beginnt ab jetzt (forward = 0).
+    //   FINISHED ("im Ziel") → Fahrer sind im Ziel und verlassen die Bahn. Das
+    //                          Rennen selbst ist gefahren, aber die Bahn ist noch
+    //                          nicht frei. Zeile zeigt den zurückgerechneten
+    //                          Start (jetzt − volle Dauer); das Folgerennen
+    //                          beginnt erst nach einer festen Abräumzeit
+    //                          (FINISHED_CLEAR_MIN), nicht sofort.
     //   RUNNING  ("läuft")   → Rennen läuft: aus dem Lauf-/Rundenfortschritt die
     //                          verstrichene und die Restdauer schätzen. Zeile
     //                          zeigt den zurückgerechneten echten Start
@@ -158,7 +166,9 @@ function computeEstimatedTimes(
     if (isAnchor && status && cumulative != null) {
       if (status.statusKey === 'FINISHED') {
         if (fullDur != null) displayMin = cumulative - fullDur;
-        forward = 0;
+        // Rennen gefahren, aber Bahn noch nicht frei: feste Abräumzeit bis zum
+        // nächsten Rennen laufen lassen (statt es sofort zu starten).
+        forward = FINISHED_CLEAR_MIN;
       } else if (status.statusKey === 'RUNNING' && fullDur != null) {
         const remaining = remainingRaceMinutes(entry, status, fullDur);
         displayMin = cumulative - (fullDur - remaining); // echter Start ≈ jetzt − verstrichen
