@@ -25,6 +25,21 @@ const PDF_LINK_RE = /href\s*=\s*["']([^"']+?\.pdf(?:\?[^"']*)?)["']/gi;
 const HEAD_CONCURRENCY = 5;
 const REQUEST_TIMEOUT_MS = 12_000;
 
+// Ein eigener Bot-User-Agent wirkt zunächst höflich, wird aber von etlichen
+// Hostern (mod_security, Sucuri, diverse Joomla-Setups) pauschal mit 403
+// beantwortet — die Seite ist dann für den Poller schlicht leer, obwohl im
+// Browser alles sichtbar ist. Wir fragen hier nur öffentlich verlinkte PDFs ab,
+// exakt wie ein Besucher, deshalb ein gewöhnlicher Browser-User-Agent.
+const USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+  '(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+
+const BROWSER_HEADERS: Record<string, string> = {
+  'User-Agent': USER_AGENT,
+  Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'Accept-Language': 'de-DE,de;q=0.9,en;q=0.8',
+};
+
 async function fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Response> {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
@@ -48,7 +63,7 @@ function fileNameFromUrl(url: string): string {
 /** Ermittelt das Änderungsdatum eines PDFs über den Last-Modified-Header. */
 async function headLastModified(url: string): Promise<Date> {
   try {
-    const res = await fetchWithTimeout(url, { method: 'HEAD' });
+    const res = await fetchWithTimeout(url, { method: 'HEAD', headers: BROWSER_HEADERS });
     const lm = res.ok ? res.headers.get('last-modified') : null;
     if (lm) {
       const d = new Date(lm);
@@ -74,21 +89,24 @@ async function headLastModified(url: string): Promise<Date> {
  * fehlgeschlagener HEAD (Datum) zählt NICHT als unvollständig, da die Datei
  * selbst gefunden wurde (Datum fällt nur auf den Epoch-0-Sentinel zurück).
  */
-export async function listHtmlFiles(pageUrls: string[]): Promise<{ files: RemoteFile[]; complete: boolean }> {
+export async function listHtmlFiles(
+  pageUrls: string[],
+): Promise<{ files: RemoteFile[]; complete: boolean; errors: string[] }> {
   // absolute PDF-URL -> Anzeige-Dateiname (dedupliziert seitenübergreifend)
   const found = new Map<string, string>();
+  const errors: string[] = [];
   let complete = true;
 
   for (const pageUrl of pageUrls) {
     let html: string;
     try {
-      const res = await fetchWithTimeout(pageUrl, {
-        headers: { Accept: 'text/html', 'User-Agent': 'SpurtlinieBot/1.0 (+communique-poller)' },
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const res = await fetchWithTimeout(pageUrl, { headers: BROWSER_HEADERS });
+      if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`.trim());
       html = await res.text();
     } catch (err) {
-      console.error(`HTML-Quelle konnte nicht geladen werden (${pageUrl}):`, err);
+      const reason = err instanceof Error ? err.message : String(err);
+      console.error(`HTML-Quelle konnte nicht geladen werden (${pageUrl}): ${reason}`);
+      errors.push(`${pageUrl}: ${reason}`);
       complete = false; // eine Seite fehlt → Missing-Erkennung diesen Poll aussetzen
       continue;
     }
@@ -128,7 +146,7 @@ export async function listHtmlFiles(pageUrls: string[]): Promise<{ files: Remote
     results.push(...dated);
   }
 
-  return { files: results, complete };
+  return { files: results, complete, errors };
 }
 
 /**
@@ -137,7 +155,7 @@ export async function listHtmlFiles(pageUrls: string[]): Promise<{ files: Remote
  */
 export async function fetchHtmlFile(url: string, fileName: string): Promise<{ data: Buffer; contentType: string }> {
   const res = await fetchWithTimeout(url, {
-    headers: { 'User-Agent': 'SpurtlinieBot/1.0 (+communique-poller)' },
+    headers: BROWSER_HEADERS,
   });
   if (!res.ok) {
     throw new Error(`HTML-GET fehlgeschlagen (${url}): HTTP ${res.status}`);
