@@ -3,6 +3,7 @@ import { communiquesApi, type CommuniqueSource } from '../api/client';
 import {
   parseSourceInput, describeSource, sourceToInput, sameSourceConfig,
 } from '../lib/communiqueSource';
+import CommuniqueSectionPicker from './CommuniqueSectionPicker';
 
 // Quellen-Karte in den Veranstaltungs­einstellungen (⚙️-Tab): zeigt die aktuell
 // hinterlegte Kommuniqué-Quelle und erlaubt, die Links nachträglich zu ändern.
@@ -14,6 +15,7 @@ export default function CommuniqueSourceSettings({ eventId }: { eventId: string 
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [input, setInput]     = useState('');
+  const [sections, setSections] = useState<string[]>([]);
   const [saving, setSaving]   = useState(false);
   const [error, setError]     = useState('');
   const [msg, setMsg]         = useState('');
@@ -21,16 +23,25 @@ export default function CommuniqueSourceSettings({ eventId }: { eventId: string 
   useEffect(() => {
     let alive = true;
     communiquesApi.get(eventId)
-      .then(src => { if (alive) { setSource(src); setInput(src ? sourceToInput(src) : ''); } })
+      .then(src => {
+        if (!alive) return;
+        setSource(src);
+        setInput(src ? sourceToInput(src) : '');
+        setSections(src?.htmlSections ?? []);
+      })
       .catch(() => { /* Quelle bleibt null, Karte zeigt "keine hinterlegt" */ })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [eventId]);
 
-  const detected = editing ? parseSourceInput(input) : null;
+  const parsed = editing ? parseSourceInput(input) : null;
+  // Die Abschnittsauswahl gehört zur Konfiguration — sonst würde ein reiner
+  // Abschnittswechsel nicht als Änderung erkannt und die alten Dokumente blieben stehen.
+  const detected = parsed ? { ...parsed, htmlSections: parsed.sourceType === 'HTML' ? sections : [] } : null;
 
   function startEdit() {
     setInput(source ? sourceToInput(source) : '');
+    setSections(source?.htmlSections ?? []);
     setMsg(''); setError('');
     setEditing(true);
   }
@@ -39,14 +50,16 @@ export default function CommuniqueSourceSettings({ eventId }: { eventId: string 
     setEditing(false);
     setError('');
     setInput(source ? sourceToInput(source) : '');
+    setSections(source?.htmlSections ?? []);
   }
 
   async function save() {
-    const config = parseSourceInput(input);
-    if (!config) {
+    const base = parseSourceInput(input);
+    if (!base) {
       setError('Bitte einen Nextcloud-Share-Link oder eine Webseiten-URL (https://…) eingeben.');
       return;
     }
+    const config = { ...base, htmlSections: base.sourceType === 'HTML' ? sections : [] };
     // Nur löschen, wenn schon eine Quelle existierte UND sich die Links geändert haben.
     const changed = !source || !sameSourceConfig(source, config);
     const purge = !!source && changed;
@@ -61,6 +74,7 @@ export default function CommuniqueSourceSettings({ eventId }: { eventId: string 
       const fresh = await communiquesApi.get(eventId);
       setSource(fresh);
       setInput(fresh ? sourceToInput(fresh) : '');
+      setSections(fresh?.htmlSections ?? []);
       setEditing(false);
       setMsg(
         (purge ? 'Quelle aktualisiert, alte Dokumente entfernt.' : 'Quelle gespeichert.') + pollNote,
@@ -114,10 +128,18 @@ export default function CommuniqueSourceSettings({ eventId }: { eventId: string 
               </span>
             )}
           </div>
+          {detected?.sourceType === 'HTML' && (
+            <CommuniqueSectionPicker
+              eventId={eventId}
+              pageUrls={detected.htmlPageUrls ?? []}
+              value={sections}
+              onChange={setSections}
+            />
+          )}
           {source && detected && !sameSourceConfig(source, detected) && (
-            <p className="text-xs text-muted" style={{ marginTop: 0, marginBottom: 12 }}>
-              Beim Speichern werden die bisher gefundenen Dokumente entfernt (die
-              Links haben sich geändert) und die neue Quelle sofort geprüft.
+            <p className="text-xs text-muted" style={{ marginTop: 12, marginBottom: 12 }}>
+              Beim Speichern werden die bisher gefundenen Dokumente entfernt (Links
+              oder Abschnitt haben sich geändert) und die neue Quelle sofort geprüft.
             </p>
           )}
           {error && <div className="alert alert-error mb-3">{error}</div>}
@@ -149,6 +171,12 @@ export default function CommuniqueSourceSettings({ eventId }: { eventId: string 
             ))}
             {links.length === 0 && <span className="text-sm text-muted">Keine Links hinterlegt.</span>}
           </div>
+          {source.sourceType === 'HTML' && (source.htmlSections?.length ?? 0) > 0 && (
+            <div style={{ marginTop: 10, fontSize: 13 }}>
+              <span className="text-muted">Abschnitt: </span>
+              {source.htmlSections.join(' + ')}
+            </div>
+          )}
           {source.lastPollError && (
             <div className="alert alert-error" style={{ marginTop: 10, marginBottom: 0 }}>
               <strong>Abruf fehlgeschlagen</strong>
