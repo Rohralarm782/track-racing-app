@@ -17,9 +17,15 @@ function separatorsToSpaces(fileName: string): string {
 export function detectDocType(fileName: string): DocType {
   const lower = fileName.toLowerCase();
   if (/zeitplan/.test(lower)) return 'ZEITPLAN';
-  // "Ansatz" ist eine in der Praxis vorkommende Tippvariante von "Ansetz(ung)"
-  if (/(start.?liste|start.?aufstellung|meldeliste|ansetz|ansatz)/.test(lower)) return 'STARTLISTE';
-  if (/(ergebnis|ergeb\b|wertung|resultat|schlusswertung|rundenwertung)/.test(lower)) return 'ERGEBNIS';
+  // "Ansatz" und "Anwtz" sind in der Praxis vorkommende Tippvarianten von
+  // "Ansetz(ung)".
+  const startliste = /(start.?liste|start.?aufstellung|meldeliste|ansetz|ansatz|anwtz)/.test(lower);
+  const ergebnis   = /(ergebnis|ergeb\b|wertung|resultat|schlusswertung|rundenwertung)/.test(lower);
+  // Stehen BEIDE Typ-Wörter im Namen (z.B. "K199 - ... Ansetzung Ergebnis"),
+  // gewinnt ERGEBNIS: eine Datei, die ein Ergebnis benennt, ist auch eines —
+  // das Startlisten-Wort stammt dann aus dem Namen des Programmpunkts.
+  if (ergebnis) return 'ERGEBNIS';
+  if (startliste) return 'STARTLISTE';
   return 'SONSTIGES';
 }
 
@@ -97,7 +103,7 @@ const AK_WORD = /\b(u1[3579]\s?[mw]|elite\s?[mw]|masters\s?[mw])\b/gi;
 // Reine Typ-/Status-Schlagworte (Ansetzung vs. Ergebnis) — bewusst OHNE "VF",
 // weil das in echten Dateinamen als Abkürzung für "Viertelfinale" (Phase)
 // verwendet wird, nicht für "Verfolgung" (Disziplin) — siehe detectDisciplineCode.
-const TYPE_WORDS = /\b(Ansetzung|Ansetz|Ansatz|Ergebnis|Ergeb|Endstand|Strafen|ZStand\.?\s?\d*|Zwischenstand\s?\d*)\b\.?/gi;
+const TYPE_WORDS = /\b(Ansetzung|Ansetz|Ansatz|Anwtz|Ergebnis|Ergeb|Endstand|Strafen|ZStand\.?\s?\d*|Zwischenstand\s?\d*)\b\.?/gi;
 // Eindeutige Disziplin-Kürzel/Wörter, die aus der Phase entfernt werden, weil
 // sie bereits über disciplineCode abgebildet sind. "VF" bewusst ausgenommen
 // (siehe oben).
@@ -109,7 +115,7 @@ const DISCIPLINE_CODE_WORDS = /\b(MA|PR|OM|MV|EV|TS)\b/g;
 // "Halbfinale Sprint") und verhindert den Textvergleich mit dem Zeitplan-
 // Eintrag, dessen Phase diesen Zusatz nicht enthält (z.B. "Halbfinale 1.
 // Serie") — keine der beiden Zeichenketten ist dann mehr Teilstring der anderen.
-const DISCIPLINE_WORDS_FULL = /\b(Punktefahren|Madison|Omnium|Temporunden|Ausscheidungsfahren|Mannschaftsverfolgung|Einzelverfolgung|Einerverfolgung|Verfolgung|Scratch|Teamsprint|Zeitfahren|Sprint|Keirin)\b/gi;
+const DISCIPLINE_WORDS_FULL = /\b(Punktefahren|Madison|Omnium|Temporunden|Ausscheidungsfahren|Auscheidungsfahren|Mannschaftsverfolgung|Einzelverfolgung|Einerverfolgung|Verfolgung|Scratch|Teamsprint|Zeitfahren|Sprint|Keirin)\b/gi;
 
 export function detectDisciplineCode(fileName: string): string | null {
   fileName = separatorsToSpaces(fileName);
@@ -128,8 +134,19 @@ export function detectDisciplineCode(fileName: string): string | null {
   if (/einzelverfolgung|einerverfolgung/i.test(fileName) || /\bEV\b/i.test(fileName)) return 'EV';
   if (/verfolgung/i.test(fileName)) return 'VF';
   // "Ausscheidung" ist eine in der Praxis vorkommende Kurzform von
-  // "Ausscheidungsfahren".
-  if (/ausscheidungsfahren|\bausscheidung\b/i.test(fileName)) return 'AF';
+  // "Ausscheidungsfahren"; "Auscheidungsfahren" (ohne s) ein häufiger Tippfehler.
+  if (/ausscheidungsfahren|auscheidungsfahren|\bausscheidung\b/i.test(fileName)) return 'AF';
+  // Kurzformen "AS" und "AF". Beide MÜSSEN vor dem Scratch-Fallback stehen:
+  // Die Qualifikation zum Ausscheidungsfahren wird häufig als Scratch GEFAHREN
+  // und auch so benannt ("K61-01A-U17m_Scratch_fuer_AS_Vorlauf_1"), gewertet
+  // wird sie aber als Ausscheidungsfahren. Ohne diese Reihenfolge liefe sie als
+  // SC und geriete damit in Disziplin-Konflikt mit dem Zeitplan-Eintrag.
+  // Reine Scratch-Rennen enthalten nie zusätzlich "AS" (im gesamten Korpus
+  // dreier Meisterschaften geprüft), die Regel ist also trennscharf.
+  if (/\bAS\b/.test(fileName)) return 'AF';
+  // "AF" ist mehrdeutig: neben Sprint oder Keirin bedeutet es "Achtelfinale"
+  // (Phase, siehe detectPhaseLabel), sonst Ausscheidungsfahren (Disziplin).
+  if (/\bAF\b/.test(fileName) && !/sprint|keirin/i.test(fileName)) return 'AF';
   if (/scratch/i.test(fileName)) return 'SC';
   if (/zeitfahren/i.test(fileName)) return 'ZF';
   // 500m/1000m sind im Bahnradsport standardmäßig das Zeitfahren ("Kilometer");
@@ -184,6 +201,28 @@ export function detectPhaseLabel(fileName: string): string | null {
   joined = joined.replace(TYPE_WORDS, ' ');
   joined = joined.replace(DISCIPLINE_CODE_WORDS, ' ');
   joined = joined.replace(DISCIPLINE_WORDS_FULL, ' ');
+
+  // "AS" ist immer Ausscheidungsfahren (Disziplin) und gehört damit nicht in
+  // die Phase. "AF" dagegen nur dann, wenn es NICHT neben Sprint/Keirin steht —
+  // dort ist es das Achtelfinale und damit genau die gesuchte Phase. In dem Fall
+  // wird es ausgeschrieben, damit der Teilstring-Vergleich mit dem Zeitplan-
+  // Eintrag ("Achtelfinale") greift; das blanke Kürzel würde ihn verfehlen.
+  // Dieser Block steht bewusst NACH DISCIPLINE_WORDS_FULL: im Omnium-Zweig wird
+  // ein ausgeschriebener Disziplinname eingesetzt, der davor sofort wieder
+  // weggestrichen würde.
+  if (/\bOM\b/i.test(fileName) || /omnium/i.test(fileName)) {
+    // Innerhalb eines Omniums ist der Disziplin-Code OM (das Omnium selbst).
+    // Die Teildisziplin ("AS"/"AF" = Ausscheidungsfahren) ist dann das einzige
+    // Unterscheidungsmerkmal zwischen den Läufen und MUSS deshalb in der Phase
+    // erhalten bleiben — ausgeschrieben, damit der Vergleich mit dem
+    // Zeitplan-Eintrag greift.
+    joined = joined.replace(/\b(AS|AF)\b/g, 'Ausscheidungsfahren');
+  } else {
+    joined = joined.replace(/\bAS\b/g, ' ');
+    joined = /sprint|keirin/i.test(fileName)
+      ? joined.replace(/\bAF\b/g, 'Achtelfinale')
+      : joined.replace(/\bAF\b/g, ' ');
+  }
   joined = joined.replace(/\s+/g, ' ').trim();
 
   return joined.length > 0 ? joined : null;
