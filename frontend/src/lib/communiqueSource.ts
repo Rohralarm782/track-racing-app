@@ -52,12 +52,24 @@ export function sourceToInput(source: Pick<CommuniqueSource, 'sourceType' | 'sha
 // Vergleicht zwei Konfigurationen inhaltlich — dient dazu, beim Speichern nur
 // dann die alten Dokumente zu löschen, wenn sich die Links wirklich geändert haben.
 export function sameSourceConfig(
-  a: Pick<CommuniqueSource, 'sourceType' | 'shareToken' | 'htmlPageUrls'>,
+  a: Pick<CommuniqueSource, 'sourceType' | 'shareToken' | 'htmlPageUrls' | 'htmlSections'>,
   b: CommuniqueSourceConfig,
 ): boolean {
   if (a.sourceType !== b.sourceType) return false;
   if (b.sourceType === 'WEBDAV') return (a.shareToken ?? '') === (b.shareToken ?? '');
   const au = [...(a.htmlPageUrls ?? [])].sort();
   const bu = [...(b.htmlPageUrls ?? [])].sort();
-  return au.length === bu.length && au.every((u, i) => u === bu[i]);
+  if (au.length !== bu.length || !au.every((u, i) => u === bu[i])) return false;
+  // Die Abschnittsauswahl gehört mit zur Quellenidentität: wer den Abschnitt
+  // wechselt, meint eine andere Veranstaltung — die bisher gefundenen Dokumente
+  // gehören dann nicht mehr dazu und werden beim Speichern entfernt.
+  const as = [...(a.htmlSections ?? [])].map(normalizeSectionLabel).sort();
+  const bs = [...(b.htmlSections ?? [])].map(normalizeSectionLabel).sort();
+  return as.length === bs.length && as.every((x, i) => x === bs[i]);
+}
+
+// Vergleichsform eines Abschnitts-Labels — muss zur Backend-Variante in
+// htmlScrape.ts passen: kleingeschrieben, Leerraum geglättet.
+export function normalizeSectionLabel(label: string): string {
+  return label.toLowerCase().replace(/[\s\u00a0]+/g, ' ').trim();
 }
