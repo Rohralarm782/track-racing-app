@@ -296,6 +296,16 @@ model CommuniqueSource {
   sourceType SourceType @default(WEBDAV) // WEBDAV (Nextcloud) oder HTML (Webseite mit PDF-Links)
   shareToken String?  // nur WEBDAV: Token aus der Nextcloud-Share-URL
   htmlPageUrls String[] @default([]) // nur HTML: eine oder mehrere Seiten-URLs, die nach PDF-Links durchsucht werden
+
+  // Nur HTML: gewählte Abschnitte der Seite (Überschriften-Blöcke). Leer = kein
+  // Filter, die ganze Seite wird übernommen (Verhalten wie bisher). Gespeichert
+  // wird das lesbare Überschriften-Label; verglichen wird normalisiert
+  // (Kleinschreibung, Leerraum), damit kosmetische Änderungen am Seitentext den
+  // Filter nicht sofort ins Leere laufen lassen. Findet sich ein hinterlegter
+  // Abschnitt gar nicht mehr, landet das als lastPollError in der Quellen-Karte
+  // — sonst blieben die Kommuniqués still leer.
+  htmlSections String[] @default([])
+
   label      String?  // optionaler Anzeigename, z.B. "LVM Bahn 2026"
   lastPolledAt DateTime?
 
