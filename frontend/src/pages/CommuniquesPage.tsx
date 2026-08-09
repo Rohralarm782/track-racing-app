@@ -8,6 +8,7 @@ import AnsetzungImport from '../components/AnsetzungImport';
 import OmniumImport from '../components/OmniumImport';
 import { useAdmin, useKiosk } from '../components/Layout';
 import { parseSourceInput } from '../lib/communiqueSource';
+import CommuniqueSectionPicker from '../components/CommuniqueSectionPicker';
 import {
   api, communiquesApi,
   type CommuniqueSource,
@@ -119,6 +120,9 @@ export default function CommuniquesPage() {
 
   // Setup
   const [shareInput, setShareInput] = useState('');
+  // Abschnittsauswahl für HTML-Quellen, die mehrere Veranstaltungen auf einer
+  // Seite führen. Leer = ganze Seite.
+  const [setupSections, setSetupSections] = useState<string[]>([]);
   const [saving, setSaving]         = useState(false);
 
   // Filter
@@ -226,6 +230,10 @@ export default function CommuniquesPage() {
     }
   }
 
+  // Quellenart der aktuellen Eingabe — entscheidet, ob die Abschnittsauswahl
+  // überhaupt angeboten wird (nur bei HTML-Seiten sinnvoll).
+  const setupDetected = parseSourceInput(shareInput);
+
   async function handleSetupSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!eventId || !shareInput.trim()) return;
@@ -233,7 +241,10 @@ export default function CommuniquesPage() {
     if (!config) { setError('Bitte einen Nextcloud-Share-Link oder eine Webseiten-URL (https://…) eingeben.'); return; }
     setSaving(true); setError('');
     try {
-      const src = await communiquesApi.setSource(eventId, config);
+      const src = await communiquesApi.setSource(eventId, {
+        ...config,
+        htmlSections: config.sourceType === 'HTML' ? setupSections : [],
+      });
       setSource({ ...src, documents: [] });
       await handleManualRefresh();
     } catch (e: any) {
@@ -629,6 +640,16 @@ export default function CommuniquesPage() {
                 style={{ resize: 'vertical', fontFamily: 'inherit' }}
               />
             </div>
+            {setupDetected?.sourceType === 'HTML' && (
+              <div style={{ marginBottom: 14 }}>
+                <CommuniqueSectionPicker
+                  eventId={eventId!}
+                  pageUrls={setupDetected.htmlPageUrls ?? []}
+                  value={setupSections}
+                  onChange={setSetupSections}
+                />
+              </div>
+            )}
             <button className="btn btn-primary" type="submit" disabled={saving || !shareInput.trim()}>
               {saving ? 'Speichert…' : 'Verbinden'}
             </button>
