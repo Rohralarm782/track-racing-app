@@ -1,75 +1,154 @@
-import type { CommuniqueSource, CommuniqueSourceConfig } from '../api/client';
+import { useEffect, useState } from 'react';
+import { communiquesApi, type CommuniqueSectionScan } from '../api/client';
+import { normalizeSectionLabel } from '../lib/communiqueSource';
 
-// Gemeinsame Quellen-Erkennung für die Kommuniqué-Konfiguration. Wird sowohl im
-// Setup auf der Kommuniqués-Seite als auch in der Quellen-Karte der
-// Veranstaltungs­einstellungen genutzt — eine einzige Wahrheit statt zwei Kopien.
+// Auswahl des Seiten-Abschnitts für HTML-Quellen.
+//
+// Viele Vereinsseiten sammeln jahrelang alle Veranstaltungen auf einer Seite
+// (frc90.de: vier Sichtungen, ~158 PDFs). Ohne Einschränkung landet alles in
+// einer Veranstaltung. Hier wird die Seite auf Wunsch gelesen, in ihre
+// Überschriften-Blöcke zerlegt und der passende Block ausgewählt.
+//
+// Bewusst kein automatisches Prüfen beim Tippen und keine Vorauswahl: welcher
+// Abschnitt gemeint ist, weiß nur der Mensch — eine geratene Vorauswahl würde
+// man beim schnellen Durchklicken übersehen.
 
-// Akzeptiert entweder den vollen Nextcloud-Share-Link (…/s/<token>) oder direkt
-// den Token.
-export function extractShareToken(input: string): string | null {
-  const match = input.match(/\/s\/([A-Za-z0-9]+)/);
-  if (match) return match[1];
-  if (/^[A-Za-z0-9]{8,}$/.test(input)) return input;
-  return null;
+interface Props {
+  /** Aktuell eingetragene Seiten-URLs (aus der Eingabe, noch nicht gespeichert). */
+  pageUrls: string[];
+  /** Gewählte Abschnitts-Labels; leer = ganze Seite. */
+  value: string[];
+  onChange: (sections: string[]) => void;
+  /** Für den Scan-Endpunkt. */
+  eventId: string;
 }
 
-// Erkennt aus der Eingabe automatisch die Quellenart:
-//   • Nextcloud-Share-Link (…/s/<token>) oder blanker Token          → WEBDAV
-//   • eine oder mehrere http(s)-Seiten-URLs (Zeile/Komma/Leerzeichen) → HTML
-// Der Token-Check läuft zuerst; eine reine Webseiten-URL (mit "://") kann ihn
-// nicht auslösen, fällt also sauber in den HTML-Zweig.
-export function parseSourceInput(raw: string): CommuniqueSourceConfig | null {
-  const text = raw.trim();
-  if (!text) return null;
+export default function CommuniqueSectionPicker({ pageUrls, value, onChange, eventId }: Props) {
+  const [scan, setScan]       = useState<CommuniqueSectionScan | null>(null);
+  const [busy, setBusy]       = useState(false);
+  const [error, setError]     = useState('');
 
-  const token = extractShareToken(text);
-  if (token && !text.includes('://')) return { sourceType: 'WEBDAV', shareToken: token };
+  // Ändern sich die URLs, passt ein alter Scan nicht mehr dazu.
+  const urlKey = pageUrls.join('\n');
+  useEffect(() => { setScan(null); setError(''); }, [urlKey]);
 
-  const urls = text.split(/[\s,]+/).map(u => u.trim()).filter(u => /^https?:\/\//i.test(u));
-  if (urls.length > 0) return { sourceType: 'HTML', htmlPageUrls: urls };
+  async function runScan() {
+    if (pageUrls.length === 0) return;
+    setBusy(true); setError('');
+    try {
+      setScan(await communiquesApi.scanSections(eventId, pageUrls));
+    } catch (e: any) {
+      setError(e.message ?? 'Seite konnte nicht gelesen werden.');
+    } finally {
+      setBusy(false);
+    }
+  }
 
-  // Fallback: sah nach Token aus (enthielt aber "://" o.ä.) — trotzdem als WEBDAV.
-  if (token) return { sourceType: 'WEBDAV', shareToken: token };
+  const selected = new Set(value.map(normalizeSectionLabel));
 
-  return null;
+  function toggle(label: string) {
+    const norm = normalizeSectionLabel(label);
+    onChange(selected.has(norm)
+      ? value.filter(v => normalizeSectionLabel(v) !== norm)
+      : [...value, label]);
+  }
+
+  const allSections = scan ? scan.pages.flatMap(p => p.sections) : [];
+  const chosen = allSections.filter(s => selected.has(normalizeSectionLabel(s.label)));
+  const chosenCount = chosen.reduce((sum, s) => sum + s.count, 0);
+  const pageErrors = scan ? scan.pages.filter(p => p.error) : [];
+
+  return (
+    <div style={{ borderTop: '1px solid var(--c-border)', paddingTop: 12, marginTop: 12 }}>
+      <div className="flex-between" style={{ alignItems: 'center', marginBottom: 4 }}>
+        <strong style={{ fontSize: 14 }}>Abschnitt der Seite</strong>
+        <button className="btn btn-secondary btn-sm" type="button" onClick={runScan} disabled={busy || pageUrls.length === 0}>
+          {busy ? 'Liest…' : scan ? 'Erneut prüfen' : 'Seite prüfen'}
+        </button>
+      </div>
+      <p className="text-sm text-muted" style={{ marginTop: 0, marginBottom: 10 }}>
+        Enthält die Seite mehrere Veranstaltungen, hier den passenden Abschnitt
+        wählen. Ohne Auswahl werden alle Dokumente der Seite übernommen.
+      </p>
+
+      {error && <div className="alert alert-error" style={{ marginBottom: 10 }}>{error}</div>}
+
+      {value.length > 0 && !scan && (
+        <div className="text-sm" style={{ marginBottom: 10 }}>
+          Gewählt: {value.join(' + ')}
+        </div>
+      )}
+
+      {scan && (
+        <>
+          {pageErrors.map(p => (
+            <div key={p.url} className="alert alert-error" style={{ marginBottom: 10 }}>
+              {p.url}: {p.error}
+            </div>
+          ))}
+
+          {allSections.length === 0 ? (
+            <p className="text-sm text-muted" style={{ margin: 0 }}>
+              Keine Abschnitte erkannt — die Seite gehört offenbar zu einer einzelnen
+              Veranstaltung. Alle {scan.totalCount} gefundenen Dokumente werden übernommen.
+            </p>
+          ) : (
+            <>
+              <div style={{ border: '1px solid var(--c-border)', borderRadius: 7, overflow: 'hidden' }}>
+                <Row
+                  label="Ganze Seite (kein Filter)"
+                  count={scan.totalCount}
+                  checked={value.length === 0}
+                  first
+                  onClick={() => onChange([])}
+                />
+                {allSections.map(s => (
+                  <Row
+                    key={s.label}
+                    label={s.label}
+                    count={s.count}
+                    checked={selected.has(normalizeSectionLabel(s.label))}
+                    onClick={() => toggle(s.label)}
+                  />
+                ))}
+              </div>
+
+              <p className="text-xs" style={{ marginTop: 8, marginBottom: 0, color: 'var(--c-text-muted)' }}>
+                {value.length === 0
+                  ? `Alle ${scan.totalCount} Dokumente der Seite werden übernommen — auch die aus Vorjahren.`
+                  : chosenCount === 0
+                    ? 'In diesem Abschnitt stehen noch keine PDFs. Normal, solange der Ausrichter nichts veröffentlicht hat — neue Dateien tauchen von selbst auf.'
+                    : `${chosenCount} Dokumente werden übernommen, ${scan.totalCount - chosenCount} aus anderen Abschnitten bleiben außen vor.`}
+              </p>
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
 }
 
-// Menschlich lesbare Darstellung der aktuell hinterlegten Quelle (für die Anzeige
-// in der Quellen-Karte). Zeigt den Share-Link bzw. die Seiten-URLs.
-export function describeSource(source: Pick<CommuniqueSource, 'sourceType' | 'shareToken' | 'htmlPageUrls'>): string[] {
-  if (source.sourceType === 'HTML') return source.htmlPageUrls ?? [];
-  if (source.shareToken) return [`share.spurtlinie.de/index.php/s/${source.shareToken}`];
-  return [];
-}
-
-// Rohtext, mit dem das Bearbeitungsfeld vorbelegt wird (so, wie man es beim
-// Anlegen eingeben würde).
-export function sourceToInput(source: Pick<CommuniqueSource, 'sourceType' | 'shareToken' | 'htmlPageUrls'>): string {
-  if (source.sourceType === 'HTML') return (source.htmlPageUrls ?? []).join('\n');
-  return source.shareToken ?? '';
-}
-
-// Vergleicht zwei Konfigurationen inhaltlich — dient dazu, beim Speichern nur
-// dann die alten Dokumente zu löschen, wenn sich die Links wirklich geändert haben.
-export function sameSourceConfig(
-  a: Pick<CommuniqueSource, 'sourceType' | 'shareToken' | 'htmlPageUrls' | 'htmlSections'>,
-  b: CommuniqueSourceConfig,
-): boolean {
-  if (a.sourceType !== b.sourceType) return false;
-  if (b.sourceType === 'WEBDAV') return (a.shareToken ?? '') === (b.shareToken ?? '');
-  const au = [...(a.htmlPageUrls ?? [])].sort();
-  const bu = [...(b.htmlPageUrls ?? [])].sort();
-  if (au.length !== bu.length || !au.every((u, i) => u === bu[i])) return false;
-  // Die Abschnittsauswahl gehört mit zur Quellenidentität: wer den Abschnitt
-  // wechselt, meint eine andere Veranstaltung — die bisher gefundenen Dokumente
-  // gehören dann nicht mehr dazu und werden beim Speichern entfernt.
-  const as = [...(a.htmlSections ?? [])].map(normalizeSectionLabel).sort();
-  const bs = [...(b.htmlSections ?? [])].map(normalizeSectionLabel).sort();
-  return as.length === bs.length && as.every((x, i) => x === bs[i]);
-}
-
-// Vergleichsform eines Abschnitts-Labels — muss zur Backend-Variante in
-// htmlScrape.ts passen: kleingeschrieben, Leerraum geglättet.
-export function normalizeSectionLabel(label: string): string {
-  return label.toLowerCase().replace(/[\s\u00a0]+/g, ' ').trim();
+function Row({ label, count, checked, onClick, first }: {
+  label: string; count: number; checked: boolean; onClick: () => void; first?: boolean;
+}) {
+  return (
+    <div
+      role="checkbox"
+      aria-checked={checked}
+      tabIndex={0}
+      onClick={onClick}
+      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } }}
+      style={{
+        display: 'flex', alignItems: 'flex-start', gap: 9, padding: '9px 11px', cursor: 'pointer',
+        borderTop: first ? 'none' : '1px solid var(--c-border)',
+        background: checked ? '#eff6ff' : 'transparent',
+      }}
+    >
+      <input type="checkbox" checked={checked} readOnly tabIndex={-1} style={{ marginTop: 2, flexShrink: 0 }} />
+      <span style={{ flex: 1, fontSize: 13.5, lineHeight: 1.4 }}>{label}</span>
+      <span className="text-xs text-muted" style={{ whiteSpace: 'nowrap', marginTop: 2 }}>
+        {count} PDF
+      </span>
+    </div>
+  );
 }
