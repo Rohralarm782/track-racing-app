@@ -358,6 +358,21 @@ export async function markMissingDocuments(sourceId: string, remoteFileNames: st
  * neue Einträge speichern und Push auslösen. Wird sowohl vom manuellen
  * Poll-Endpunkt als auch vom Hintergrund-Interval in index.ts genutzt.
  */
+/**
+ * Hält den Grund eines fehlgeschlagenen Quellen-Abrufs an der Quelle fest.
+ * lastPollErrorAt markiert den Beginn der aktuellen Fehler-Serie und bleibt bei
+ * Folgefehlern unverändert stehen.
+ */
+async function recordPollError(source: CommuniqueSource, message: string): Promise<void> {
+  await prisma.communiqueSource.update({
+    where: { id: source.id },
+    data: {
+      lastPollError: message.slice(0, 500),
+      ...(source.lastPollError ? {} : { lastPollErrorAt: new Date() }),
+    },
+  });
+}
+
 export async function pollSource(source: CommuniqueSource) {
   const { id: sourceId, eventId } = source;
   // listingComplete = die Remote-Liste ist vollständig genug, um daraus auf
@@ -365,13 +380,24 @@ export async function pollSource(source: CommuniqueSource) {
   // (bricht den Poll ab, kein Fehlalarm möglich) → immer true. HTML meldet
   // complete=false, wenn eine Seite nicht geladen werden konnte.
   let listingComplete = true;
+  // Klartext-Grund, falls die Quelle (teilweise) nicht erreichbar war — wird
+  // unten an der Quelle gespeichert und in der Quellen-Karte angezeigt.
+  let pollError: string | null = null;
   let remoteFiles;
   if (source.sourceType === 'HTML') {
     const html = await listHtmlFiles(source.htmlPageUrls);
     remoteFiles = html.files;
     listingComplete = html.complete;
+    if (html.errors.length > 0) pollError = html.errors.join(' · ');
   } else {
-    remoteFiles = await listShareFiles(source.shareToken ?? '');
+    // WebDAV wirft bei Fehlern und bricht den Poll ab. Damit der Grund nicht
+    // nur im Log landet, vor dem Weiterwerfen an der Quelle festhalten.
+    try {
+      remoteFiles = await listShareFiles(source.shareToken ?? '');
+    } catch (err) {
+      await recordPollError(source, err instanceof Error ? err.message : String(err));
+      throw err;
+    }
   }
   const known = await prisma.communiqueDocument.findMany({ where: { sourceId } });
   const knownMap = new Map(known.map(d => [d.fileName, d]));
@@ -417,7 +443,18 @@ export async function pollSource(source: CommuniqueSource) {
     await notifyNewDocuments(sourceId, created);
   }
 
-  await prisma.communiqueSource.update({ where: { id: sourceId }, data: { lastPolledAt: new Date() } });
+  await prisma.communiqueSource.update({
+    where: { id: sourceId },
+    data: {
+      lastPolledAt: new Date(),
+      lastPollError: pollError ? pollError.slice(0, 500) : null,
+      // Beginn der Fehler-Serie nur beim ERSTEN Fehler setzen, damit die Karte
+      // "seit wann" anzeigen kann; bei Erfolg zurücksetzen.
+      ...(pollError
+        ? (source.lastPollError ? {} : { lastPollErrorAt: new Date() })
+        : { lastPollErrorAt: null }),
+    },
+  });
 
   // ── MEV-Hintergrund-Analyse für Startlisten ohne (vollständige) Analyse ────
   // Läuft für neu entdeckte Startlisten, als Selbstheilung für fehlgeschlagene
