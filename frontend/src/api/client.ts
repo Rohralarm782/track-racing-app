@@ -170,6 +170,8 @@ export interface CommuniqueSource {
   sourceType: CommuniqueSourceType;
   shareToken: string | null;   // nur WEBDAV
   htmlPageUrls: string[];      // nur HTML
+  // nur HTML: gewählte Überschriften-Blöcke der Seite; leer = ganze Seite
+  htmlSections: string[];
   label: string | null;
   lastPolledAt: string | null;
   // Grund, falls der letzte Abruf der Quelle fehlgeschlagen ist (z.B. "HTTP 403").
@@ -185,10 +187,20 @@ export interface CommuniqueSourceConfig {
   sourceType: CommuniqueSourceType;
   shareToken?: string;
   htmlPageUrls?: string[];
+  htmlSections?: string[];
   label?: string;
   // true = beim Speichern alle bereits gefundenen Dokumente dieser Quelle
   // löschen (sinnvoll, wenn die Links komplett umgezogen sind).
   purgeDocuments?: boolean;
+}
+
+// Ergebnis von communiquesApi.scanSections: je Seite die erkannten Überschriften-
+// Blöcke mit der Anzahl darin verlinkter PDFs. Blöcke ohne PDF kommen mit count 0
+// vor — eine noch nicht gelaufene Veranstaltung steht schon auf der Seite.
+export interface CommuniqueHtmlSection { label: string; count: number; }
+export interface CommuniqueSectionScan {
+  pages: { url: string; sections: CommuniqueHtmlSection[]; error?: string }[];
+  totalCount: number;
 }
 
 // ─── Zeitplan ────────────────────────────────────────────────────────────────
@@ -308,6 +320,9 @@ export const communiquesApi = {
 
   setSource: (eventId: string, config: CommuniqueSourceConfig) =>
     api.post<CommuniqueSource>(`/api/communiques/${eventId}`, config),
+
+  scanSections: (eventId: string, htmlPageUrls: string[]) =>
+    api.post<CommuniqueSectionScan>(`/api/communiques/${eventId}/scan-sections`, { htmlPageUrls }),
 
   poll: (eventId: string) =>
     api.post<{ newCount: number; newDocs: CommuniqueDocument[] }>(`/api/communiques/${eventId}/poll`, {}),
