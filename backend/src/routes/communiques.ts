@@ -4,7 +4,7 @@ import { Prisma, CommuniqueSource } from '@prisma/client';
 import prisma from '../prisma';
 import { requireAdmin } from '../middleware/auth';
 import { listShareFiles } from '../lib/webdav';
-import { listHtmlFiles } from '../lib/htmlScrape';
+import { listHtmlFiles, scanHtmlSections } from '../lib/htmlScrape';
 import { fetchDocumentFile } from '../lib/remoteSource';
 import { classifyFileName, parseCommuniqueVersion } from '../lib/classify';
 import { getCachedFile, setCachedFile } from '../lib/fileCache';
@@ -42,6 +42,9 @@ const SourceSchema = z.object({
   sourceType: z.enum(['WEBDAV', 'HTML']).default('WEBDAV'),
   shareToken: z.string().optional(),
   htmlPageUrls: z.array(z.string().url()).optional(),
+  // Nur HTML: Auswahl der Seiten-Abschnitte (Überschriften-Blöcke). Leer/fehlend
+  // = ganze Seite, wie bisher.
+  htmlSections: z.array(z.string()).optional(),
   label: z.string().optional(),
   // true = beim Speichern alle bereits gefundenen Dokumente dieser Quelle
   // löschen. Sinnvoll, wenn die Links komplett umgezogen sind: die alten
@@ -61,13 +64,14 @@ router.post('/:eventId', requireAdmin, async (req, res, next) => {
     const parsed = SourceSchema.safeParse(req.body);
     if (!parsed.success) { res.status(400).json(parsed.error.flatten()); return; }
 
-    const { sourceType, shareToken, htmlPageUrls, label, purgeDocuments } = parsed.data;
+    const { sourceType, shareToken, htmlPageUrls, htmlSections, label, purgeDocuments } = parsed.data;
     // Nur die zur Quellenart passenden Felder schreiben, die jeweils andere
     // Konfiguration wird geleert (sauberer Wechsel WebDAV <-> HTML).
     const data = {
       sourceType,
       shareToken: sourceType === 'WEBDAV' ? (shareToken?.trim() || null) : null,
       htmlPageUrls: sourceType === 'HTML' ? (htmlPageUrls ?? []) : [],
+      htmlSections: sourceType === 'HTML' ? (htmlSections ?? []) : [],
       ...(label !== undefined ? { label } : {}),
     };
     const source = await prisma.communiqueSource.upsert({
@@ -81,6 +85,20 @@ router.post('/:eventId', requireAdmin, async (req, res, next) => {
       await prisma.communiqueDocument.deleteMany({ where: { sourceId: source.id } });
     }
     res.status(201).json(source);
+  } catch (e) { next(e); }
+});
+
+// POST /api/communiques/:eventId/scan-sections — Seite(n) auf Überschriften-
+// Blöcke untersuchen (Admin). Bewusst mit den URLs aus dem Request und nicht aus
+// der gespeicherten Quelle: die Auswahl passiert beim Einrichten bzw. Ändern,
+// also bevor gespeichert wird. Rein lesend, ohne HEAD-Requests.
+const ScanSchema = z.object({ htmlPageUrls: z.array(z.string().url()).min(1) });
+
+router.post('/:eventId/scan-sections', requireAdmin, async (req, res, next) => {
+  try {
+    const parsed = ScanSchema.safeParse(req.body);
+    if (!parsed.success) { res.status(400).json(parsed.error.flatten()); return; }
+    res.json(await scanHtmlSections(parsed.data.htmlPageUrls));
   } catch (e) { next(e); }
 });
 
@@ -385,10 +403,20 @@ export async function pollSource(source: CommuniqueSource) {
   let pollError: string | null = null;
   let remoteFiles;
   if (source.sourceType === 'HTML') {
-    const html = await listHtmlFiles(source.htmlPageUrls);
+    const html = await listHtmlFiles(source.htmlPageUrls, source.htmlSections);
     remoteFiles = html.files;
     listingComplete = html.complete;
-    if (html.errors.length > 0) pollError = html.errors.join(' · ');
+    const problems = [...html.errors];
+    // Ein hinterlegter Abschnitt, den es auf der Seite nicht mehr gibt (Ausrichter
+    // hat die Überschrift umbenannt), liefert lautlos null Dokumente. Deshalb als
+    // Fehler melden, damit die rote Box in der Quellen-Karte anschlägt.
+    if (html.missingSections.length > 0) {
+      problems.push(
+        `Abschnitt nicht mehr auf der Seite gefunden: ${html.missingSections.join(' / ')}. `
+        + 'Bitte die Quelle prüfen und den Abschnitt neu wählen.',
+      );
+    }
+    if (problems.length > 0) pollError = problems.join(' · ');
   } else {
     // WebDAV wirft bei Fehlern und bricht den Poll ab. Damit der Grund nicht
     // nur im Log landet, vor dem Weiterwerfen an der Quelle festhalten.
