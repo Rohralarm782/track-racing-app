@@ -172,6 +172,10 @@ export interface CommuniqueSource {
   htmlPageUrls: string[];      // nur HTML
   label: string | null;
   lastPolledAt: string | null;
+  // Grund, falls der letzte Abruf der Quelle fehlgeschlagen ist (z.B. "HTTP 403").
+  // null = alles in Ordnung. lastPollErrorAt = Beginn der Fehler-Serie.
+  lastPollError?: string | null;
+  lastPollErrorAt?: string | null;
   documents: CommuniqueDocument[];
 }
 
