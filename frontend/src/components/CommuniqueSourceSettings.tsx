@@ -149,6 +149,21 @@ export default function CommuniqueSourceSettings({ eventId }: { eventId: string 
             ))}
             {links.length === 0 && <span className="text-sm text-muted">Keine Links hinterlegt.</span>}
           </div>
+          {source.lastPollError && (
+            <div className="alert alert-error" style={{ marginTop: 10, marginBottom: 0 }}>
+              <strong>Abruf fehlgeschlagen</strong>
+              <div style={{ fontSize: 12.5, wordBreak: 'break-word', marginTop: 4 }}>
+                {source.lastPollError}
+              </div>
+              {source.lastPollErrorAt && (
+                <div className="text-xs" style={{ marginTop: 4, opacity: 0.8 }}>
+                  seit {new Date(source.lastPollErrorAt).toLocaleString('de-DE', {
+                    day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+                  })}
+                </div>
+              )}
+            </div>
+          )}
           {msg && <p className="text-xs" style={{ color: 'var(--c-success, #16a34a)', marginTop: 10, marginBottom: 0 }}>{msg}</p>}
         </>
       ) : (
