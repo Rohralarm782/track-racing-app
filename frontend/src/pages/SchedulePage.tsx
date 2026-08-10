@@ -1044,6 +1044,105 @@ export default function SchedulePage() {
                   );
                 }
 
+                // ── Siegerehrungs-Block ────────────────────────────────────
+                // Mehrere DIREKT aufeinander folgende Ehrungen sind in der
+                // Realität EIN Programmpunkt: Podest steht, die Ehrungen laufen
+                // in schneller Folge durch. Deshalb eine gemeinsame Karte mit
+                // einer Zeitspanne statt N Zeilen mit Einzeluhrzeiten — welche
+                // Ehrung im Block wann dran ist, steht ohnehin nicht
+                // minutengenau fest, und eine Uhrzeit je Ehrung würde eine
+                // Genauigkeit vortäuschen, die es nicht gibt.
+                //
+                // Die Dauer kommt unverändert aus estimatedMinutes; das Backend
+                // verteilt sie über ceremonyBlockMinutes() so, dass die erste
+                // Ehrung die Basis und jede weitere den Zuschlag trägt. Die
+                // Summe über den Block ist damit exakt die Blockdauer, und die
+                // fortlaufende Uhr in computeEstimatedTimes() bleibt stimmig.
+                //
+                // Eine ALLEIN stehende Ehrung bleibt bewusst eine normale
+                // Zeile — für eine einzelne Zeile lohnt die Karte nicht.
+                //
+                // Ehrungen sind nie der "Aktuelle Stand": das Update-Modal
+                // bietet ausschließlich type === 'RACE' an. Es geht hier also
+                // kein Melde-Anker verloren.
+                if (entry.type === 'CEREMONY') {
+                  // Zweite und jede weitere Ehrung des Blocks steckt schon in
+                  // der Karte der ersten und rendert selbst nichts mehr.
+                  if (prevEntry?.type === 'CEREMONY') return null;
+
+                  const block: ScheduleEntry[] = [entry];
+                  for (let j = idx + 1; j < visibleDayEntries.length; j++) {
+                    if (visibleDayEntries[j].type !== 'CEREMONY') break;
+                    block.push(visibleDayEntries[j]);
+                  }
+
+                  if (block.length > 1) {
+                    const blockStartMin = toMinutes(estimatedTimes.get(entry.id) ?? entry.time);
+                    const blockDurMin = block.reduce(
+                      (sum, c) => sum + (c.estimatedMinutes ?? CEREMONY_ESTIMATE_MIN),
+                      0,
+                    );
+                    // Zeitplan-Uhrzeit als Zweitzeile nur, wenn sie überhaupt
+                    // etwas aussagt (kein Sammel-Zeitpunkt) und spürbar von der
+                    // Schätzung abweicht — gleiche Regel wie bei Rennzeilen.
+                    const showBlockNominal =
+                      (timeCounts.get(entry.time) ?? 0) <= 1
+                      && Math.abs(blockStartMin - toMinutes(entry.time)) > ESTIMATE_DISPLAY_THRESHOLD_MIN;
+                    const blockPast = block.every(isPastEntry);
+
+                    return (
+                      <div
+                        key={entry.id}
+                        style={{
+                          margin: '8px 0', border: '1px solid #fde68a', background: '#fffbeb',
+                          borderRadius: 10, overflow: 'hidden', opacity: blockPast ? 0.45 : 1,
+                        }}
+                      >
+                        <div style={{
+                          display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+                          gap: 10, padding: '9px 12px', borderBottom: '1px solid #fde68a',
+                        }}>
+                          <span style={{ fontSize: 13.5, fontWeight: 600, color: '#92400e' }}>
+                            🏅 Siegerehrungen{' '}
+                            <span style={{ fontWeight: 400 }}>· {block.length} Ehrungen</span>
+                          </span>
+                          <span style={{
+                            fontSize: 13, fontWeight: 600, color: '#92400e',
+                            whiteSpace: 'nowrap', textAlign: 'right', flexShrink: 0,
+                          }}>
+                            {fromMinutes(blockStartMin)} – {fromMinutes(blockStartMin + blockDurMin)}
+                            {showBlockNominal && (
+                              <span style={{ display: 'block', fontSize: 10, fontWeight: 400, color: '#b45309' }}>
+                                Plan {entry.time}
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                        <div style={{ padding: '6px 12px 9px' }}>
+                          {block.map(c => (
+                            <div
+                              key={c.id}
+                              style={{
+                                fontSize: 13, fontStyle: 'italic', color: 'var(--c-text-secondary, #4b5563)',
+                                padding: '3px 0', display: 'flex', gap: 8, alignItems: 'baseline',
+                              }}
+                            >
+                              <span style={{ color: '#d97706', fontStyle: 'normal' }}>•</span>
+                              {/* Die Phase heißt bei Ehrungen meist selbst
+                                  "Siegerehrung" — in der Karte wäre das doppelt
+                                  gemoppelt, deshalb nur abweichende Phasen zeigen. */}
+                              <span>
+                                {c.ak} · {c.disciplineLabel}
+                                {c.phase && !/siegerehrung/i.test(c.phase) ? ` · ${c.phase}` : ''}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  }
+                }
+
               return (
                 <div
                   key={entry.id}
