@@ -1,17 +1,13 @@
 // Zielpfad im Repo: frontend/src/pages/AthleteDetail.tsx  (ERSETZT die bestehende Datei)
-// Änderungen ggü. Original: Name-Feld in Vorname/Nachname aufgeteilt (siehe
-// schema.prisma) — Anzeige nutzt athleteFullName, Bearbeiten hat zwei Felder.
+// Änderungen ggü. Original:
+//  - Name-Feld in Vorname/Nachname aufgeteilt (siehe schema.prisma)
+//  - Die alte Karte "Verfolgungszeiten" (RaceAthlete.timeMs, wurde nirgends
+//    geschrieben und war deshalb immer leer) ist durch PursuitRunsCard ersetzt.
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { athletesApi, athleteFullName, type AthleteDetail as AthleteDetailType } from '../api/client';
 import { useAdmin } from '../components/Layout';
-
-function fmtRough(ms: number): string {
-  const totalSec = Math.round(ms / 1000);
-  const m = Math.floor(totalSec / 60);
-  const s = totalSec % 60;
-  return `${m}:${s.toString().padStart(2, '0')}`;
-}
+import PursuitRunsCard from '../components/PursuitRunsCard';
 
 const GEAR_CHIP: React.CSSProperties = {
   display: 'inline-flex', alignItems: 'center', gap: 6,
@@ -201,39 +197,13 @@ export default function AthleteDetail() {
         </p>
       </div>
 
-      <div className="card">
-        <h3 style={{ marginBottom: 10 }}>Verfolgungszeiten</h3>
-        {athlete.times.length === 0 ? (
-          <p className="text-sm text-muted" style={{ margin: 0 }}>
-            Noch keine Zeiten hinterlegt — werden ergänzt, sobald ein Ergebnis aus einem Verfolgungsrennen übernommen wird.
-          </p>
-        ) : (
-          <>
-            <div className="table-wrap">
-              <table className="table">
-                <thead>
-                  <tr><th>Rennen</th><th>Distanz</th><th style={{ textAlign: 'right' }}>Zeit</th></tr>
-                </thead>
-                <tbody>
-                  {athlete.times.map(t => (
-                    <tr key={t.raceId}>
-                      <td>
-                        {t.raceName}
-                        {t.eventName && <span className="text-xs text-muted"> · {t.eventName}</span>}
-                      </td>
-                      <td className="text-muted text-sm">{t.distanceM ? `${t.distanceM}m` : '—'}</td>
-                      <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtRough(t.timeMs)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <p className="text-xs text-muted" style={{ marginTop: 8, marginBottom: 0 }}>
-              Grobe Orientierung, keine Hundertstel.
-            </p>
-          </>
-        )}
-      </div>
+      <PursuitRunsCard
+        athleteId={athlete.id}
+        athlete={athlete}
+        runs={athlete.runs ?? []}
+        isAdmin={isAdmin}
+        onChanged={load}
+      />
     </div>
   );
 }
