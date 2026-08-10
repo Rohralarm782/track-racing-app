@@ -3,6 +3,27 @@ import { Link, Outlet, useNavigate } from 'react-router-dom';
 import { api, clearToken, getToken, setToken } from '../api/client';
 import KioskShell from './KioskShell';
 
+// ─── Build-Stand ──────────────────────────────────────────────────────────────
+// __BUILD_TIME__ wird von Vite beim Bauen als ISO-String eingesetzt (siehe
+// vite.config.ts). Es ist der Zeitpunkt des DEPLOYS, nicht des Seitenaufrufs —
+// genau darum geht es: Steht auf einem fremden Handy ein älterer Stand als auf
+// deinem, hängt das Gerät in einer gecachten Fassung.
+declare const __BUILD_TIME__: string;
+
+function buildStamp(): string {
+  try {
+    return new Intl.DateTimeFormat('de-DE', {
+      day: '2-digit', month: '2-digit', year: 'numeric',
+      hour: '2-digit', minute: '2-digit',
+      timeZone: 'Europe/Berlin',
+    }).format(new Date(__BUILD_TIME__));
+  } catch {
+    // Im Dev-Server ohne define, oder bei kaputtem Zeitstempel: lieber nichts
+    // anzeigen als "Invalid Date".
+    return '';
+  }
+}
+
 // ─── Admin Context ────────────────────────────────────────────────────────────
 
 interface AdminCtx {
@@ -52,6 +73,7 @@ export default function Layout() {
   const [loading, setLoading]    = useState(false);
   const [error, setError]        = useState('');
   const navigate = useNavigate();
+  const stamp = buildStamp();
 
   // Kiosk-Modus: aktiv für genau eine Veranstaltung. In sessionStorage gehalten,
   // damit ein versehentlicher Reload den gesperrten Zustand nicht aufhebt
@@ -180,6 +202,17 @@ export default function Layout() {
       <main>
         <Outlet />
       </main>
+
+      {/* Versions-Stand, dezent unter allem. Im Kiosk-Modus ausgeblendet —
+          auf der Hallenanzeige hat Technisches nichts zu suchen. */}
+      {!kioskEventId && stamp && (
+        <div style={{
+          textAlign: 'center', fontSize: 10.5, color: '#9ca3af',
+          padding: '14px 12px 22px',
+        }}>
+          Stand {stamp}
+        </div>
+      )}
     </KioskContext.Provider>
     </AdminContext.Provider>
   );
