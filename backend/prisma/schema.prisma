@@ -148,6 +148,7 @@ model Race {
   pursuitRounds PursuitRound[]
   flags         RaceFlag[]
   athletes      RaceAthlete[]  // neu: verknüpfte Sportler aus der eigenen Kartei (Verfolgungsrennen)
+  pursuitRuns   PursuitRun[]   // neu: gefahrene Verfolgungsläufe (Renntimer + von Hand nachgetragen)
 }
 
 model RaceFlag {
@@ -285,6 +286,60 @@ model RaceAthlete {
   createdAt DateTime @default(now())
 
   @@unique([raceId, athleteId])
+}
+
+// Ein gefahrener Verfolgungslauf. Zwei Quellen fließen hier zusammen:
+//  a) der Renntimer (getippte Runden inkl. optionaler Halbrunden), und
+//  b) von Hand nachgetragene Zeiten (Training, alte Rennen) — dann sind die
+//     plan*-Felder null und `laps` darf leer bleiben und später ergänzt werden.
+// Bewusst KEINE Relation auf Athlete: wie bei PursuitPlan reicht die ID-Liste,
+// und ein Mannschaftslauf erscheint dadurch im Profil jedes beteiligten Fahrers.
+// raceId ist optional mit SetNull — Hauke löscht Renntage nach der Veranstaltung,
+// die gefahrenen Zeiten müssen das überleben. Deshalb sind `label`/`eventName`
+// beim Anlegen mitgeschrieben und nicht aus der Relation gelesen.
+model PursuitRun {
+  id        String  @id @default(cuid())
+  raceId    String?
+  race      Race?   @relation(fields: [raceId], references: [id], onDelete: SetNull)
+
+  athleteIds String[] @default([]) // 1 Eintrag = Einzel, mehrere = Mannschaft
+  label      String                // "Rennen", z.B. "3000m EV Quali" oder "Training Dienstag"
+  eventName  String?               // Veranstaltung, denormalisiert
+
+  trackM    Float
+  numRounds Int
+  distanceM Int?                   // nur Anzeige; default trackM * numRounds
+
+  // laps: PursuitRunLap[] = [{ lapMs: number, halfMs: number | null }, …]
+  // halfMs ist die ERSTE Hälfte ab Rundenbeginn; die zweite ist immer
+  // lapMs − halfMs und wird nie gespeichert.
+  laps      Json    @default("[]")
+  totalMs   Int?                   // Summe der Runden bzw. von Hand eingetragene Zielzeit
+
+  // Ersetzt in der Anzeige nur die Zielzeit, NICHT die Rundenzeiten. Die
+  // Abweichung zur Rundensumme wird ausgewiesen statt verteilt.
+  officialTotalMs Int?
+  timeSource      String  @default("TIMER") // TIMER | KORRIGIERT | OFFIZIELL | MANUELL
+  complete        Boolean @default(true)    // false = abgebrochener Lauf
+  notes           String?                   // "viel Wind", "schlecht warmgefahren", …
+
+  kb     Int?                      // Gang Einzelverfolgung
+  rz     Int?
+  gears  Json?                     // Mannschaft: { "<athleteId>": { kb, rz } }
+  circMm Int     @default(2100)    // Radumfang für die Trittfrequenz-Rechnung
+
+  // Plan-Schnappschuss zum Zeitpunkt der Fahrt. null = von Hand angelegt,
+  // dann gibt es keine Δ-Spalten und kein Streckendiagramm.
+  planAnfahrtSec Float?
+  planLapSec     Float?
+  planTotalSec   Float?
+
+  ridenAt   DateTime  @default(now())
+  editedAt  DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([raceId])
 }
 
 // ─── Kommuniqué-Notifier ────────────────────────────────────────────────────
