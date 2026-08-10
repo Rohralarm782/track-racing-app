@@ -6,6 +6,20 @@ import SettingsGearButton from '../components/SettingsGearButton';
 import KioskButton from '../components/KioskButton';
 import ScheduleImport from '../components/ScheduleImport';
 import { useAdmin, useKiosk } from '../components/Layout';
+// Zielpfad im Repo: frontend/src/pages/SchedulePage.tsx  (ERSETZT die bestehende Datei)
+//
+// Änderung: neuer Bearbeiten-Modus als Rückfallweg, wenn der Veranstalter
+// kurzfristig umstellt, aber keinen korrigierten Zeitplan veröffentlicht.
+// Bewusst unten unter "Werkzeuge" versteckt und nur für Admins sichtbar —
+// im Renn-Alltag soll er nicht im Weg stehen. Der bisherige Knopf
+// "Zeitplan neu importieren" ist aus der Normalansicht verschwunden und
+// sitzt jetzt IM Bearbeiten-Modus (er bleibt der einzige Weg, einen
+// weiteren Tag nachzuladen, wenn keine Kommuniqué-Quelle eingerichtet ist).
+//
+// Der Bearbeiten-Modus blendet Pausen, Zeitschätzungen und Kommuniqué-Zeilen
+// aus: die sind alle abgeleitet und passen sich nach dem Verlassen von selbst
+// wieder an. Jede Aktion geht sofort ans Backend, es gibt kein Speichern und
+// kein Abbrechen — genau wie beim bestehenden "Tag löschen".
 import {
   api, communiquesApi, scheduleApi,
   type Event as EventT, type ScheduleEntry, type EventStatus, type LiveStatusKey, type MevRider,
@@ -277,6 +291,18 @@ export default function SchedulePage() {
 
   const [activeDay, setActiveDay]   = useState(1);
   const [showImport, setShowImport] = useState(false);
+
+  // ── Bearbeiten-Modus ────────────────────────────────────────────────────
+  const [editMode, setEditMode]     = useState(false);
+  const [editBusy, setEditBusy]     = useState(false);
+  // Formular "Eintrag hinzufügen" — nur sichtbar, wenn ausgeklappt.
+  const [showAdd, setShowAdd]       = useState(false);
+  const [newTime, setNewTime]       = useState('');
+  const [newAk, setNewAk]           = useState('');
+  const [newDisc, setNewDisc]       = useState('');
+  const [newPhase, setNewPhase]     = useState('');
+  const [newType, setNewType]       = useState<'RACE' | 'CEREMONY' | 'INFO'>('RACE');
+  const [newMassStart, setNewMassStart] = useState(false);
   const [viewingDocId, setViewingDocId] = useState<string | null>(null);
 
   // Update-Dialog ("Aktueller Stand")
@@ -354,6 +380,74 @@ export default function SchedulePage() {
     } finally {
       setRematchBusy(false);
     }
+  }
+
+  // ── Bearbeiten-Modus: Aktionen ──────────────────────────────────────────
+  // Alle vier Endpunkte geben die komplette Liste zurück, deshalb reicht
+  // setEntries — kein Nachladen nötig. editBusy sperrt währenddessen die
+  // Knöpfe, damit zwei schnelle Klicks nicht in vertauschter Reihenfolge
+  // beim Server ankommen und die Sortierung durcheinanderbringen.
+  async function handleMove(entryId: string, direction: 'up' | 'down') {
+    if (editBusy) return;
+    setEditBusy(true); setError('');
+    try { setEntries(await scheduleApi.moveEntry(entryId, direction)); }
+    catch (e: any) { setError(e.message ?? 'Verschieben fehlgeschlagen'); }
+    finally { setEditBusy(false); }
+  }
+
+  async function handleDeleteEntry(entry: ScheduleEntry) {
+    const label = `${entry.time} · ${entry.ak} · ${entry.disciplineLabel}`;
+    if (!window.confirm(`Eintrag „${label}" löschen? Das lässt sich nicht rückgängig machen.`)) return;
+    setEditBusy(true); setError('');
+    try { setEntries(await scheduleApi.deleteEntry(entry.id)); }
+    catch (e: any) { setError(e.message ?? 'Löschen fehlgeschlagen'); }
+    finally { setEditBusy(false); }
+  }
+
+  // Uhrzeit: erst schreiben, wenn sie sich tatsächlich geändert hat UND
+  // vollständig ist — sonst würde jedes Verlassen des Feldes einen Request
+  // auslösen, und eine halb getippte "9:" landete als Fehler auf dem Schirm.
+  async function handleSetTime(entry: ScheduleEntry, value: string) {
+    const t = value.trim();
+    if (t === entry.time) return;
+    if (!/^\d{1,2}:\d{2}$/.test(t)) { setError(`„${t}" ist keine Uhrzeit im Format HH:MM.`); return; }
+    setEditBusy(true); setError('');
+    try {
+      await scheduleApi.setTime(entry.id, t);
+      // Die Uhrzeit verschiebt alle Folge-Schätzungen des Tages, deshalb hier
+      // ausnahmsweise die ganze Liste neu holen statt nur den Eintrag zu tauschen.
+      if (eventId) setEntries(await scheduleApi.list(eventId));
+    } catch (e: any) { setError(e.message ?? 'Uhrzeit speichern fehlgeschlagen'); }
+    finally { setEditBusy(false); }
+  }
+
+  function resetAddForm() {
+    setNewTime(''); setNewAk(''); setNewDisc(''); setNewPhase('');
+    setNewType('RACE'); setNewMassStart(false);
+  }
+
+  async function handleAddEntry() {
+    if (!eventId) return;
+    const time = newTime.trim();
+    if (!/^\d{1,2}:\d{2}$/.test(time)) { setError('Uhrzeit im Format HH:MM eingeben.'); return; }
+    // Bei Pausen/Hinweisen und Ehrungen ist die Altersklasse oft sinnlos —
+    // dann reicht der Text im Disziplin-Feld, AK wird still zu "–".
+    const ak = newAk.trim() || (newType === 'RACE' ? '' : '–');
+    const disciplineLabel = newDisc.trim();
+    if (!ak || !disciplineLabel) { setError('Altersklasse und Bezeichnung ausfüllen.'); return; }
+
+    setEditBusy(true); setError('');
+    try {
+      setEntries(await scheduleApi.addEntry(eventId, {
+        day: activeDay, time, ak, disciplineLabel,
+        phase: newPhase.trim() || null,
+        type: newType,
+        massStart: newType === 'RACE' ? newMassStart : false,
+      }));
+      resetAddForm();
+      setShowAdd(false);
+    } catch (e: any) { setError(e.message ?? 'Hinzufügen fehlgeschlagen'); }
+    finally { setEditBusy(false); }
   }
 
   async function handleSetManualCount(entry: ScheduleEntry) {
@@ -601,7 +695,177 @@ export default function SchedulePage() {
 
       {error && <div className="alert alert-error mb-3">{error}</div>}
 
-      {entries.length === 0 ? (
+      {/* ════════════ BEARBEITEN-MODUS ════════════
+          Rückfallweg für kurzfristige Änderungen des Veranstalters. Zeigt die
+          Einträge des aktiven Tages roh — ohne Pausen, Schätzungen und
+          Kommuniqué-Zeilen, die alle abgeleitet sind. */}
+      {canEdit && editMode ? (
+        <>
+          <div style={{
+            background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 9,
+            padding: '9px 12px', marginBottom: 12, display: 'flex',
+            justifyContent: 'space-between', alignItems: 'center', gap: 10, fontSize: 12.5,
+          }}>
+            <span>🛠 <strong>Bearbeiten-Modus</strong> — Änderungen wirken sofort.</span>
+            <button className="btn btn-secondary btn-sm" onClick={() => { setEditMode(false); setShowAdd(false); setError(''); }}>
+              Fertig
+            </button>
+          </div>
+
+          {days.length > 1 && (
+            <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
+              {days.map(d => (
+                <button
+                  key={d}
+                  onClick={() => setActiveDay(d)}
+                  style={{
+                    padding: '4px 12px', borderRadius: 20, fontSize: 12.5, fontWeight: 500, cursor: 'pointer',
+                    border: activeDay === d ? '1px solid #111' : '1px solid var(--c-border)',
+                    background: activeDay === d ? '#111' : 'var(--c-white)',
+                    color: activeDay === d ? '#fff' : 'var(--c-text)',
+                  }}
+                >
+                  {dayLabelFor(d)}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <div>
+            {dayEntries.map((entry, idx) => (
+              <div
+                key={entry.id}
+                style={{
+                  display: 'grid', gridTemplateColumns: 'auto 58px 1fr auto',
+                  gap: 8, alignItems: 'center', padding: '7px 2px',
+                  borderBottom: '1px solid var(--c-border)',
+                  opacity: editBusy ? 0.6 : 1,
+                }}
+              >
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  <button
+                    onClick={() => handleMove(entry.id, 'up')}
+                    disabled={idx === 0 || editBusy}
+                    title="Nach oben"
+                    style={{ width: 26, height: 19, padding: 0, lineHeight: 1, fontSize: 11, borderRadius: 5, border: '1px solid var(--c-border)', background: 'var(--c-white)', cursor: 'pointer' }}
+                  >▲</button>
+                  <button
+                    onClick={() => handleMove(entry.id, 'down')}
+                    disabled={idx === dayEntries.length - 1 || editBusy}
+                    title="Nach unten"
+                    style={{ width: 26, height: 19, padding: 0, lineHeight: 1, fontSize: 11, borderRadius: 5, border: '1px solid var(--c-border)', background: 'var(--c-white)', cursor: 'pointer' }}
+                  >▼</button>
+                </div>
+
+                {/* defaultValue + key: das Feld gehört sich selbst, bis der Fokus
+                    weg ist. Mit value/onChange würde jeder Tastendruck einen
+                    Request auslösen. */}
+                <input
+                  key={`${entry.id}-${entry.time}`}
+                  defaultValue={entry.time}
+                  disabled={editBusy}
+                  onBlur={e => handleSetTime(entry, e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                  style={{ width: 56, fontSize: 12.5, padding: '3px 4px', border: '1px solid var(--c-border)', borderRadius: 5, fontFamily: 'inherit' }}
+                />
+
+                <div style={{ minWidth: 0, fontSize: 13 }}>
+                  {entry.type !== 'RACE' && <span style={{ marginRight: 5 }}>{TYPE_ICON[entry.type]}</span>}
+                  {entry.ak} · {entry.disciplineLabel}{entry.phase ? ` · ${entry.phase}` : ''}
+                </div>
+
+                <button
+                  className="btn btn-ghost btn-sm"
+                  disabled={editBusy}
+                  title="Eintrag löschen"
+                  style={{ color: 'var(--c-danger, #dc2626)' }}
+                  onClick={() => handleDeleteEntry(entry)}
+                >🗑</button>
+              </div>
+            ))}
+            {dayEntries.length === 0 && (
+              <p className="text-sm text-muted">Für diesen Tag gibt es keine Einträge.</p>
+            )}
+          </div>
+
+          {/* ── Eintrag hinzufügen ── */}
+          {!showAdd ? (
+            <button className="btn btn-secondary btn-sm" style={{ marginTop: 12 }} onClick={() => setShowAdd(true)}>
+              + Eintrag hinzufügen
+            </button>
+          ) : (
+            <div className="card" style={{ marginTop: 12, borderColor: '#bfdbfe', background: '#f0f7ff' }}>
+              <p className="text-sm" style={{ fontWeight: 600, marginBottom: 10 }}>
+                Neuer Eintrag · {dayLabelFor(activeDay)}
+              </p>
+              <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
+                {([['RACE', '🏁 Rennen'], ['CEREMONY', '🏅 Ehrung'], ['INFO', 'ℹ️ Hinweis']] as const).map(([v, label]) => (
+                  <button
+                    key={v}
+                    className={`btn btn-sm ${newType === v ? 'btn-primary' : 'btn-secondary'}`}
+                    onClick={() => setNewType(v)}
+                  >{label}</button>
+                ))}
+              </div>
+              <div className="grid-2" style={{ marginBottom: 10 }}>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label className="form-label">Uhrzeit</label>
+                  <input className="form-input" placeholder="14:30" value={newTime} onChange={e => setNewTime(e.target.value)} />
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label className="form-label">Altersklasse</label>
+                  <input
+                    className="form-input"
+                    placeholder={newType === 'RACE' ? 'z.B. U17w' : 'optional'}
+                    value={newAk}
+                    onChange={e => setNewAk(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="form-group">
+                <label className="form-label">{newType === 'RACE' ? 'Disziplin' : 'Bezeichnung'}</label>
+                <input
+                  className="form-input"
+                  placeholder={newType === 'RACE' ? 'z.B. Punktefahren' : newType === 'CEREMONY' ? 'z.B. Siegerehrung U17w' : 'z.B. Einfahren'}
+                  value={newDisc}
+                  onChange={e => setNewDisc(e.target.value)}
+                />
+              </div>
+              {newType === 'RACE' && (
+                <>
+                  <div className="form-group">
+                    <label className="form-label">Phase (optional)</label>
+                    <input className="form-input" placeholder="z.B. Finale, 1. Vorlauf" value={newPhase} onChange={e => setNewPhase(e.target.value)} />
+                  </div>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, marginBottom: 10, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={newMassStart} onChange={e => setNewMassStart(e.target.checked)} />
+                    Massenstart (Punktefahren, Scratch … — dann wird keine Starterzahl angezeigt)
+                  </label>
+                </>
+              )}
+              <div className="flex-between">
+                <button className="btn btn-ghost btn-sm" onClick={() => { setShowAdd(false); resetAddForm(); setError(''); }}>
+                  Abbrechen
+                </button>
+                <button className="btn btn-primary btn-sm" onClick={handleAddEntry} disabled={editBusy}>
+                  {editBusy ? 'Speichert…' : 'Hinzufügen'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div style={{ marginTop: 18, paddingTop: 12, borderTop: '1px solid var(--c-border)' }}>
+            <button className="btn btn-ghost btn-sm" onClick={() => setShowImport(true)}>
+              📄 Zeitplan neu importieren
+            </button>
+            <p className="text-xs text-muted" style={{ marginTop: 8, marginBottom: 0, lineHeight: 1.5 }}>
+              Pausen und Zeitschätzungen sind hier ausgeblendet — sie werden aus den Einträgen
+              berechnet und passen sich beim Verlassen von selbst an. Der Import bleibt für den
+              Fall, dass ein Zeitplan als PDF vorliegt und nicht über die Kommuniqués kommt.
+            </p>
+          </div>
+        </>
+      ) : entries.length === 0 ? (
         <div className="empty">
           <p>Noch kein Zeitplan importiert.</p>
           {canEdit && (
@@ -919,12 +1183,14 @@ export default function SchedulePage() {
           </div>
 
           {canEdit && (
-            <button
-              className="btn btn-ghost btn-sm mt-3"
-              onClick={() => setShowImport(true)}
-            >
-              📄 Zeitplan neu importieren
-            </button>
+            <div style={{ marginTop: 18, paddingTop: 12, borderTop: '1px solid var(--c-border)' }}>
+              <p className="text-xs text-muted" style={{ fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>
+                Werkzeuge
+              </p>
+              <button className="btn btn-ghost btn-sm" onClick={() => setEditMode(true)}>
+                🛠 Zeitplan bearbeiten
+              </button>
+            </div>
           )}
         </>
       )}
