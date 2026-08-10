@@ -1,5 +1,6 @@
 // Zielpfad im Repo: backend/src/index.ts  (ERSETZT die bestehende Datei)
-// Änderung ggü. Original: athletesRouter importiert und unter /api/athletes registriert.
+// Änderungen ggü. Original: athletesRouter unter /api/athletes registriert,
+// pursuitRunsRouter unter /api/pursuit-runs.
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -10,6 +11,7 @@ import racesRouter from './routes/races';
 import { sprintsRouter, lapsRouter, raceFlagsRouter } from './routes/resources';
 import { requireAdmin } from './middleware/auth';
 import pursuitPlansRouter from './routes/pursuit-plans';  // ← geändert
+import pursuitRunsRouter from './routes/pursuit-runs';    // ← neu: gefahrene Verfolgungsläufe
 import communiquesRouter, { pollSource } from './routes/communiques';
 import scheduleRouter from './routes/schedule';
 import settingsRouter from './routes/settings';
@@ -38,6 +40,7 @@ app.use('/api/sprints',        sprintsRouter);
 app.use('/api/laps',           lapsRouter);
 app.use('/api/race-flags',     raceFlagsRouter);
 app.use('/api/pursuit-plans',  pursuitPlansRouter);  // ← geändert
+app.use('/api/pursuit-runs',   pursuitRunsRouter);   // ← neu: gefahrene Verfolgungsläufe
 app.use('/api/communiques',    communiquesRouter);
 app.use('/api',                scheduleRouter); // Zeitplan + Aktueller-Stand-Endpunkte (eigene Pfade unter /api/events/:id/schedule, /api/schedule-entries/:id)
 app.use('/api/settings',       settingsRouter);
