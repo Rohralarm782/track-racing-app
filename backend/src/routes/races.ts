@@ -154,6 +154,8 @@ const CreateRaceSchema = z.object({
   format: z.enum(['INDIVIDUAL', 'TEAM_PAIRS']).optional(),
   name: z.string().min(1),
   order: z.number().int().default(0),
+  isQualifying: z.boolean().optional(),
+  qualifyCount: z.number().int().min(1).max(200).nullable().optional(),
 }).refine(d => !!d.categoryId || !!d.eventId, {
   message: 'categoryId oder eventId muss angegeben sein',
 });
@@ -169,11 +171,19 @@ router.post('/', requireAdmin, async (req, res, next) => {
 
 router.patch('/:id', requireAdmin, async (req, res, next) => {
   try {
-    const { status, finaleActive, name } = req.body;
+    const { status, finaleActive, name, isQualifying, qualifyCount } = req.body;
     const data: Record<string, unknown> = {};
     if (status !== undefined) data.status = status;
     if (finaleActive !== undefined) data.finaleActive = finaleActive;
     if (name !== undefined) data.name = name;
+    if (isQualifying !== undefined) data.isQualifying = !!isQualifying;
+    // null löscht die Zahl bewusst — dann bleibt der Haken gesetzt, aber es
+    // wird nur der Hinweis angezeigt statt einer falschen Cut-Linie.
+    if (qualifyCount !== undefined) {
+      data.qualifyCount = qualifyCount === null || qualifyCount === ''
+        ? null
+        : Number(qualifyCount);
+    }
     const race = await prisma.race.update({ where: { id: req.params.id }, data: data as any });
     res.json(race);
   } catch (e) { next(e); }
