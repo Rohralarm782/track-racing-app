@@ -12,12 +12,20 @@
 //    onAthletesChange statt onSave
 //  - zusätzlich raceId/runLabel/eventName, damit der Renntimer den gefahrenen
 //    Lauf als PursuitRun ins Sportlerprofil speichern kann
-import { useCallback, useEffect, useRef, useState } from 'react';
+//
+// NEU (Vorlauf-Qualifikation, nur PUNKTEFAHREN):
+//  - Race-Interface um isQualifying/qualifyCount erweitert
+//  - Dialog "Qualifikation" im ⋮-Menü zum Setzen von Haken und Anzahl
+//  - Zwischenstand bekommt eine rote Cut-Linie nach dem letzten
+//    Qualifikationsplatz und eine Stufenspalte mit der Weiterkomm-Chance
+//  - gerechnet wird in frontend/src/lib/qualification.ts
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, athletesApi, raceAthletesApi, type Athlete } from '../api/client';
 import { useAdmin } from '../components/Layout';
 import VerfolgungsplanungView from '../components/VerfolgungsplanungView';
 import MadisonTeamBuilder from '../components/MadisonTeamBuilder';
+import { computeQualification, looksLikeQualifying, type QualiLevel } from '../lib/qualification';
 
 interface Team { id: string; number: number; name: string; club?: string|null; lv?: string|null; rider2Lv?: string|null; rider1?: string|null; rider2?: string|null; color?: string|null; isFavorite?: boolean; }
 interface SprintResult { id: string; position: number; team: Team; }
@@ -38,6 +46,8 @@ interface Race {
   id: string; name: string; type: string; status: string; finaleActive: boolean;
   format?: string|null;
   plannedSprints?: number|null;
+  isQualifying?: boolean;
+  qualifyCount?: number|null;
   category: { id: string | null; name: string; format: string; teams: Team[]; event: { id: string; name: string } };
   sprints: Sprint[]; lapEvents: LapEvent[]; omniumScores: OmniumScore[];
   flags: RaceFlag[]; scoreboard: TeamStanding[]|null;
@@ -133,6 +143,23 @@ function sprintPts(sprint: Sprint, teamId: string): number|null {
   return (SPRINT_PTS[r.position] ?? 0) * (sprint.isFinale ? 2 : 1);
 }
 
+// ── Stufenbalken für die Weiterkomm-Chance ───────────────────────────────────
+// Fünf Segmente statt einer Prozentzahl: die Simulation trägt keine feinere
+// Auflösung, also darf die Anzeige auch keine vortäuschen.
+function QualiBar({ level }: { level: QualiLevel }) {
+  const filled = level.step === null ? 0 : level.step + 1;
+  return (
+    <span title={level.label} style={{display:'inline-flex',gap:2,verticalAlign:'middle'}}>
+      {[0,1,2,3,4].map(k=>(
+        <i key={k} style={{
+          display:'block', width:7, height:12, borderRadius:2,
+          background: k<filled ? level.color : '#e8eaee',
+        }}/>
+      ))}
+    </span>
+  );
+}
+
 type SlotEntry = { teamId: string; teamNumber: number; teamName: string }|null;
 
 export default function RaceDetail() {
@@ -171,6 +198,40 @@ export default function RaceDetail() {
       setError(e.message ?? 'Umbenennen fehlgeschlagen');
     } finally {
       setSavingRename(false);
+    }
+  }
+
+  // ── Qualifikation (nur Vorlauf-Punktefahren) ──────────────────────────────
+  const [qualiOpen, setQualiOpen]     = useState(false);
+  const [qualiOn, setQualiOn]         = useState(false);
+  const [qualiCount, setQualiCount]   = useState('');
+  const [savingQuali, setSavingQuali] = useState(false);
+
+  function openQuali() {
+    if (!race) return;
+    // Vorbelegung: Haken aus dem Rennnamen, Anzahl aus dem gespeicherten Wert.
+    // In den ausgewerteten Kommuniqués war die Zahl ausnahmslos 12, deshalb
+    // steht sie als Vorschlag drin — überschreibbar wie alles hier.
+    setQualiOn(race.isQualifying ?? looksLikeQualifying(race.name));
+    setQualiCount(race.qualifyCount != null ? String(race.qualifyCount) : '');
+    setQualiOpen(true);
+  }
+
+  async function saveQuali() {
+    if (!id) return;
+    setSavingQuali(true);
+    try {
+      const n = parseInt(qualiCount, 10);
+      await api.patch(`/api/races/${id}`, {
+        isQualifying: qualiOn,
+        qualifyCount: qualiOn && Number.isFinite(n) && n > 0 ? n : null,
+      });
+      setQualiOpen(false);
+      await fetchRace();
+    } catch (e: any) {
+      setError(e.message ?? 'Speichern fehlgeschlagen');
+    } finally {
+      setSavingQuali(false);
     }
   }
 
@@ -280,6 +341,47 @@ export default function RaceDetail() {
 
   // Umbenennen-Modal — in allen drei Renn-Zweigen identisch, deshalb einmal
   // als Variable und unten jeweils eingehängt.
+  const qualiModal = qualiOpen && (
+    <div className="modal-overlay" onClick={() => setQualiOpen(false)}>
+      <div className="modal" style={{maxWidth:420}} onClick={e => e.stopPropagation()}>
+        <p className="modal-title">Qualifikation</p>
+        <label style={{display:'flex',alignItems:'center',gap:8,fontSize:14,cursor:'pointer',marginBottom:12}}>
+          <input type="checkbox" checked={qualiOn} onChange={e => setQualiOn(e.target.checked)} />
+          Vorlauf — es kommt nur ein Teil weiter
+        </label>
+        {qualiOn && (
+          <div className="form-group">
+            <label className="form-label">Es kommen weiter</label>
+            <div style={{display:'flex',alignItems:'center',gap:8}}>
+              <input
+                className="form-input"
+                type="number"
+                min={1}
+                style={{width:90}}
+                value={qualiCount}
+                placeholder="12"
+                autoFocus
+                onChange={e => setQualiCount(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') saveQuali(); }}
+              />
+              <span className="text-sm text-muted">Fahrer</span>
+            </div>
+            <p className="text-xs text-muted" style={{margin:'6px 0 0'}}>
+              Steht in der Ansetzung manchmal andersherum („Es scheiden 9 Fahrer aus")
+              — dann Starterzahl minus Ausscheider eintragen.
+            </p>
+          </div>
+        )}
+        <div className="flex-between mt-4">
+          <button className="btn btn-ghost" onClick={() => setQualiOpen(false)}>Abbrechen</button>
+          <button className="btn btn-primary" onClick={saveQuali} disabled={savingQuali}>
+            {savingQuali ? 'Speichert…' : 'Speichern'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
   const renameModal = renameOpen && (
     <div className="modal-overlay" onClick={() => setRenameOpen(false)}>
       <div className="modal" style={{maxWidth:400}} onClick={e => e.stopPropagation()}>
@@ -451,6 +553,23 @@ export default function RaceDetail() {
   const usedIds=new Set(slots.filter(Boolean).map(s=>s!.teamId));
   const hasOmnium=race.omniumScores.length>0;
   const hasFinale=race.sprints.some(s=>s.isFinale);
+
+  // ── Vorlauf-Qualifikation ──────────────────────────────────────────────────
+  // Nur Punktefahren, nur mit gesetztem Haken. Ohne Anzahl gibt es einen
+  // Hinweis statt einer Linie — so ist erkennbar, ob die Zahl fehlt oder ob
+  // es schlicht kein Vorlauf ist.
+  const qualiActive = race.type==='PUNKTEFAHREN' && !!race.isQualifying;
+  const quali = qualiActive && race.qualifyCount!=null && race.scoreboard
+    ? computeQualification({
+        rows: race.scoreboard.map(s=>({ total: s.total, isDsq: s.isDsq })),
+        qualifyCount: race.qualifyCount,
+        plannedSprints: race.plannedSprints ?? null,
+        doneSprints: race.sprints.length,
+        hasFinale,
+        hasLapEvents: race.lapEvents.length>0,
+      })
+    : null;
+  const showQualiCol = !!quali?.hasLevels;
   const filledSlots=slots.filter(Boolean).length;
   const canSkip=slots.findIndex((s,i)=>i>activeSlot&&s===null)!==-1;
 
@@ -826,6 +945,9 @@ export default function RaceDetail() {
     ...(displayFormat!=='TEAM_PAIRS'
       ? [{ label: 'Omnium-Vorpunkte', icon: '🏅', onClick: openOmnium }]
       : []),
+    ...(race.type==='PUNKTEFAHREN'
+      ? [{ label: 'Qualifikation', icon: '🏁', onClick: openQuali }]
+      : []),
     { label: 'Rennen umbenennen', icon: '✏️', onClick: openRename },
     { label: 'Rennen löschen', icon: '🗑', danger: true, onClick: deleteRace },
   ];
@@ -869,7 +991,14 @@ export default function RaceDetail() {
             <p className="text-sm text-muted" style={{margin:'2px 0 0'}}>
               {category.name} · {race.sprints.length} Sprints
               {race.plannedSprints!=null && ` (${race.plannedSprints} geplant)`}
+              {qualiActive && race.qualifyCount!=null && ` · Top ${race.qualifyCount} kommen weiter`}
             </p>
+            {qualiActive && race.qualifyCount==null && (
+              <p className="text-sm" style={{margin:'4px 0 0',color:'var(--c-warning)'}}>
+                Vorlauf — Anzahl der Qualifikanten fehlt.{' '}
+                {isAdmin && <a onClick={openQuali} style={{cursor:'pointer',textDecoration:'underline'}}>Jetzt eintragen</a>}
+              </p>
+            )}
           </div>
           {isAdmin && (
             <div className="page-actions">
@@ -884,6 +1013,7 @@ export default function RaceDetail() {
 
       {error && <div className="alert alert-error mb-3">{error}</div>}
       {renameModal}
+      {qualiModal}
 
       {/* ── Madison-Teambuilder ── */}
       {/* Nur für Rennen mit echter Kategorie — bei neuen, direkt am Event
@@ -1072,7 +1202,7 @@ export default function RaceDetail() {
             </div>
           </div>
           <div className="table-wrap" style={{overflowX:'auto'}}>
-            <table className="table" style={{minWidth:266+(showDetails?race.sprints.length*40+(hasOmnium?40:0):0)+(hasFinale?34:0)}}>
+            <table className="table" style={{minWidth:266+(showDetails?race.sprints.length*40+(hasOmnium?40:0):0)+(hasFinale?34:0)+(showQualiCol?52:0)}}>
               <thead>
                 <tr>
                   <th style={{width:20}}>#</th>
@@ -1083,14 +1213,27 @@ export default function RaceDetail() {
                   <th style={{textAlign:'center',width:40}}>R.</th>
                   {showDetails&&hasOmnium&&<th style={{textAlign:'center',width:40}}>Omn.</th>}
                   <th style={{textAlign:'right',width:46}}>Ges.</th>
+                  {showQualiCol&&<th style={{textAlign:'center',width:52,fontSize:11}}>Chance</th>}
                   {isAdmin&&<th style={{width:44}}></th>}
                 </tr>
               </thead>
               <tbody>
                 {race.scoreboard.map((s,idx)=>{
                   const rowStyle: React.CSSProperties = s.isDsq?{opacity:0.5,textDecoration:'line-through'}:s.color?{background:`${s.color}18`}:s.isFavorite?{background:'#fffbeb'}:{};
+                  const level = quali?.levels[idx] ?? null;
+                  const cutHere = quali?.cutAfterIndex === idx;
+                  // Spaltenzahl für die durchgehende Cut-Linie
+                  const cols = 3
+                    + (showDetails?race.sprints.length:0)
+                    + (hasFinale?1:0)
+                    + 1                                   // R.
+                    + (showDetails&&hasOmnium?1:0)
+                    + 1                                   // Ges.
+                    + (showQualiCol?1:0)
+                    + (isAdmin?1:0);
                   return(
-                    <tr key={s.teamId} style={rowStyle}>
+                  <Fragment key={s.teamId}>
+                    <tr style={rowStyle}>
                       <td style={{color:'var(--c-text-muted)',fontSize:12}}>{ranks[idx] ?? ''}</td>
                       <td className="num" style={{fontWeight:600}}>{s.teamNumber}</td>
                       <td>
@@ -1132,6 +1275,11 @@ export default function RaceDetail() {
                       <td style={{textAlign:'center',color:s.lapBalance>0?'var(--c-success)':s.lapBalance<0?'var(--c-danger)':'',fontWeight:s.lapBalance!==0?600:400}}>{s.lapBalance!==0?(s.lapBalance>0?`+${s.lapBalance*20}`:`${s.lapBalance*20}`):''}</td>
                       {showDetails&&hasOmnium&&<td style={{textAlign:'center'}}>{s.omniumPoints||''}</td>}
                       <td style={{textAlign:'right',fontWeight:700,fontSize:15,color:s.isDsq?'var(--c-danger)':''}}>{s.isDsq?'DSQ':s.total}</td>
+                      {showQualiCol&&(
+                        <td style={{textAlign:'center'}}>
+                          {level&&<QualiBar level={level} />}
+                        </td>
+                      )}
                       {isAdmin&&(
                         <td style={{textAlign:'center'}}>
                           <div style={{display:'flex',gap:2,justifyContent:'center'}}>
@@ -1141,11 +1289,43 @@ export default function RaceDetail() {
                         </td>
                       )}
                     </tr>
+                    {cutHere&&(
+                      <tr>
+                        <td colSpan={cols} style={{padding:0,border:0}}>
+                          <div style={{position:'relative',height:15,borderTop:'2px dashed var(--c-danger)'}}>
+                            <span style={{position:'absolute',top:-9,left:6,background:'var(--c-white,#fff)',padding:'0 5px',fontSize:10,fontWeight:700,letterSpacing:'.04em',textTransform:'uppercase',color:'var(--c-danger)'}}>
+                              {race.qualifyCount} kommen weiter
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                   );
                 })}
               </tbody>
             </table>
           </div>
+          {showQualiCol&&(
+            <div style={{display:'flex',flexWrap:'wrap',gap:'4px 12px',fontSize:11,color:'var(--c-text-muted)',marginTop:8}}>
+              {[['#16a34a','durch'],['#84cc16','so gut wie durch'],['#eab308','wahrscheinlich'],
+                ['#ea580c','offen'],['#dc2626','muss vorfahren'],['#9ca3af','raus']].map(([c,l])=>(
+                <span key={l}><i style={{display:'inline-block',width:10,height:10,borderRadius:3,background:c,marginRight:4,verticalAlign:-1}}/>{l}</span>
+              ))}
+            </div>
+          )}
+          {quali&&!quali.hasLevels&&race.qualifyCount!=null&&(
+            <p className="text-xs text-muted" style={{margin:'8px 0 0'}}>
+              Chancen werden erst gerechnet, wenn die Anzahl der Wertungen bekannt ist
+              (kommt aus der Ansetzung). Bis dahin nur die Cut-Linie.
+            </p>
+          )}
+          {race.lapEvents.length>0&&showQualiCol&&(
+            <p className="text-xs text-muted" style={{margin:'8px 0 0'}}>
+              Im Rennen gab es einen Rundengewinn — damit sind jederzeit 20 Punkte
+              möglich und „durch"/„raus" werden nicht mehr angezeigt.
+            </p>
+          )}
         </div>
       )}
 
