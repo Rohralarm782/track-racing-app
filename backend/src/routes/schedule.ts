@@ -117,14 +117,19 @@ const PatchEntrySchema = z.object({
   linkedDocumentId: z.string().nullable().optional(),
   linkedResultDocumentId: z.string().nullable().optional(),
   manualUnitCount: z.number().int().min(0).nullable().optional(),
+  // Soll-Uhrzeit laut Zeitplan. Bewusst NICHT die Live-Verschiebung — die
+  // läuft weiter über EventStatus/offsetMinutes. Hier wird korrigiert, wenn
+  // der Veranstalter umplant, ohne einen neuen Zeitplan zu veröffentlichen.
+  time: z.string().regex(/^\d{1,2}:\d{2}$/, 'Uhrzeit muss HH:MM sein').optional(),
 });
 
 router.patch('/schedule-entries/:id', requireAdmin, async (req, res, next) => {
   try {
     const parsed = PatchEntrySchema.safeParse(req.body);
     if (!parsed.success) { res.status(400).json(parsed.error.flatten()); return; }
-    const { linkedDocumentId, linkedResultDocumentId, manualUnitCount } = parsed.data;
-    if (linkedDocumentId === undefined && linkedResultDocumentId === undefined && manualUnitCount === undefined) {
+    const { linkedDocumentId, linkedResultDocumentId, manualUnitCount, time } = parsed.data;
+    if (linkedDocumentId === undefined && linkedResultDocumentId === undefined
+        && manualUnitCount === undefined && time === undefined) {
       res.json(await prisma.scheduleEntry.findUnique({ where: { id: req.params.id } }));
       return;
     }
@@ -142,6 +147,7 @@ router.patch('/schedule-entries/:id', requireAdmin, async (req, res, next) => {
       data.linkedResultManual = typeof linkedResultDocumentId === 'string' && linkedResultDocumentId.length > 0;
     }
     if (manualUnitCount !== undefined) data.manualUnitCount = manualUnitCount;
+    if (time !== undefined) data.time = time;
 
     // linkedDocumentId und linkedResultDocumentId sind @unique — ein Kommuniqué
     // darf nur an EINEM Eintrag hängen. Klebt dasselbe Dokument schon (per
@@ -192,6 +198,140 @@ router.patch('/schedule-entries/:id', requireAdmin, async (req, res, next) => {
     }
 
     res.json(entry);
+  } catch (e) { next(e); }
+});
+
+// ─── Zeitplan von Hand korrigieren ──────────────────────────────────────────
+// Rückfallweg für den Fall, dass der Veranstalter kurzfristig umstellt, aber
+// keinen korrigierten Zeitplan veröffentlicht. Bewusst schmal: Reihenfolge,
+// Uhrzeit (siehe PATCH oben), Löschen, Hinzufügen. Alles andere macht der
+// Neu-Import.
+//
+// Alle Endpunkte liefern die komplette, angereicherte Liste zurück (wie
+// DELETE .../days/:day), damit das Frontend nach jeder Aktion sofort einen
+// konsistenten Stand hat, ohne selbst nachzuladen.
+
+/** "HH:MM" → Minuten seit Mitternacht. Ungültiges wird ans Tagesende sortiert. */
+function timeToMinutes(t: string): number {
+  const m = t.match(/^(\d{1,2}):(\d{2})$/);
+  return m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : 24 * 60;
+}
+
+const NewEntrySchema = z.object({
+  day: z.number().int().positive(),
+  time: z.string().regex(/^\d{1,2}:\d{2}$/, 'Uhrzeit muss HH:MM sein'),
+  ak: z.string().min(1),
+  disciplineLabel: z.string().min(1),
+  phase: z.string().nullable().optional(),
+  type: z.enum(['RACE', 'CEREMONY', 'INFO']).default('RACE'),
+  massStart: z.boolean().default(false),
+});
+
+// POST /api/events/:id/schedule/entries — einzelnen Eintrag nachtragen
+router.post('/events/:id/schedule/entries', requireAdmin, async (req, res, next) => {
+  try {
+    const parsed = NewEntrySchema.safeParse(req.body);
+    if (!parsed.success) { res.status(400).json(parsed.error.flatten()); return; }
+    const eventId = req.params.id;
+    const d = parsed.data;
+
+    await prisma.$transaction(async (tx) => {
+      const all = await tx.scheduleEntry.findMany({
+        where: { eventId }, orderBy: { order: 'asc' },
+        select: { id: true, day: true, time: true, dayLabel: true },
+      });
+
+      // Einfügeposition: vor dem ersten späteren Eintrag DESSELBEN Tages.
+      // Gibt es den Tag noch gar nicht, kommt der Eintrag ans Ende — die
+      // Tagesreihenfolge selbst wird nie umsortiert, weil day die
+      // Chronologie führt und nicht die Uhrzeit.
+      const sameDay = all.map((e, i) => ({ e, i })).filter(x => x.e.day === d.day);
+      let insertAt = all.length;
+      if (sameDay.length > 0) {
+        const later = sameDay.find(x => timeToMinutes(x.e.time) > timeToMinutes(d.time));
+        insertAt = later ? later.i : sameDay[sameDay.length - 1].i + 1;
+      }
+
+      const created = await tx.scheduleEntry.create({
+        data: {
+          eventId,
+          day: d.day,
+          // dayLabel vom Tag übernehmen, damit die Dubletten-Erkennung beim
+          // späteren Re-Import diesen Eintrag genauso behandelt wie die anderen.
+          dayLabel: sameDay[0]?.e.dayLabel ?? null,
+          time: d.time,
+          ak: d.ak,
+          disciplineLabel: d.disciplineLabel,
+          phase: d.phase?.trim() ? d.phase.trim() : null,
+          type: d.type,
+          massStart: d.massStart,
+          order: 0,
+        } as any,
+      });
+
+      const ids = all.map(e => e.id);
+      ids.splice(insertAt, 0, created.id);
+      for (let i = 0; i < ids.length; i++) {
+        await tx.scheduleEntry.update({ where: { id: ids[i] }, data: { order: i } });
+      }
+    });
+
+    // Ein nachgetragenes Rennen kann sehr wohl schon ein Kommuniqué haben.
+    await autoMatch(eventId);
+    res.status(201).json(await withEstimates(await loadScheduleWithLinks(eventId)));
+  } catch (e) { next(e); }
+});
+
+// POST /api/schedule-entries/:id/move — einen Platz hoch/runter, nur innerhalb
+// des eigenen Tages. Getauscht werden ausschließlich die order-Werte der zwei
+// betroffenen Einträge; autoMatch läuft bewusst NICHT mit, weil die
+// Positions-Regel im Matching sonst bestehende Verknüpfungen still umhängen
+// würde — wer neu zuordnen will, drückt "Kommuniqués abgleichen".
+router.post('/schedule-entries/:id/move', requireAdmin, async (req, res, next) => {
+  try {
+    const parsed = z.object({ direction: z.enum(['up', 'down']) }).safeParse(req.body);
+    if (!parsed.success) { res.status(400).json(parsed.error.flatten()); return; }
+
+    const entry = await prisma.scheduleEntry.findUnique({ where: { id: req.params.id } });
+    if (!entry) { res.status(404).json({ error: 'Eintrag nicht gefunden' }); return; }
+
+    const siblings = await prisma.scheduleEntry.findMany({
+      where: { eventId: entry.eventId, day: entry.day },
+      orderBy: { order: 'asc' },
+      select: { id: true, order: true },
+    });
+    const idx = siblings.findIndex(s => s.id === entry.id);
+    const target = siblings[parsed.data.direction === 'up' ? idx - 1 : idx + 1];
+
+    // Am Rand des Tages passiert nichts — kein Fehler, damit ein Doppelklick
+    // auf den obersten Pfeil nicht als Störung erscheint.
+    if (target) {
+      await prisma.$transaction([
+        prisma.scheduleEntry.update({ where: { id: entry.id }, data: { order: target.order } }),
+        prisma.scheduleEntry.update({ where: { id: target.id }, data: { order: siblings[idx].order } }),
+      ]);
+    }
+
+    res.json(await withEstimates(await loadScheduleWithLinks(entry.eventId)));
+  } catch (e) { next(e); }
+});
+
+// DELETE /api/schedule-entries/:id — einzelnen Eintrag löschen. Hart, ohne
+// Soft-Delete: ein versehentlich importierter Eintrag soll spurlos weg sein.
+// Verknüpfte Live-Status und Status-Log verschwinden per Cascade mit.
+// order-Werte werden NICHT neu vergeben — eine Lücke stört die Sortierung
+// nicht, und weniger Schreibvorgänge heißt weniger, was schiefgehen kann.
+router.delete('/schedule-entries/:id', requireAdmin, async (req, res, next) => {
+  try {
+    const entry = await prisma.scheduleEntry.findUnique({
+      where: { id: req.params.id }, select: { id: true, eventId: true },
+    });
+    if (!entry) { res.status(404).json({ error: 'Eintrag nicht gefunden' }); return; }
+
+    await prisma.scheduleEntry.delete({ where: { id: entry.id } });
+    // Das freigewordene Kommuniqué darf sich einen neuen Eintrag suchen.
+    await autoMatch(entry.eventId);
+    res.json(await withEstimates(await loadScheduleWithLinks(entry.eventId)));
   } catch (e) { next(e); }
 });
 
