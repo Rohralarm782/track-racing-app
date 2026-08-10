@@ -52,6 +52,7 @@ router.get('/:id', async (req, res, next) => {
 const CreateEventSchema = z.object({
   name: z.string().min(1, 'Name ist erforderlich'),
   date: z.string().datetime().optional(),
+  location: z.string().optional(),
 });
 
 router.post('/', requireAdmin, async (req, res, next) => {
@@ -62,21 +63,31 @@ router.post('/', requireAdmin, async (req, res, next) => {
       data: {
         name: parsed.data.name,
         date: parsed.data.date ? new Date(parsed.data.date) : null,
+        location: parsed.data.location?.trim() || null,
       } as any,
     });
     res.status(201).json(event);
   } catch (e) { next(e); }
 });
 
-const UpdateEventSchema = CreateEventSchema.partial();
+// Beim Ändern sind date und location bewusst NULLBAR, nicht nur optional:
+// nur so lässt sich ein versehentlich gesetztes Datum wieder entfernen.
+// "Feld fehlt im Body" (undefined) heißt weiterhin "nicht anfassen" —
+// deshalb wird unten auf undefined geprüft und nicht auf Wahrheitswert.
+const UpdateEventSchema = z.object({
+  name: z.string().min(1, 'Name ist erforderlich').optional(),
+  date: z.string().datetime().nullable().optional(),
+  location: z.string().nullable().optional(),
+});
 
 router.patch('/:id', requireAdmin, async (req, res, next) => {
   try {
     const parsed = UpdateEventSchema.safeParse(req.body);
     if (!parsed.success) { res.status(400).json(parsed.error.flatten()); return; }
     const data: Record<string, unknown> = {};
-    if (parsed.data.name) data.name = parsed.data.name;
-    if (parsed.data.date) data.date = new Date(parsed.data.date);
+    if (parsed.data.name !== undefined) data.name = parsed.data.name.trim();
+    if (parsed.data.date !== undefined) data.date = parsed.data.date ? new Date(parsed.data.date) : null;
+    if (parsed.data.location !== undefined) data.location = parsed.data.location?.trim() || null;
     const event = await prisma.event.update({ where: { id: req.params.id }, data: data as any });
     res.json(event);
   } catch (e) { next(e); }
