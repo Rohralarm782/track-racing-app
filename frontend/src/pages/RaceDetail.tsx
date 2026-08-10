@@ -10,6 +10,8 @@
 //    handleAthletesChange, das die Sportlerauswahl ans Backend schreibt
 //  - VerfolgungsplanungView bekommt athleteMode/allAthletes/selectedAthletes/
 //    onAthletesChange statt onSave
+//  - zusätzlich raceId/runLabel/eventName, damit der Renntimer den gefahrenen
+//    Lauf als PursuitRun ins Sportlerprofil speichern kann
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, athletesApi, raceAthletesApi, type Athlete } from '../api/client';
@@ -497,6 +499,9 @@ export default function RaceDetail() {
           allAthletes={allAthletes}
           selectedAthletes={linkedAthletes}
           onAthletesChange={handleAthletesChange}
+          raceId={race.id}
+          runLabel={race.name}
+          eventName={category.event.name}
         />
       </div>
     );
