@@ -3,6 +3,7 @@
 //  - Race: distanceM, athletes hinzugefügt
 //  - neue Typen Athlete, AthleteRaceTime, AthleteDetail
 //  - neue athletesApi, raceAthletesApi
+//  - neue Typen PursuitRun/PursuitRunLap/PursuitTimeSource + pursuitRunsApi
 const API_URL = import.meta.env.VITE_API_URL ?? '';
 
 export function getToken(): string | null { return localStorage.getItem('admin_token'); }
@@ -69,7 +70,81 @@ export interface AthleteRaceTime {
 }
 
 export interface AthleteDetail extends Athlete {
+  /** Veraltet: RaceAthlete.timeMs wird nirgends geschrieben, die Liste ist
+   *  immer leer. Bleibt nur stehen, damit ältere Clients nicht brechen. */
   times: AthleteRaceTime[];
+  runs: PursuitRun[];
+}
+
+// ─── Gefahrene Verfolgungsläufe ─────────────────────────────────────────────
+
+/** halfMs ist die ERSTE Hälfte ab Rundenbeginn. Die zweite ist immer
+ *  lapMs − halfMs und wird nie gespeichert — korrigiert man die Rundenzeit,
+ *  wandert die Differenz automatisch in die zweite Hälfte. */
+export interface PursuitRunLap {
+  lapMs: number;
+  halfMs?: number | null;
+}
+
+export type PursuitTimeSource = 'TIMER' | 'KORRIGIERT' | 'OFFIZIELL' | 'MANUELL';
+
+export interface PursuitRun {
+  id: string;
+  raceId: string | null;
+  athleteIds: string[];
+  label: string;
+  eventName: string | null;
+
+  trackM: number;
+  numRounds: number;
+  distanceM: number | null;
+
+  laps: PursuitRunLap[];
+  totalMs: number | null;
+  officialTotalMs: number | null;
+  timeSource: PursuitTimeSource;
+  complete: boolean;
+  notes: string | null;
+
+  kb: number | null;
+  rz: number | null;
+  gears: Record<string, { kb: number; rz: number }> | null;
+  circMm: number;
+
+  /** null bei von Hand nachgetragenen Läufen — dann keine Δ-Spalten und kein
+   *  Streckendiagramm, nur die Rundentabelle. */
+  planAnfahrtSec: number | null;
+  planLapSec: number | null;
+  planTotalSec: number | null;
+
+  ridenAt: string;
+  editedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PursuitRunInput {
+  raceId?: string | null;
+  athleteIds: string[];
+  label: string;
+  eventName?: string | null;
+  trackM: number;
+  numRounds: number;
+  distanceM?: number | null;
+  laps: PursuitRunLap[];
+  totalMs?: number | null;
+  officialTotalMs?: number | null;
+  timeSource?: PursuitTimeSource;
+  complete?: boolean;
+  notes?: string | null;
+  kb?: number | null;
+  rz?: number | null;
+  gears?: Record<string, { kb: number; rz: number }> | null;
+  circMm?: number;
+  planAnfahrtSec?: number | null;
+  planLapSec?: number | null;
+  planTotalSec?: number | null;
+  ridenAt?: string;
 }
 
 export interface RaceAthleteLink {
@@ -409,6 +484,36 @@ export const athletesApi = {
   update: (id: string, data: Partial<{ vorname: string; nachname: string; ak: string | null; notes: string | null; kettenblaetter: number[]; ritzel: number[] }>) =>
     api.patch<Athlete>(`/api/athletes/${id}`, data),
   delete: (id: string) => api.delete<void>(`/api/athletes/${id}`),
+};
+
+export const pursuitRunsApi = {
+  list: (params: { athleteId?: string; raceId?: string } = {}) => {
+    const q = new URLSearchParams();
+    if (params.athleteId) q.set('athleteId', params.athleteId);
+    if (params.raceId)    q.set('raceId', params.raceId);
+    const qs = q.toString();
+    return api.get<PursuitRun[]>(`/api/pursuit-runs${qs ? `?${qs}` : ''}`);
+  },
+  create: (data: PursuitRunInput) => api.post<PursuitRun>('/api/pursuit-runs', data),
+  update: (id: string, data: Partial<{
+    label: string;
+    eventName: string | null;
+    trackM: number;
+    numRounds: number;
+    distanceM: number | null;
+    laps: PursuitRunLap[];
+    totalMs: number | null;
+    officialTotalMs: number | null;
+    timeSource: PursuitTimeSource;
+    complete: boolean;
+    notes: string | null;
+    kb: number | null;
+    rz: number | null;
+    gears: Record<string, { kb: number; rz: number }> | null;
+    circMm: number;
+    ridenAt: string;
+  }>) => api.patch<PursuitRun>(`/api/pursuit-runs/${id}`, data),
+  delete: (id: string) => api.delete<void>(`/api/pursuit-runs/${id}`),
 };
 
 export const raceAthletesApi = {
