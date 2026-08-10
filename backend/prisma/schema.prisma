@@ -137,6 +137,8 @@ model Race {
   order        Int             @default(0)
   finaleActive Boolean         @default(true)
   plannedSprints Int?          // aus Ansetzung erkannte Anzahl Wertungen — die letzte wird automatisch als Finale gewertet
+  isQualifying Boolean         @default(false)  // Vorlauf: es kommt nur ein Teil der Fahrer weiter
+  qualifyCount Int?            // wie viele weiterkommen; ohne Zahl wird keine Cut-Linie gezeichnet
   distanceM    Int?            // grobe Distanz in Metern (Verfolgungsrennen) — für Sportlerprofil-Anzeige, optional
   fuehrungsplan Json?          // neu: Führungsplan Mannschaftsverfolgung (Reihenfolge/Modi/Wechsel), nur Planung/Visualisierung
   createdAt    DateTime        @default(now())
