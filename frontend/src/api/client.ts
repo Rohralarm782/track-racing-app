@@ -185,6 +185,7 @@ export interface Event {
   id: string;
   name: string;
   date?: string | null;
+  location?: string | null;
   categories: Array<Category & { _count: { teams: number }; races: Race[] }>;
   races: Race[]; // neue, direkt am Event hängende Rennen ohne Kategorie
 }
@@ -466,6 +467,25 @@ export const scheduleApi = {
 
   setManualUnitCount: (entryId: string, manualUnitCount: number | null) =>
     api.patch<ScheduleEntry>(`/api/schedule-entries/${entryId}`, { manualUnitCount }),
+
+  // ── Bearbeiten-Modus ────────────────────────────────────────────────────
+  // Alle vier liefern die KOMPLETTE Liste zurück, nicht nur den geänderten
+  // Eintrag — Löschen und Einfügen verschieben ohnehin Reihenfolge und
+  // Zeitschätzungen der Nachbarn.
+  setTime: (entryId: string, time: string) =>
+    api.patch<ScheduleEntry>(`/api/schedule-entries/${entryId}`, { time }),
+
+  moveEntry: (entryId: string, direction: 'up' | 'down') =>
+    api.post<ScheduleEntry[]>(`/api/schedule-entries/${entryId}/move`, { direction }),
+
+  deleteEntry: (entryId: string) =>
+    api.delete<ScheduleEntry[]>(`/api/schedule-entries/${entryId}`),
+
+  addEntry: (eventId: string, entry: {
+    day: number; time: string; ak: string; disciplineLabel: string;
+    phase?: string | null; type: 'RACE' | 'CEREMONY' | 'INFO'; massStart: boolean;
+  }) =>
+    api.post<ScheduleEntry[]>(`/api/events/${eventId}/schedule/entries`, entry),
 
   getStatus: (eventId: string) =>
     api.get<EventStatus | null>(`/api/events/${eventId}/status`),
