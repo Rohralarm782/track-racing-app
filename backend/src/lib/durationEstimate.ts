@@ -171,33 +171,35 @@ export function usedFallback(
  * Blockdauer, und die fortlaufende Uhr im Frontend (computeEstimatedTimes)
  * stimmt Zeile für Zeile.
  *
- * Ehrungen mit einer vom Veranstalter geplanten Dauer (plannedDurationMin)
- * bleiben unangetastet: sie behalten ihren geplanten Wert und unterbrechen den
- * Formel-Lauf wie ein Nicht-Ehrungs-Eintrag (der nächste Auto-Ehrungs-Block
- * beginnt danach wieder mit der Basis).
+ * Die Blockrechnung hat bei Ehrungen bewusst VORRANG vor einer vom
+ * Veranstalter geplanten Dauer (plannedDurationMin). Grund: die Dauer-Spalte
+ * im Zeitplan-PDF weist jeder Ehrung einzeln ~5-6 Minuten zu und rechnet die
+ * gemeinsame Rüstzeit des Blocks damit gar nicht ein — genau das soll dieses
+ * Modell ersetzen. Solange die Ausnahme bestand, war die Blockrechnung bei
+ * jedem Zeitplan mit Dauer-Spalte wirkungslos (real aufgetreten, DM Büttgen).
+ * Für alle ANDEREN Eintragstypen bleibt plannedDurationMin unverändert
+ * vorrangig, siehe baseDurationMinutes().
  *
- * Gibt eine Map entryId → Minuten NUR für die blockweise verrechneten
- * (Auto-)Ehrungen zurück; alle anderen Einträge fehlen bewusst und behalten
- * ihre reguläre Schätzung.
+ * Gibt eine Map entryId → Minuten NUR für Ehrungen zurück; alle anderen
+ * Einträge fehlen bewusst und behalten ihre reguläre Schätzung.
  */
 export function ceremonyBlockMinutes(
-  entries: Array<{ id: string; type: string; day: number; plannedDurationMin: number | null }>,
+  entries: Array<{ id: string; type: string; day: number }>,
   settings: AppSettings,
 ): Map<string, number> {
   const out = new Map<string, number>();
   let runIndex = -1;               // Position im aktuellen Ehrungs-Lauf; -1 = kein Lauf aktiv
   let prevDay: number | null = null;
   for (const e of entries) {
-    const isAutoCeremony =
-      e.type === 'CEREMONY' && !(e.plannedDurationMin != null && e.plannedDurationMin > 0);
-    if (isAutoCeremony && prevDay === e.day && runIndex >= 0) {
+    const isCeremony = e.type === 'CEREMONY';
+    if (isCeremony && prevDay === e.day && runIndex >= 0) {
       runIndex += 1;               // Lauf läuft weiter → weitere Ehrung
-    } else if (isAutoCeremony) {
+    } else if (isCeremony) {
       runIndex = 0;                // neuer Lauf (Tageswechsel oder vorher unterbrochen)
     } else {
-      runIndex = -1;               // Rennen/Info/geplante Ehrung unterbricht den Lauf
+      runIndex = -1;               // Rennen/Info unterbricht den Lauf
     }
-    if (isAutoCeremony) {
+    if (isCeremony) {
       out.set(e.id, runIndex === 0 ? settings.ceremonyBaseMin : settings.ceremonyPerExtraMin);
     }
     prevDay = e.day;
