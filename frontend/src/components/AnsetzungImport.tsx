@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, type Event, type RaceType } from '../api/client';
+import { looksLikeQualifying } from '../lib/qualification';
 
 interface Props {
   eventId: string;
@@ -55,6 +56,11 @@ export default function AnsetzungImport({ eventId, event, initialBase64, suggest
   const [newAk, setNewAk] = useState(suggestedAk ?? '');
   const [newKind, setNewKind] = useState(RACE_KIND_OPTIONS[0].key);
   const [newRaceName, setNewRaceName] = useState('');
+  // Vorlauf-Qualifikation für neu angelegte Rennen. Der Haken folgt dem
+  // Rennnamen, bis er einmal von Hand angefasst wurde.
+  const [newQuali, setNewQuali] = useState(false);
+  const [newQualiTouched, setNewQualiTouched] = useState(false);
+  const [newQualiCount, setNewQualiCount] = useState('12');
 
   const [result, setResult] = useState<
     | { mode: 'legacy'; excluded: number; included: number; unmatched: number; pointsImported: number }
@@ -122,6 +128,11 @@ export default function AnsetzungImport({ eventId, event, initialBase64, suggest
           format: kind.format,
           name: newRaceName.trim(),
           order: (event.races ?? []).length,
+          isQualifying: kind.type === 'PUNKTEFAHREN' && newQuali,
+          qualifyCount: kind.type === 'PUNKTEFAHREN' && newQuali
+            && Number.isFinite(parseInt(newQualiCount, 10)) && parseInt(newQualiCount, 10) > 0
+            ? parseInt(newQualiCount, 10)
+            : null,
         });
         raceId = race.id;
       }
@@ -229,7 +240,10 @@ export default function AnsetzungImport({ eventId, event, initialBase64, suggest
                     onChange={e => {
                       setNewKind(e.target.value);
                       const kind = RACE_KIND_OPTIONS.find(k => k.key === e.target.value);
-                      if (kind) setNewRaceName(kind.label);
+                      if (kind) {
+                        setNewRaceName(kind.label);
+                        if (!newQualiTouched) setNewQuali(looksLikeQualifying(kind.label));
+                      }
                     }}
                   >
                     {RACE_KIND_OPTIONS.map(k => (
@@ -242,10 +256,30 @@ export default function AnsetzungImport({ eventId, event, initialBase64, suggest
                   <input
                     className="form-input"
                     value={newRaceName}
-                    onChange={e => setNewRaceName(e.target.value)}
+                    onChange={e => {
+                      setNewRaceName(e.target.value);
+                      if (!newQualiTouched) setNewQuali(looksLikeQualifying(e.target.value));
+                    }}
                     placeholder="z.B. Punktefahren Finale"
                   />
                 </div>
+                {RACE_KIND_OPTIONS.find(k => k.key === newKind)?.type === 'PUNKTEFAHREN' && (
+                  <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+                      <input type="checkbox" checked={newQuali}
+                        onChange={e => { setNewQuali(e.target.checked); setNewQualiTouched(true); }} />
+                      Vorlauf — nur ein Teil kommt weiter
+                    </label>
+                    {newQuali && (
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+                        Es kommen weiter
+                        <input className="form-input" type="number" min={1} style={{ width: 74 }}
+                          value={newQualiCount} onChange={e => setNewQualiCount(e.target.value)} />
+                        Fahrer
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
