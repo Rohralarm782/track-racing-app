@@ -1,3 +1,9 @@
+// Zielpfad im Repo: frontend/src/pages/EventDetail.tsx  (ERSETZT die bestehende Datei)
+//
+// Änderung: neue Stammdaten-Karte ganz oben im Einstellungen-Tab. Name, Datum
+// und Ort einer Veranstaltung lassen sich damit nachträglich ändern — bisher
+// gab es dafür überhaupt keinen Weg, Name und Datum wurden einmalig beim
+// Anlegen gesetzt und das Feld `location` wurde nirgends befüllt.
 import { useEffect, useState } from 'react';
 import { Link, useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, type Event } from '../api/client';
@@ -24,6 +30,23 @@ function formatDate(iso: string) {
   });
 }
 
+/** ISO-Zeitstempel → "YYYY-MM-DD" für <input type="date">. Bewusst über die
+ *  lokalen Getter statt toISOString(), sonst kippt ein Datum um Mitternacht
+ *  wegen der Zeitzone auf den Vortag. */
+function toDateInput(iso?: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+function formatDateShort(iso?: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? '' : d.toLocaleDateString('de-DE');
+}
+
 type LocalTab = 'uebersicht' | 'einstellungen';
 
 export default function EventDetail() {
@@ -48,6 +71,13 @@ export default function EventDetail() {
   const [saving, setSaving]           = useState(false);
   const [error, setError]             = useState('');
   const { isAdmin }                   = useAdmin();
+  // Stammdaten (Name/Datum/Ort) — eigener Fehler-State, damit ein Tippfehler
+  // hier nicht die Fehlermeldung des Kategorie-Formulars überschreibt.
+  const [editStamm, setEditStamm]     = useState(false);
+  const [stammName, setStammName]     = useState('');
+  const [stammDate, setStammDate]     = useState('');
+  const [stammLoc, setStammLoc]       = useState('');
+  const [stammErr, setStammErr]       = useState('');
 
   function load() {
     if (!id) return;
@@ -56,6 +86,37 @@ export default function EventDetail() {
   }
 
   useEffect(load, [id]);
+
+  function startEditStamm() {
+    if (!event) return;
+    setStammName(event.name);
+    setStammDate(toDateInput(event.date));
+    setStammLoc(event.location ?? '');
+    setStammErr('');
+    setEditStamm(true);
+  }
+
+  async function saveStamm() {
+    if (!id) return;
+    const name = stammName.trim();
+    if (!name) { setStammErr('Name darf nicht leer sein.'); return; }
+    setSaving(true); setStammErr('');
+    try {
+      // Leeres Datum/Ort werden als null geschickt, nicht weggelassen — nur so
+      // lässt sich eine falsche Angabe auch wieder entfernen.
+      const updated = await api.patch<Event>(`/api/events/${id}`, {
+        name,
+        date: stammDate ? new Date(`${stammDate}T12:00:00`).toISOString() : null,
+        location: stammLoc.trim() || null,
+      });
+      // Der PATCH liefert nur die Event-Grunddaten zurück (ohne Kategorien),
+      // deshalb gezielt zusammenführen statt komplett ersetzen.
+      setEvent(prev => prev ? { ...prev, name: updated.name, date: updated.date, location: updated.location } : prev);
+      setEditStamm(false);
+    } catch (e: any) {
+      setStammErr(e?.message ?? 'Speichern fehlgeschlagen');
+    } finally { setSaving(false); }
+  }
 
   async function createCategory() {
     if (!catName || !id) return;
@@ -156,7 +217,7 @@ export default function EventDetail() {
         <div>
           <h1>{event.name}</h1>
           <p className="text-sm text-muted" style={{ margin: '2px 0 0' }}>
-            {event.date ? formatDate(event.date) : ''}
+            {[event.date ? formatDate(event.date) : '', event.location ?? ''].filter(Boolean).join(' · ')}
           </p>
         </div>
         {id && (
@@ -249,6 +310,65 @@ export default function EventDetail() {
             <div className="empty"><p>Einstellungen sind nur für Admins sichtbar.</p></div>
           ) : (
             <>
+              {/* ── Stammdaten ─────────────────────────────────────────── */}
+              {!editStamm ? (
+                <div className="card mb-3">
+                  <div className="flex-between" style={{ gap: 8 }}>
+                    <div style={{ minWidth: 0 }}>
+                      <p className="text-xs text-muted" style={{ fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 5 }}>
+                        Veranstaltung
+                      </p>
+                      <div style={{ fontWeight: 600, fontSize: 14.5 }}>{event.name}</div>
+                      <div className="text-xs text-muted" style={{ marginTop: 2 }}>
+                        {[formatDateShort(event.date), event.location ?? ''].filter(Boolean).join(' · ') || 'Kein Datum, kein Ort'}
+                      </div>
+                    </div>
+                    <button className="btn btn-ghost btn-sm" title="Veranstaltung bearbeiten" onClick={startEditStamm}>
+                      ✏️
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="card mb-3" style={{ borderColor: '#bfdbfe', background: '#f0f7ff' }}>
+                  <p className="text-xs text-muted" style={{ fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 9 }}>
+                    Veranstaltung bearbeiten
+                  </p>
+                  {stammErr && <div className="alert alert-error" style={{ marginBottom: 9 }}>{stammErr}</div>}
+                  <div className="form-group">
+                    <label className="form-label">Name</label>
+                    <input
+                      className="form-input"
+                      value={stammName}
+                      autoFocus
+                      onChange={e => setStammName(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') saveStamm(); if (e.key === 'Escape') setEditStamm(false); }}
+                    />
+                  </div>
+                  <div className="grid-2">
+                    <div className="form-group" style={{ margin: 0 }}>
+                      <label className="form-label">Datum</label>
+                      <input className="form-input" type="date" value={stammDate} onChange={e => setStammDate(e.target.value)} />
+                    </div>
+                    <div className="form-group" style={{ margin: 0 }}>
+                      <label className="form-label">Ort</label>
+                      <input
+                        className="form-input"
+                        value={stammLoc}
+                        placeholder="z.B. Büttgen"
+                        onChange={e => setStammLoc(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') saveStamm(); if (e.key === 'Escape') setEditStamm(false); }}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex-between mt-3">
+                    <button className="btn btn-ghost btn-sm" onClick={() => setEditStamm(false)}>Abbrechen</button>
+                    <button className="btn btn-primary btn-sm" onClick={saveStamm} disabled={saving || !stammName.trim()}>
+                      {saving ? 'Speichert…' : 'Speichern'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {id && <CommuniqueSourceSettings eventId={id} />}
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 20 }}>
