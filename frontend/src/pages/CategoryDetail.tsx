@@ -9,6 +9,7 @@ import { api, type Category, type Team } from '../api/client';
 import { useAdmin } from '../components/Layout';
 import TeamBulkEntry, { type DetectedScore } from '../components/TeamBulkEntry';
 import MadisonTeamBuilder from '../components/MadisonTeamBuilder';
+import { looksLikeQualifying } from '../lib/qualification';
 
 const RACE_TYPE_OPTIONS = [
   { value: 'PUNKTEFAHREN',      label: 'Punktefahren / Madison' },
@@ -39,6 +40,11 @@ export default function CategoryDetail() {
   const [raceType, setRaceType]       = useState<string>('PUNKTEFAHREN');
   const [raceFormat, setRaceFormat]   = useState<string>('INDIVIDUAL');
   const [savingRace, setSavingRace]   = useState(false);
+  // Vorlauf-Qualifikation: Haken wird aus dem Rennnamen vorbelegt, sobald der
+  // Name getippt wird — bleibt aber jederzeit von Hand änderbar.
+  const [raceQuali, setRaceQuali]         = useState(false);
+  const [raceQualiTouched, setRaceQualiTouched] = useState(false);
+  const [raceQualiCount, setRaceQualiCount]     = useState('12');
   const [raceError, setRaceError]     = useState('');
   const { isAdmin }                   = useAdmin();
 
@@ -159,9 +165,13 @@ export default function CategoryDetail() {
     if (!raceName || !id) return;
     setSavingRace(true); setRaceError('');
     try {
+      const qn = parseInt(raceQualiCount, 10);
+      const isQuali = raceType === 'PUNKTEFAHREN' && raceQuali;
       const race = await api.post<{ id: string }>('/api/races', {
         categoryId: id, type: raceType, name: raceName, format: raceFormat,
         order: (category?.races?.length ?? 0),
+        isQualifying: isQuali,
+        qualifyCount: isQuali && Number.isFinite(qn) && qn > 0 ? qn : null,
       });
       navigate(`/races/${race.id}`);
     } catch (e: any) { setRaceError(e.message ?? 'Fehler'); setSavingRace(false); }
@@ -421,7 +431,11 @@ export default function CategoryDetail() {
                 <div className="form-group" style={{ margin: 0 }}>
                   <label className="form-label">Name</label>
                   <input className="form-input" type="text" value={raceName}
-                    onChange={e => setRaceName(e.target.value)} placeholder="z.B. Punktefahren 1"
+                    onChange={e => {
+                      setRaceName(e.target.value);
+                      if (!raceQualiTouched) setRaceQuali(looksLikeQualifying(e.target.value));
+                    }}
+                    placeholder="z.B. Punktefahren 1"
                     onKeyDown={e => e.key === 'Enter' && createRace()} autoFocus />
                 </div>
                 <div className="form-group" style={{ margin: 0 }}>
@@ -438,6 +452,23 @@ export default function CategoryDetail() {
                   </select>
                 </div>
               </div>
+              {raceType === 'PUNKTEFAHREN' && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginTop: 12 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={raceQuali}
+                      onChange={e => { setRaceQuali(e.target.checked); setRaceQualiTouched(true); }} />
+                    Vorlauf — nur ein Teil kommt weiter
+                  </label>
+                  {raceQuali && (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+                      Es kommen weiter
+                      <input className="form-input" type="number" min={1} style={{ width: 74 }}
+                        value={raceQualiCount} onChange={e => setRaceQualiCount(e.target.value)} />
+                      Fahrer
+                    </span>
+                  )}
+                </div>
+              )}
               <div className="flex-between mt-3">
                 <button className="btn btn-ghost btn-sm" onClick={() => { setShowNewRace(false); setRaceError(''); }}>Abbrechen</button>
                 <button className="btn btn-primary" onClick={createRace} disabled={savingRace || !raceName}>
