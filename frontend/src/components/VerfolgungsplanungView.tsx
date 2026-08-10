@@ -25,9 +25,12 @@
 //    schreibt das über raceFuehrungsplanApi ans Backend). Auf der
 //    eigenständigen /pursuit-Seite bleibt es mangels Rennen weiterhin
 //    rein lokal (Props einfach nicht übergeben).
+//  - Renntimer kann den gefahrenen Lauf als PursuitRun speichern: neue Props
+//    raceId/runLabel/eventName/onRunSaved. Ohne diese Props (z.B. auf der
+//    eigenständigen /pursuit-Seite) bleibt der Timer wie bisher rein flüchtig.
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { Athlete, FuehrungsplanData } from '../api/client';
-import { athleteShortName, athleteFullName } from '../api/client';
+import type { Athlete, FuehrungsplanData, PursuitRunLap } from '../api/client';
+import { athleteShortName, athleteFullName, pursuitRunsApi } from '../api/client';
 import FitText from './FitText';
 import { readDisplaySettings, pursuitDisplayStyle } from './pursuitDisplay';
 
@@ -46,6 +49,25 @@ export interface PlanSaveData {
   athleteMode: 'einzel' | 'mannschaft' | null;
   athleteIds: string[];
   fuehrungsplan: FuehrungsplanData | null;
+}
+
+/** Alles, was der Renntimer braucht, um einen gefahrenen Lauf zu speichern.
+ *  Wird aus Plan, Gang und Sportlerauswahl zusammengesetzt und nur dann
+ *  gebaut, wenn ein Rennen bekannt ist. */
+export interface RunSaveContext {
+  raceId: string;
+  label: string;
+  eventName: string | null;
+  athleteIds: string[];
+  trackM: number;
+  numRounds: number;
+  planAnfahrtSec: number;
+  planLapSec: number;
+  planTotalSec: number;
+  kb: number | null;
+  rz: number | null;
+  gears: Record<string, { kb: number; rz: number }> | null;
+  onSaved?: () => void;
 }
 
 interface Props {
@@ -75,6 +97,15 @@ interface Props {
   /** Wird ~600ms nach der letzten Änderung am Führungsplan aufgerufen (intern
    *  bereits debounced) — Aufrufer muss nicht selbst debouncen. */
   onFuehrungsplanChange?: (data: FuehrungsplanData) => void;
+  /** Rennen, zu dem gefahrene Läufe gespeichert werden. Fehlt die Prop, zeigt
+   *  der Timer keinen Speichern-Knopf. */
+  raceId?: string;
+  /** Langform-Name des Rennens für den gespeicherten Lauf. Bewusst getrennt
+   *  von planLabel im Timer, das nur der Kurzname für die Anzeige ist. */
+  runLabel?: string;
+  eventName?: string | null;
+  /** Nach erfolgreichem Speichern eines Laufs (z.B. um Listen neu zu laden). */
+  onRunSaved?: () => void;
 }
 
 // ── Konstanten ─────────────────────────────────────────────────────────────────
@@ -206,6 +237,7 @@ export default function VerfolgungsplanungView({
   teams = [], isAdmin = false, onSave, initialPlan,
   athleteMode, allAthletes = [], selectedAthletes = [], onAthletesChange,
   fuehrungsplan, onFuehrungsplanChange,
+  raceId, runLabel, eventName, onRunSaved,
 }: Props) {
   const [tab, setTab] = useState<'rechner' | 'timer'>('rechner');
   const [trackM, setTrackM]     = useState(() => initialPlan?.trackM ?? 250);
@@ -447,6 +479,30 @@ export default function VerfolgungsplanungView({
     : athleteMode === 'mannschaft'
       ? (selectedAthletes.length > 0 ? selectedAthletes.map(a => athleteShortName(a)).join(' & ') : 'Verfolgungsrennen')
       : 'Verfolgungsrennen';
+
+  // Speicher-Kontext für den Renntimer. Nur wenn ein Rennen bekannt ist und ein
+  // Plan gerechnet wurde — ohne Plan gibt es auch keinen Timer.
+  const runSave: RunSaveContext | undefined = raceId && calc ? {
+    raceId,
+    label: runLabel ?? timerLabel,
+    eventName: eventName ?? null,
+    athleteIds: athleteMode === 'einzel'
+      ? (einzelAthlete ? [einzelAthlete.id] : [])
+      : selectedAthletes.map(a => a.id),
+    trackM,
+    numRounds,
+    planAnfahrtSec: calc.anfahrt,
+    planLapSec: calc.lapSec,
+    planTotalSec: calc.totalSec,
+    kb: athleteMode === 'mannschaft' ? null : (selectedGear?.kb ?? null),
+    rz: athleteMode === 'mannschaft' ? null : (selectedGear?.rz ?? null),
+    gears: athleteMode === 'mannschaft'
+      ? Object.fromEntries(
+          Object.entries(riderGears).filter(([, g]) => !!g) as [string, { kb: number; rz: number }][]
+        )
+      : null,
+    onSaved: onRunSaved,
+  } : undefined;
 
   async function handleSave() {
     if (!calc || !onSave) return;
@@ -941,6 +997,7 @@ export default function VerfolgungsplanungView({
             lapSec={calc.lapSec}
             numRounds={numRounds}
             planLabel={timerLabel}
+            save={runSave}
             onBack={() => setTab('rechner')}
           />
         ) : (
@@ -971,8 +1028,9 @@ function MaterialBtn({ label, active, onClick }: { label: string; active: boolea
 // aus den Zeitstempeln retroperspektiv berechnet — kein durchlaufender Countdown.
 // Nach jedem Tap wechselt die Anzeige für DISPLAY_SEC Sekunden auf eine
 // Vollbild-Athletenanzeige mit riesiger Rundenzeit.
-function RenntimerView({ anfahrtSec, lapSec, numRounds, planLabel, onBack }: {
-  anfahrtSec: number; lapSec: number; numRounds: number; planLabel: string; onBack: () => void;
+function RenntimerView({ anfahrtSec, lapSec, numRounds, planLabel, save, onBack }: {
+  anfahrtSec: number; lapSec: number; numRounds: number; planLabel: string;
+  save?: RunSaveContext; onBack: () => void;
 }) {
   const [screen, setScreen]   = useState<'race' | 'display'>('race');
   const [events, setEvents]   = useState<TEvent[]>([]);
@@ -981,6 +1039,9 @@ function RenntimerView({ anfahrtSec, lapSec, numRounds, planLabel, onBack }: {
   const [countdown, setCountdown]   = useState(0);
   const [finished, setFinished]     = useState(false);
   const [btnArmed, setBtnArmed]     = useState(false); // Finger liegt auf Button
+  const [savingRun, setSavingRun]   = useState(false);
+  const [savedRun, setSavedRun]     = useState(false);
+  const [saveErr, setSaveErr]       = useState('');
 
   // ── Anzeige-Einstellungen (global) ───────────────────────────────────────
   // Zentral unter Einstellungen → Renntimer-Anzeige gesetzt, hier nur gelesen.
@@ -1101,6 +1162,58 @@ function RenntimerView({ anfahrtSec, lapSec, numRounds, planLabel, onBack }: {
     nextIsHalfRef.current = false; setNextIsHalf(false);
     setFinished(false);
     setScreen('race');
+    setSavedRun(false);
+    setSaveErr('');
+  }
+
+  /** Getippte Zeitstempel in die gespeicherte Rundenliste übersetzen. halfMs
+   *  ist die erste Hälfte ab Rundenbeginn; die zweite ergibt sich immer als
+   *  lapMs − halfMs und wird deshalb nicht mitgeschrieben. */
+  function buildLaps(): PursuitRunLap[] {
+    const evs = eventsRef.current;
+    const start = evs.find(e => e.type === 'start');
+    if (!start) return [];
+    const laps  = evs.filter(e => e.type === 'lap');
+    const halfs = evs.filter(e => e.type === 'half');
+    return laps.map((lap, i) => {
+      const prevTs = i > 0 ? laps[i - 1].ts : start.ts;
+      const h = halfs.find(x => x.ts > prevTs && x.ts < lap.ts);
+      return {
+        lapMs: Math.round(lap.ts - prevTs),
+        halfMs: h ? Math.round(h.ts - prevTs) : null,
+      };
+    });
+  }
+
+  async function saveRun() {
+    if (!save || savingRun) return;
+    const laps = buildLaps();
+    if (laps.length === 0) { setSaveErr('Noch keine Runde getippt.'); return; }
+    setSavingRun(true); setSaveErr('');
+    try {
+      await pursuitRunsApi.create({
+        raceId: save.raceId,
+        athleteIds: save.athleteIds,
+        label: save.label,
+        eventName: save.eventName,
+        trackM: save.trackM,
+        numRounds: save.numRounds,
+        laps,
+        totalMs: laps.reduce((a, l) => a + l.lapMs, 0),
+        timeSource: 'TIMER',
+        complete: laps.length >= save.numRounds,
+        kb: save.kb,
+        rz: save.rz,
+        gears: save.gears && Object.keys(save.gears).length > 0 ? save.gears : null,
+        planAnfahrtSec: save.planAnfahrtSec,
+        planLapSec: save.planLapSec,
+        planTotalSec: save.planTotalSec,
+      });
+      setSavedRun(true);
+      save.onSaved?.();
+    } catch (e: any) {
+      setSaveErr(e?.message ?? 'Speichern fehlgeschlagen');
+    } finally { setSavingRun(false); }
   }
 
   function doExport() {
@@ -1203,10 +1316,23 @@ function RenntimerView({ anfahrtSec, lapSec, numRounds, planLabel, onBack }: {
               {finStyle.label} vs Plan ({fmtTime(anfahrtSec + lapSec * (numRounds - 1))})
             </div>
           )}
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+          {saveErr && <div className="alert alert-error" style={{ marginBottom: 12 }}>{saveErr}</div>}
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+            {save && (
+              <button className="btn btn-primary" onClick={saveRun} disabled={savingRun || savedRun}>
+                {savedRun ? '✓ Im Sportlerprofil gespeichert' : savingRun ? '…' : '💾 Lauf speichern'}
+              </button>
+            )}
             <button className="btn btn-secondary" onClick={doExport}>CSV exportieren</button>
             <button className="btn btn-ghost" onClick={resetTimer}>▶ Nochmal</button>
           </div>
+          {save && !savedRun && (
+            <p className="text-xs text-muted" style={{ marginTop: 10, marginBottom: 0 }}>
+              Speichert Rundenzeiten, Halbrunden, Gang und den Plan im Profil der
+              zugeordneten Sportler. Ohne Zuordnung wird der Lauf zwar gespeichert,
+              taucht aber in keinem Profil auf.
+            </p>
+          )}
         </div>
       )}
 
@@ -1306,6 +1432,18 @@ function RenntimerView({ anfahrtSec, lapSec, numRounds, planLabel, onBack }: {
               Reset
             </button>
           </div>
+
+          {/* Abbruch speichern: ein abgebrochener Lauf ist als Trainingsdatum
+              trotzdem wertvoll, wird aber als unvollständig markiert. */}
+          {save && lapCount > 0 && (
+            <div style={{ marginBottom: 14 }}>
+              {saveErr && <div className="alert alert-error" style={{ marginBottom: 8 }}>{saveErr}</div>}
+              <button className="btn btn-secondary btn-sm" style={{ width: '100%' }}
+                onClick={saveRun} disabled={savingRun || savedRun}>
+                {savedRun ? '✓ Gespeichert' : savingRun ? '…' : `💾 Abgebrochenen Lauf speichern (${lapCount} Rd.)`}
+              </button>
+            </div>
+          )}
 
           {/* Verlauf */}
           {lapHistory.length > 0 && (
