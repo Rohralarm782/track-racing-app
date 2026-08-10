@@ -184,8 +184,9 @@ export default function TimeEstimateSettings() {
         <p className="text-sm" style={{ fontWeight: 600, marginBottom: 4 }}>Siegerehrungen</p>
         <p className="text-xs text-muted" style={{ marginBottom: 10 }}>
           Mehrere direkt aufeinander folgende Ehrungen werden als Block gerechnet:
-          Basis + Zuschlag je weiterer Ehrung. Einzelehrung → Basis. Eine im Zeitplan
-          geplante Dauer hat weiterhin Vorrang.
+          Basis + Zuschlag je weiterer Ehrung. Einzelehrung → Basis. Diese Rechnung
+          hat Vorrang vor einer im Zeitplan-PDF angegebenen Dauer, da die dort
+          genannten Minuten je Ehrung die gemeinsame Rüstzeit nicht abbilden.
         </p>
         <div className="grid-2" style={{ gap: 10 }}>
           <NumField label="Basis pro Block" value={settings.ceremonyBaseMin} step={1} suffix="Min." onChange={v => patch({ ceremonyBaseMin: v })} />
