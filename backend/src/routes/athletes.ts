@@ -2,6 +2,11 @@
 // Änderungen ggü. Original:
 //  - Athlete.name aufgeteilt in vorname/nachname (siehe schema.prisma) —
 //    AthleteSchema, Sortierung und Suche entsprechend angepasst
+//  - GET /:id liefert zusätzlich `runs` (model PursuitRun). `times` bleibt im
+//    Response, obwohl die Karte im Profil ersetzt wird: RaceAthlete.timeMs wird
+//    nirgends geschrieben, das Feld ist also immer leer, und es stehen zu
+//    lassen kostet nichts, verhindert aber einen Absturz des alten Frontends
+//    im Fenster zwischen Backend- und Frontend-Commit.
 import { Router } from 'express';
 import { z } from 'zod';
 import prisma from '../prisma';
@@ -48,7 +53,14 @@ router.get('/:id', async (req, res, next) => {
       timeMs: l.timeMs as number,
     }));
 
-    res.json({ ...athlete, times });
+    // Mannschaftsläufe erscheinen im Profil jedes beteiligten Fahrers, deshalb
+    // `has` auf der ID-Liste statt einer Relation.
+    const runs = await prisma.pursuitRun.findMany({
+      where: { athleteIds: { has: athlete.id } },
+      orderBy: [{ ridenAt: 'desc' }, { createdAt: 'desc' }],
+    });
+
+    res.json({ ...athlete, times, runs });
   } catch (e) { next(e); }
 });
 
