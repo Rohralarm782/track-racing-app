@@ -312,6 +312,12 @@ model PursuitRun {
   numRounds Int
   distanceM Int?                   // nur Anzeige; default trackM * numRounds
 
+  // Ort der Fahrt. Frei getippt, keine eigene Bahn-Tabelle: es gibt nichts zu
+  // pflegen, und die Vorschlagsliste im Formular speist sich aus den bereits
+  // eingetragenen Namen aller Läufe.
+  trackName    String?             // z.B. "Cottbus"
+  trackSurface String?             // HOLZ | BETON
+
   // laps: PursuitRunLap[] = [{ lapMs: number, halfMs: number | null }, …]
   // halfMs ist die ERSTE Hälfte ab Rundenbeginn; die zweite ist immer
   // lapMs − halfMs und wird nie gespeichert.

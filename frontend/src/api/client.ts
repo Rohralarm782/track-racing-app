@@ -88,6 +88,19 @@ export interface PursuitRunLap {
 
 export type PursuitTimeSource = 'TIMER' | 'KORRIGIERT' | 'OFFIZIELL' | 'MANUELL';
 
+/** Belag der Bahn. Bewusst nur die beiden Beläge, auf denen wirklich gefahren
+ *  wird — Asphalt kommt bei uns nicht vor. */
+export type PursuitTrackSurface = 'HOLZ' | 'BETON';
+
+/** Bereits verwendete Bahn über ALLE Läufe hinweg (GET /api/pursuit-runs/tracks).
+ *  Speist die Vorschlagsliste im Formular; `surface` ist der zuletzt für diese
+ *  Bahn eingetragene Untergrund. */
+export interface PursuitTrackSuggestion {
+  name: string;
+  surface: PursuitTrackSurface | null;
+  count: number;
+}
+
 export interface PursuitRun {
   id: string;
   raceId: string | null;
@@ -98,6 +111,8 @@ export interface PursuitRun {
   trackM: number;
   numRounds: number;
   distanceM: number | null;
+  trackName: string | null;
+  trackSurface: PursuitTrackSurface | null;
 
   laps: PursuitRunLap[];
   totalMs: number | null;
@@ -131,6 +146,8 @@ export interface PursuitRunInput {
   trackM: number;
   numRounds: number;
   distanceM?: number | null;
+  trackName?: string | null;
+  trackSurface?: PursuitTrackSurface | null;
   laps: PursuitRunLap[];
   totalMs?: number | null;
   officialTotalMs?: number | null;
@@ -515,12 +532,16 @@ export const pursuitRunsApi = {
     return api.get<PursuitRun[]>(`/api/pursuit-runs${qs ? `?${qs}` : ''}`);
   },
   create: (data: PursuitRunInput) => api.post<PursuitRun>('/api/pursuit-runs', data),
+  /** Bereits eingetragene Bahnen aller Sportler, für die Vorschlagsliste. */
+  tracks: () => api.get<PursuitTrackSuggestion[]>('/api/pursuit-runs/tracks'),
   update: (id: string, data: Partial<{
     label: string;
     eventName: string | null;
     trackM: number;
     numRounds: number;
     distanceM: number | null;
+    trackName: string | null;
+    trackSurface: PursuitTrackSurface | null;
     laps: PursuitRunLap[];
     totalMs: number | null;
     officialTotalMs: number | null;

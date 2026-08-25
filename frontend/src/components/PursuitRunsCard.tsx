@@ -15,13 +15,20 @@
 //  - Ein von Hand nachgetragener Lauf hat keinen Plan (plan* = null), also
 //    keine Δ-Spalte und kein Streckendiagramm — auch dann nicht, wenn später
 //    Rundenzeiten ergänzt werden.
-import { useMemo, useState } from 'react';
+//  - Die Bahn ist frei getippter Text. Die Vorschlagsliste kommt aus den
+//    bereits eingetragenen Bahnen ALLER Läufe (GET /api/pursuit-runs/tracks),
+//    nicht aus einer gepflegten Bahnliste: eine gepflegte Liste veraltet und
+//    schiebt falsche Längen unter. Passt der getippte Name auf eine bekannte
+//    Bahn, wird der Untergrund vorbelegt — überschreibbar.
+import { useEffect, useMemo, useState } from 'react';
 import {
   pursuitRunsApi,
   type Athlete,
   type PursuitRun,
   type PursuitRunLap,
   type PursuitTimeSource,
+  type PursuitTrackSurface,
+  type PursuitTrackSuggestion,
 } from '../api/client';
 
 interface Props {
@@ -40,6 +47,11 @@ const TRACK_OPTIONS = [
   { v: 333.33, l: '333,33 m' },
   { v: 400, l: '400 m' },
 ];
+
+const SURFACE_LABEL: Record<PursuitTrackSurface, string> = {
+  HOLZ: 'Holz',
+  BETON: 'Beton',
+};
 
 const SOURCE_LABEL: Record<PursuitTimeSource, string> = {
   TIMER: 'Renntimer',
@@ -273,6 +285,8 @@ interface FormState {
   label: string;
   eventName: string;
   trackM: number;
+  trackName: string;
+  trackSurface: PursuitTrackSurface | '';
   numRounds: number;
   totalStr: string;
   timeSource: PursuitTimeSource;
@@ -289,6 +303,8 @@ function emptyForm(athlete: Athlete): FormState {
     label: '',
     eventName: '',
     trackM: 250,
+    trackName: '',
+    trackSurface: '',
     numRounds: 12,
     totalStr: '',
     timeSource: 'MANUELL',
@@ -306,6 +322,8 @@ function formFromRun(run: PursuitRun): FormState {
     label: run.label,
     eventName: run.eventName ?? '',
     trackM: run.trackM,
+    trackName: run.trackName ?? '',
+    trackSurface: run.trackSurface ?? '',
     numRounds: run.numRounds,
     totalStr: shownTotal(run) !== null ? fmtMs(shownTotal(run)!) : '',
     timeSource: run.timeSource,
@@ -319,10 +337,12 @@ function formFromRun(run: PursuitRun): FormState {
   };
 }
 
-function RunForm({ form, setForm, athlete, onSave, onCancel, saving, isNew }: {
+function RunForm({ form, setForm, athlete, tracks, onSave, onCancel, saving, isNew }: {
   form: FormState;
   setForm: (f: FormState) => void;
   athlete: Athlete;
+  /** Bereits verwendete Bahnen aller Sportler. */
+  tracks: PursuitTrackSuggestion[];
   onSave: () => void;
   onCancel: () => void;
   saving: boolean;
@@ -330,6 +350,19 @@ function RunForm({ form, setForm, athlete, onSave, onCancel, saving, isNew }: {
 }) {
   const [showLaps, setShowLaps] = useState(!isNew);
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) => setForm({ ...form, [k]: v });
+
+  /** Bahnname ändern. Trifft der Name eine bekannte Bahn, wird deren
+   *  Untergrund übernommen — einmal „Cottbus = Holz“ eintragen reicht dann für
+   *  alle künftigen Läufe. Ein bereits gesetzter Untergrund bleibt stehen,
+   *  wenn die bekannte Bahn selbst keinen hinterlegt hat. */
+  function setTrackName(name: string) {
+    const hit = tracks.find(t => t.name.trim().toLowerCase() === name.trim().toLowerCase());
+    setForm({
+      ...form,
+      trackName: name,
+      trackSurface: hit?.surface ?? form.trackSurface,
+    });
+  }
 
   function setRounds(n: number) {
     const grow = <T,>(arr: T[], fill: T) =>
@@ -360,9 +393,31 @@ function RunForm({ form, setForm, athlete, onSave, onCancel, saving, isNew }: {
             onChange={e => set('eventName', e.target.value)} />
         </div>
         <div>
+          <label className="form-label text-xs">Bahn (optional)</label>
+          <input className="form-input" list="pursuit-track-opts" value={form.trackName}
+            placeholder="z.B. Cottbus" maxLength={80}
+            onChange={e => setTrackName(e.target.value)} />
+          <datalist id="pursuit-track-opts">
+            {tracks.map(t => (
+              <option key={t.name} value={t.name}>
+                {t.surface ? SURFACE_LABEL[t.surface] : ''}
+              </option>
+            ))}
+          </datalist>
+        </div>
+        <div>
           <label className="form-label text-xs">Bahnlänge</label>
           <select className="form-select" value={form.trackM} onChange={e => set('trackM', +e.target.value)}>
             {TRACK_OPTIONS.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="form-label text-xs">Untergrund</label>
+          <select className="form-select" value={form.trackSurface}
+            onChange={e => set('trackSurface', e.target.value as PursuitTrackSurface | '')}>
+            <option value="">— keine Angabe —</option>
+            {(Object.keys(SURFACE_LABEL) as PursuitTrackSurface[]).map(k =>
+              <option key={k} value={k}>{SURFACE_LABEL[k]}</option>)}
           </select>
         </div>
         <div>
@@ -468,6 +523,20 @@ export default function PursuitRunsCard({ athleteId, athlete, runs, isAdmin, onC
   const [form, setForm] = useState<FormState>(() => emptyForm(athlete));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [tracks, setTracks] = useState<PursuitTrackSuggestion[]>([]);
+
+  // Bahnvorschläge über alle Sportler hinweg. Nach jedem Speichern lädt das
+  // Profil neu und `runs` wechselt die Referenz — dann wird auch die Liste neu
+  // geholt, damit eine gerade erst eingetippte Bahn sofort vorgeschlagen wird.
+  // Schlägt der Abruf fehl, bleibt die Liste leer: das Feld ist trotzdem
+  // benutzbar, nur ohne Vorschläge.
+  useEffect(() => {
+    let alive = true;
+    pursuitRunsApi.tracks()
+      .then(t => { if (alive) setTracks(t); })
+      .catch(() => { /* Vorschläge sind Komfort, kein Muss */ });
+    return () => { alive = false; };
+  }, [runs]);
 
   function toggle(id: string) {
     setExpanded(prev => {
@@ -500,6 +569,8 @@ export default function PursuitRunsCard({ athleteId, athlete, runs, isAdmin, onC
         label: form.label.trim(),
         eventName: form.eventName.trim() || null,
         trackM: form.trackM,
+        trackName: form.trackName.trim() || null,
+        trackSurface: form.trackSurface || null,
         numRounds: form.numRounds,
         laps,
         totalMs: total ?? (laps.length > 0 ? lapSum(laps) : null),
@@ -529,6 +600,8 @@ export default function PursuitRunsCard({ athleteId, athlete, runs, isAdmin, onC
         label: form.label.trim(),
         eventName: form.eventName.trim() || null,
         trackM: form.trackM,
+        trackName: form.trackName.trim() || null,
+        trackSurface: form.trackSurface || null,
         numRounds: form.numRounds,
         laps,
         totalMs: isTimerSource ? (laps.length > 0 ? lapSum(laps) : total) : (run.totalMs ?? (laps.length > 0 ? lapSum(laps) : null)),
@@ -565,7 +638,7 @@ export default function PursuitRunsCard({ athleteId, athlete, runs, isAdmin, onC
       {error && <div className="alert alert-error mb-3">{error}</div>}
 
       {adding && (
-        <RunForm form={form} setForm={setForm} athlete={athlete} isNew
+        <RunForm form={form} setForm={setForm} athlete={athlete} tracks={tracks} isNew
           saving={saving} onSave={saveNew} onCancel={() => setAdding(false)} />
       )}
 
@@ -600,6 +673,11 @@ export default function PursuitRunsCard({ athleteId, athlete, runs, isAdmin, onC
                 <div className="text-xs text-muted">
                   {fmtDate(run.ridenAt)}
                   {run.eventName && <> · {run.eventName}</>}
+                  {run.trackName && (
+                    <> · {run.trackName}
+                      {run.trackSurface && <> ({SURFACE_LABEL[run.trackSurface]})</>}
+                    </>
+                  )}
                   {' · '}{run.distanceM ?? Math.round(run.trackM * run.numRounds)} m
                   {run.kb && run.rz && <> · {run.kb}/{run.rz}</>}
                   {avgTf && <> · ⌀ {avgTf.toFixed(0)} U/min</>}
@@ -652,7 +730,7 @@ export default function PursuitRunsCard({ athleteId, athlete, runs, isAdmin, onC
             )}
 
             {editing && (
-              <RunForm form={form} setForm={setForm} athlete={athlete} isNew={false}
+              <RunForm form={form} setForm={setForm} athlete={athlete} tracks={tracks} isNew={false}
                 saving={saving} onSave={() => saveEdit(run)} onCancel={() => setEditingId(null)} />
             )}
           </div>
