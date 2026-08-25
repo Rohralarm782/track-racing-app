@@ -19,5 +19,6 @@ Beim Erhöhen der Version immer beides ändern:
 
 | Version | Datum | Inhalt |
 |---|---|---|
+| [1.2.0](1.2.0.md) | 25.08.2026 | Gefahrene Zeiten als Training oder Wettkampf kennzeichnen |
 | [1.1.0](1.1.0.md) | 25.08.2026 | Bahn und Untergrund (Holz/Beton) bei gefahrenen Zeiten, mit Vorschlagsliste aus allen Läufen |
 | [1.0.0](1.0.0.md) | 25.08.2026 | Renntimer zusammengeführt; gefahrene Läufe werden auch ohne Rennen im Sportlerprofil gespeichert |

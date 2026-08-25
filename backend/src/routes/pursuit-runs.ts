@@ -23,6 +23,7 @@ const router = Router();
 
 const TIME_SOURCES = ['TIMER', 'KORRIGIERT', 'OFFIZIELL', 'MANUELL'] as const;
 const SURFACES = ['HOLZ', 'BETON'] as const;
+const RUN_KINDS = ['TRAINING', 'WETTKAMPF'] as const;
 
 const LapSchema = z.object({
   lapMs: z.number().int().nonnegative(),
@@ -42,6 +43,7 @@ const RunSchema = z.object({
   distanceM: z.number().int().positive().nullable().optional(),
   trackName: z.string().max(80).nullable().optional(),
   trackSurface: z.enum(SURFACES).nullable().optional(),
+  runKind: z.enum(RUN_KINDS).nullable().optional(),
 
   laps: z.array(LapSchema).default([]),
   totalMs: z.number().int().nonnegative().nullable().optional(),
@@ -73,6 +75,7 @@ const RunPatchSchema = z.object({
   distanceM: z.number().int().positive().nullable().optional(),
   trackName: z.string().max(80).nullable().optional(),
   trackSurface: z.enum(SURFACES).nullable().optional(),
+  runKind: z.enum(RUN_KINDS).nullable().optional(),
   laps: z.array(LapSchema).optional(),
   totalMs: z.number().int().nonnegative().nullable().optional(),
   officialTotalMs: z.number().int().nonnegative().nullable().optional(),
@@ -161,6 +164,10 @@ router.post('/', requireAdmin, async (req, res, next) => {
         distanceM: d.distanceM ?? Math.round(d.trackM * d.numRounds),
         trackName: d.trackName?.trim() || null,
         trackSurface: d.trackSurface ?? null,
+        // Keine Vorbelegung aus raceId hier: das Frontend entscheidet und
+        // schickt den Wert mit. Serverseitig zu raten hieße, die Vermutung
+        // ununterscheidbar neben echte Angaben zu schreiben.
+        runKind: d.runKind ?? null,
         laps: d.laps,
         totalMs: d.totalMs ?? null,
         officialTotalMs: d.officialTotalMs ?? null,
@@ -191,7 +198,7 @@ router.patch('/:id', requireAdmin, async (req, res, next) => {
     for (const key of ['label', 'trackM', 'numRounds', 'timeSource', 'complete', 'circMm'] as const) {
       if (d[key] !== undefined) data[key] = d[key];
     }
-    for (const key of ['eventName', 'distanceM', 'totalMs', 'officialTotalMs', 'notes', 'kb', 'rz', 'trackSurface'] as const) {
+    for (const key of ['eventName', 'distanceM', 'totalMs', 'officialTotalMs', 'notes', 'kb', 'rz', 'trackSurface', 'runKind'] as const) {
       if (d[key] !== undefined) data[key] = d[key];
     }
     if (d.trackName !== undefined) data.trackName = d.trackName?.trim() || null;

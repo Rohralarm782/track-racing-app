@@ -29,6 +29,7 @@ import {
   type PursuitTimeSource,
   type PursuitTrackSurface,
   type PursuitTrackSuggestion,
+  type PursuitRunKind,
 } from '../api/client';
 
 interface Props {
@@ -52,6 +53,20 @@ const SURFACE_LABEL: Record<PursuitTrackSurface, string> = {
   HOLZ: 'Holz',
   BETON: 'Beton',
 };
+
+const KIND_LABEL: Record<PursuitRunKind, string> = {
+  TRAINING: 'Training',
+  WETTKAMPF: 'Wettkampf',
+};
+
+/** Läufe von vor 1.2.0 haben kein runKind. Statt die Lücke per Migration zu
+ *  raten, wird sie hier bei der Anzeige geschlossen: hängt der Lauf an einem
+ *  Rennen, war es ein Wettkampf, sonst Training. Die Vermutung bleibt in der
+ *  Anzeige und wandert nicht in die Datenbank — sonst wäre sie später nicht
+ *  mehr von einer echten Angabe zu unterscheiden. */
+function effectiveKind(run: PursuitRun): PursuitRunKind {
+  return run.runKind ?? (run.raceId ? 'WETTKAMPF' : 'TRAINING');
+}
 
 const SOURCE_LABEL: Record<PursuitTimeSource, string> = {
   TIMER: 'Renntimer',
@@ -285,6 +300,7 @@ interface FormState {
   label: string;
   eventName: string;
   trackM: number;
+  runKind: PursuitRunKind;
   trackName: string;
   trackSurface: PursuitTrackSurface | '';
   numRounds: number;
@@ -303,6 +319,9 @@ function emptyForm(athlete: Athlete): FormState {
     label: '',
     eventName: '',
     trackM: 250,
+    // Von Hand aus dem Sportlerprofil angelegt heißt fast immer: eine ältere
+    // Trainingszeit nachtragen. Wettkampfläufe kommen über den Renntimer.
+    runKind: 'TRAINING',
     trackName: '',
     trackSurface: '',
     numRounds: 12,
@@ -322,6 +341,7 @@ function formFromRun(run: PursuitRun): FormState {
     label: run.label,
     eventName: run.eventName ?? '',
     trackM: run.trackM,
+    runKind: effectiveKind(run),
     trackName: run.trackName ?? '',
     trackSurface: run.trackSurface ?? '',
     numRounds: run.numRounds,
@@ -376,6 +396,20 @@ function RunForm({ form, setForm, athlete, tracks, onSave, onCancel, saving, isN
 
   return (
     <div style={{ borderTop: '1px solid var(--c-border)', paddingTop: 12, marginTop: 10 }}>
+      <div style={{ marginBottom: 10 }}>
+        <label className="form-label text-xs">Art</label>
+        <div style={{ display: 'flex', gap: 6 }}>
+          {(Object.keys(KIND_LABEL) as PursuitRunKind[]).map(k => (
+            <button key={k} type="button"
+              className={`btn btn-sm ${form.runKind === k ? 'btn-primary' : 'btn-secondary'}`}
+              style={{ flex: 1 }}
+              onClick={() => set('runKind', k)}>
+              {KIND_LABEL[k]}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <div className="grid-2" style={{ gap: 10, marginBottom: 10 }}>
         <div>
           <label className="form-label text-xs">Datum</label>
@@ -569,6 +603,7 @@ export default function PursuitRunsCard({ athleteId, athlete, runs, isAdmin, onC
         label: form.label.trim(),
         eventName: form.eventName.trim() || null,
         trackM: form.trackM,
+        runKind: form.runKind,
         trackName: form.trackName.trim() || null,
         trackSurface: form.trackSurface || null,
         numRounds: form.numRounds,
@@ -600,6 +635,7 @@ export default function PursuitRunsCard({ athleteId, athlete, runs, isAdmin, onC
         label: form.label.trim(),
         eventName: form.eventName.trim() || null,
         trackM: form.trackM,
+        runKind: form.runKind,
         trackName: form.trackName.trim() || null,
         trackSurface: form.trackSurface || null,
         numRounds: form.numRounds,
@@ -667,6 +703,9 @@ export default function PursuitRunsCard({ athleteId, athlete, runs, isAdmin, onC
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontWeight: 600 }}>
                   {run.label}
+                  {effectiveKind(run) === 'TRAINING' && (
+                    <span className="badge badge-gray" style={{ marginLeft: 6 }}>Training</span>
+                  )}
                   {!run.complete && <span className="badge badge-orange" style={{ marginLeft: 6 }}>unvollständig</span>}
                   {run.athleteIds.length > 1 && <span className="badge badge-blue" style={{ marginLeft: 6 }}>Mannschaft</span>}
                 </div>

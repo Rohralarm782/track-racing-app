@@ -92,6 +92,11 @@ export type PursuitTimeSource = 'TIMER' | 'KORRIGIERT' | 'OFFIZIELL' | 'MANUELL'
  *  wird — Asphalt kommt bei uns nicht vor. */
 export type PursuitTrackSurface = 'HOLZ' | 'BETON';
 
+/** Wofür der Lauf gefahren wurde. Eine Trainingszeit entsteht ohne richtiges
+ *  Warmfahren und ohne Konkurrenz — ohne die Kennzeichnung ist der Vergleich
+ *  zweier Zeilen wertlos. `null` bei Läufen aus der Zeit vor 1.2.0. */
+export type PursuitRunKind = 'TRAINING' | 'WETTKAMPF';
+
 /** Bereits verwendete Bahn über ALLE Läufe hinweg (GET /api/pursuit-runs/tracks).
  *  Speist die Vorschlagsliste im Formular; `surface` ist der zuletzt für diese
  *  Bahn eingetragene Untergrund. */
@@ -113,6 +118,7 @@ export interface PursuitRun {
   distanceM: number | null;
   trackName: string | null;
   trackSurface: PursuitTrackSurface | null;
+  runKind: PursuitRunKind | null;
 
   laps: PursuitRunLap[];
   totalMs: number | null;
@@ -148,6 +154,7 @@ export interface PursuitRunInput {
   distanceM?: number | null;
   trackName?: string | null;
   trackSurface?: PursuitTrackSurface | null;
+  runKind?: PursuitRunKind | null;
   laps: PursuitRunLap[];
   totalMs?: number | null;
   officialTotalMs?: number | null;
@@ -542,6 +549,7 @@ export const pursuitRunsApi = {
     distanceM: number | null;
     trackName: string | null;
     trackSurface: PursuitTrackSurface | null;
+    runKind: PursuitRunKind | null;
     laps: PursuitRunLap[];
     totalMs: number | null;
     officialTotalMs: number | null;

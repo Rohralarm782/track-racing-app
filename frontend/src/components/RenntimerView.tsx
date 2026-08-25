@@ -241,6 +241,11 @@ export default function RenntimerView({
         eventName: save.eventName,
         trackM: save.trackM,
         numRounds: save.numRounds,
+        // Hängt der Lauf an einem Rennen, ist es ein Wettkampf; ein
+        // freistehender Plan (/pursuit) ist Training. Trackside soll dafür
+        // niemand einen Schalter suchen müssen — korrigierbar bleibt es über
+        // „Bearbeiten“ im Sportlerprofil.
+        runKind: save.raceId ? 'WETTKAMPF' : 'TRAINING',
         laps,
         totalMs: laps.reduce((a, l) => a + l.lapMs, 0),
         timeSource: 'TIMER',

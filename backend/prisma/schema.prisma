@@ -318,6 +318,11 @@ model PursuitRun {
   trackName    String?             // z.B. "Cottbus"
   trackSurface String?             // HOLZ | BETON
 
+  // TRAINING | WETTKAMPF. Bewusst nullable: Läufe aus der Zeit vor 1.2.0
+  // bleiben leer und werden NICHT nachträglich geraten — die Anzeige leitet
+  // dort aus raceId ab, ohne die Vermutung in die Datenbank zu schreiben.
+  runKind String?
+
   // laps: PursuitRunLap[] = [{ lapMs: number, halfMs: number | null }, …]
   // halfMs ist die ERSTE Hälfte ab Rundenbeginn; die zweite ist immer
   // lapMs − halfMs und wird nie gespeichert.
