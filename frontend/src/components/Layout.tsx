@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useState } from 'react';
 import { Link, Outlet, useNavigate } from 'react-router-dom';
 import { api, clearToken, getToken, setToken } from '../api/client';
 import KioskShell from './KioskShell';
+import { APP_VERSION } from '../version';
 
 // ─── Build-Stand ──────────────────────────────────────────────────────────────
 // __BUILD_TIME__ wird von Vite beim Bauen als ISO-String eingesetzt (siehe
@@ -204,13 +205,15 @@ export default function Layout() {
       </main>
 
       {/* Versions-Stand, dezent unter allem. Im Kiosk-Modus ausgeblendet —
-          auf der Hallenanzeige hat Technisches nichts zu suchen. */}
-      {!kioskEventId && stamp && (
+          auf der Hallenanzeige hat Technisches nichts zu suchen.
+          Versionsnummer = was drin ist, Zeitstempel = wann dieses Gerät geladen
+          hat. Beim Abgleich zweier Geräte braucht man beides. */}
+      {!kioskEventId && (
         <div style={{
           textAlign: 'center', fontSize: 10.5, color: '#9ca3af',
           padding: '14px 12px 22px',
         }}>
-          Stand {stamp}
+          v{APP_VERSION}{stamp ? ` · Stand ${stamp}` : ''}
         </div>
       )}
     </KioskContext.Provider>

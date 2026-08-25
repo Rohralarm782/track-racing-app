@@ -1,10 +1,21 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+// Zielpfad im Repo: frontend/src/pages/PursuitPage.tsx  (ERSETZT die bestehende Datei)
+//
+// Änderungen in 1.0.0:
+//  - Der seiteneigene Renntimer ist ersatzlos entfernt. Er war eine zweite Kopie
+//    des Timers aus VerfolgungsplanungView, nur ohne Speicherpfad — deshalb
+//    landeten hier gestoppte Läufe nie im Sportlerprofil, obwohl der CSV-Export
+//    funktionierte. Beide Wege benutzen jetzt components/RenntimerView.tsx.
+//  - Wird ein Plan mit zugeordneten Sportlern gestartet, bekommt der Timer einen
+//    Speicher-Kontext (raceId = null, der Lauf hängt allein am Sportler).
+//  - fmtSec/diffStyle/TOLERANCE/DISPLAY_SEC/TEvent liegen jetzt in
+//    components/pursuitFormat.ts; die lokalen Duplikate sind weg.
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, athletesApi, athleteShortName, type Athlete, type FuehrungsplanData } from '../api/client';
 import { useAdmin } from '../components/Layout';
-import VerfolgungsplanungView, { PlanSaveData, fmtTime } from '../components/VerfolgungsplanungView';
-import FitText from '../components/FitText';
-import { readDisplaySettings, pursuitDisplayStyle } from '../components/pursuitDisplay';
+import VerfolgungsplanungView, { PlanSaveData } from '../components/VerfolgungsplanungView';
+import RenntimerView, { type RunSaveContext } from '../components/RenntimerView';
+import { fmtTime } from '../components/pursuitFormat';
 
 // ── Typen ──────────────────────────────────────────────────────────────────────
 interface SavedPlan {
@@ -17,34 +28,12 @@ interface SavedPlan {
   createdAt: string;
 }
 
-interface TEvent { ts: number; type: 'start' | 'lap' | 'half'; }
-
 // ── Konstanten ─────────────────────────────────────────────────────────────────
-const WHEEL       = 2.096;  // m Radumfang
-const TOLERANCE   = 0.2;    // s Toleranz für Farbwechsel
-const DISPLAY_SEC = 8;      // s Athletenanzeige
+/** Rundenzahl für "Ohne Plan starten" — ohne Plan gibt es nichts, woraus sich
+ *  eine Distanz ableiten ließe; 12 Runden auf 250m sind der Normalfall (3000m). */
+const NO_PLAN_ROUNDS = 12;
 
 // ── Hilfsfunktionen ────────────────────────────────────────────────────────────
-function fmtSec(s: number): string {
-  if (isNaN(s) || s < 0) return '–';
-  const m = Math.floor(s / 60);
-  const sec = s - m * 60;
-  const ss = sec.toFixed(2).padStart(5, '0');
-  return m > 0 ? `${m}:${ss}` : `${sec.toFixed(2)}s`;
-}
-
-function parseSec(v: string): number {
-  const m = v.trim().match(/^(\d+):(\d+\.?\d*)$/);
-  return m ? parseInt(m[1]) * 60 + parseFloat(m[2]) : parseFloat(v);
-}
-
-function diffStyle(diff: number | null): { border: string; text: string; label: string } {
-  if (diff === null) return { border: 'var(--c-border)', text: 'var(--c-text-muted)', label: '–' };
-  if (diff >  TOLERANCE) return { border: 'var(--c-success)', text: 'var(--c-success)', label: `▲ +${diff.toFixed(2)}s` };
-  if (diff < -TOLERANCE) return { border: 'var(--c-danger)',  text: 'var(--c-danger)',  label: `▼ ${diff.toFixed(2)}s`  };
-  return { border: 'var(--c-primary)', text: 'var(--c-primary)', label: `= ${diff >= 0 ? '+' : ''}${diff.toFixed(2)}s` };
-}
-
 const planName = (p: SavedPlan | null) => p?.notes ?? 'Verfolgungsrennen';
 
 const DEFAULT_CIRC_MM = 2100;
@@ -71,7 +60,7 @@ function fmtLaps(n: number): string {
   return whole > 0 ? `${whole}${fracStr}` : fracStr;
 }
 
-type View = 'plans' | 'race' | 'display';
+type View = 'plans' | 'timer';
 
 // ── Hauptkomponente ────────────────────────────────────────────────────────────
 export default function PursuitPage() {
@@ -138,9 +127,10 @@ export default function PursuitPage() {
 
   // ── Sportlerauswahl (Einzel/Mannschaft) ───────────────────────────────────
   // Rein lokal — die eigenständige /pursuit-Seite hängt an keinem Rennen, es
-  // gibt also nichts, woran die Auswahl im Backend hängen könnte. Dient nur
-  // der Gang-Vorauswahl aus dem Sportlerprofil (wie im Renndetail) und wird
-  // beim Speichern als Teil von PlanSaveData mitgesichert.
+  // gibt also nichts, woran die Auswahl im Backend hängen könnte. Dient der
+  // Gang-Vorauswahl aus dem Sportlerprofil (wie im Renndetail), wird beim
+  // Speichern als Teil von PlanSaveData mitgesichert und liefert dem Timer die
+  // Sportler, unter deren Profil ein gefahrener Lauf abgelegt wird.
   const [allAthletes, setAllAthletes] = useState<Athlete[]>([]);
   useEffect(() => { athletesApi.list().then(setAllAthletes).catch(() => {}); }, []);
   const [pursuitMode, setPursuitMode]         = useState<'einzel' | 'mannschaft'>('einzel');
@@ -153,398 +143,86 @@ export default function PursuitPage() {
     setSelectedAthletes(allAthletes.filter(a => ids.includes(a.id)));
   }
 
-  // ── Timer – State ──────────────────────────────────────────────────────────
-  const [activePlan, setActivePlan]   = useState<SavedPlan | null>(null);
-  const [timerLaps, setTimerLaps]     = useState(12);
-  const [events, setEvents]           = useState<TEvent[]>([]);
-  const [autoAlt, setAutoAlt]         = useState(false);
-  const [nextIsHalf, setNextIsHalf]   = useState(false);
-  const [countdown, setCountdown]     = useState(0);
-  const [finished, setFinished]       = useState(false);
-  const [btnArmed, setBtnArmed]       = useState(false); // Finger liegt auf Button
-
-  // Refs für stabile Callbacks
-  const eventsRef     = useRef<TEvent[]>([]);
-  const autoAltRef    = useRef(false);
-  const nextIsHalfRef = useRef(false);
-  const timerLapsRef  = useRef(12);
-  const activePlanRef = useRef<SavedPlan | null>(null);
-  const dispTimer     = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const cdInterval    = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  function syncEvs(evs: TEvent[]) { eventsRef.current = evs; setEvents(evs); }
-  function setAuto(v: boolean)    { autoAltRef.current    = v; setAutoAlt(v); }
-  function setNxtH(v: boolean)    { nextIsHalfRef.current = v; setNextIsHalf(v); }
-
-  // ── Timer – Berechnete Werte ───────────────────────────────────────────────
-  const lapEvs   = events.filter(e => e.type === 'lap');
-  const startEvt = events.find(e => e.type === 'start');
-  const lapCount = lapEvs.length;
-
-  const lastLapT = lapCount > 0
-    ? (lapEvs[lapCount-1].ts - (lapCount > 1 ? lapEvs[lapCount-2].ts : (startEvt?.ts ?? 0))) / 1000
-    : null;
-  const totalT = lapCount > 0 && startEvt
-    ? (lapEvs[lapCount-1].ts - startEvt.ts) / 1000 : null;
-
-  const planLapT = activePlan && lapCount > 0
-    ? (lapCount === 1 ? activePlan.anfahrtSec : activePlan.lapSec) : null;
-  const planCumT = activePlan && lapCount > 0
-    ? activePlan.anfahrtSec + activePlan.lapSec * (lapCount - 1) : null;
-  const delta = planLapT !== null && lastLapT !== null ? planLapT - lastLapT : null;
-  const style = diffStyle(delta);
-
-  // ── Timer – Verlauf ────────────────────────────────────────────────────────
-  const lapHistory = useMemo(() => {
-    const start = events.find(e => e.type === 'start');
-    const laps  = events.filter(e => e.type === 'lap');
-    const halfs = events.filter(e => e.type === 'half');
-    if (!start || laps.length === 0) return [];
-    return [...laps].reverse().slice(0, 6).map((lap, ri) => {
-      const i = laps.length - 1 - ri;
-      const prevTs = i > 0 ? laps[i-1].ts : start.ts;
-      const lt = (lap.ts - prevTs) / 1000;
-      const pLt = activePlan ? (i === 0 ? activePlan.anfahrtSec : activePlan.lapSec) : null;
-      const diff = pLt !== null ? pLt - lt : null;
-      const hBetween = halfs.filter(h => h.ts > prevTs && h.ts < lap.ts);
-      const half = hBetween.length > 0
-        ? { h1: (hBetween[0].ts - prevTs) / 1000, h2: (lap.ts - hBetween[0].ts) / 1000 }
-        : null;
-      return { lapNum: i + 1, lt, diff, half };
-    });
-  }, [events, activePlan]);
-
-  // ── Timer – Aktionen ───────────────────────────────────────────────────────
-  function mainTap() {
-    if (finished) return;
-    if (eventsRef.current.length === 0) {
-      syncEvs([{ ts: performance.now(), type: 'start' }]);
-      if (autoAltRef.current) setNxtH(true);
-      return;
-    }
-    if (autoAltRef.current) {
-      const wasHalf = nextIsHalfRef.current;
-      setNxtH(!wasHalf);
-      wasHalf ? recHalf() : recLap();
-    } else {
-      recLap();
-    }
-  }
-
-  function recLap() {
-    const ev: TEvent = { ts: performance.now(), type: 'lap' };
-    const newEvs = [...eventsRef.current, ev];
-    eventsRef.current = newEvs;
-    const done = newEvs.filter(e => e.type === 'lap').length;
-    setEvents(newEvs);
-    if (done >= timerLapsRef.current) { setFinished(true); return; }
-    // Zur Athletenanzeige wechseln
-    clearTimeout(dispTimer.current!);
-    clearInterval(cdInterval.current!);
-    setView('display');
-    setCountdown(DISPLAY_SEC);
-    let rem = DISPLAY_SEC;
-    cdInterval.current = setInterval(() => { rem--; setCountdown(rem); if (rem <= 0) clearInterval(cdInterval.current!); }, 1000);
-    dispTimer.current = setTimeout(() => setView('race'), DISPLAY_SEC * 1000);
-  }
-
-  function recHalf() {
-    const newEvs = [...eventsRef.current, { ts: performance.now(), type: 'half' as const }];
-    eventsRef.current = newEvs;
-    setEvents(newEvs);
-  }
-
-  function manualHalf() {
-    if (eventsRef.current.length === 0 || finished) return;
-    recHalf();
-  }
-
-  function undoLast() {
-    if (eventsRef.current.length <= 1) return;
-    const last = eventsRef.current[eventsRef.current.length - 1];
-    const newEvs = eventsRef.current.slice(0, -1);
-    if (autoAltRef.current && (last.type === 'lap' || last.type === 'half'))
-      setNxtH(!nextIsHalfRef.current);
-    syncEvs(newEvs);
-  }
-
-  function togAuto() {
-    const v = !autoAltRef.current;
-    setAuto(v);
-    if (v) setNxtH(true);
-  }
-
-  function resetTimer() {
-    clearTimeout(dispTimer.current!);
-    clearInterval(cdInterval.current!);
-    eventsRef.current = []; setEvents([]);
-    autoAltRef.current = false; setAutoAlt(false);
-    nextIsHalfRef.current = false; setNextIsHalf(false);
-    setFinished(false);
-  }
+  // ── Timer ──────────────────────────────────────────────────────────────────
+  // Die gesamte Timer-Logik steckt in RenntimerView. Hier wird nur noch
+  // festgelegt, MIT WELCHEM Plan gestartet wird und WOHIN der Lauf gespeichert
+  // werden darf.
+  const [activePlan, setActivePlan] = useState<SavedPlan | null>(null);
 
   function startWith(plan: SavedPlan | null) {
-    activePlanRef.current = plan;
     setActivePlan(plan);
-    const n = plan?.numRounds ?? timerLaps;
-    timerLapsRef.current = n;
-    setTimerLaps(n);
-    resetTimer();
-    setView('race');
+    setView('timer');
   }
 
-  function doExport() {
-    const start = eventsRef.current.find(e => e.type === 'start');
-    if (!start) return;
-    const laps  = eventsRef.current.filter(e => e.type === 'lap');
-    const halfs = eventsRef.current.filter(e => e.type === 'half');
-    const p = activePlanRef.current;
-    // Wanduhrzeit des Starts aus dem performance.now()-Offset rekonstruieren
-    const startedAt = new Date(Date.now() - (performance.now() - start.ts));
-    const pad = (n: number) => String(n).padStart(2, '0');
-    const dateStr = `${pad(startedAt.getDate())}.${pad(startedAt.getMonth() + 1)}.${startedAt.getFullYear()}`;
-    const timeStr = `${pad(startedAt.getHours())}:${pad(startedAt.getMinutes())}:${pad(startedAt.getSeconds())}`;
-    const fileDate = `${startedAt.getFullYear()}-${pad(startedAt.getMonth() + 1)}-${pad(startedAt.getDate())}`;
-    const rows = [
-      `Datum;${dateStr}`,
-      `Startzeit;${timeStr}`,
-      '',
-      'Runde;Zeit (s);Halbrunde 1 (s);Halbrunde 2 (s);Kumuliert (s);Plan (s);Differenz (s)',
-    ];
-    laps.forEach((lap, i) => {
-      const prevTs = i > 0 ? laps[i-1].ts : start.ts;
-      const lt  = ((lap.ts - prevTs) / 1000).toFixed(3);
-      const cum = ((lap.ts - start.ts) / 1000).toFixed(3);
-      const pLt = p ? (i === 0 ? p.anfahrtSec : p.lapSec).toFixed(3) : '';
-      const df  = p && pLt ? ((i === 0 ? p.anfahrtSec : p.lapSec) - parseFloat(lt)).toFixed(3) : '';
-      const hEvs = halfs.filter(h => h.ts > prevTs && h.ts < lap.ts);
-      const h1 = hEvs.length > 0 ? ((hEvs[0].ts - prevTs) / 1000).toFixed(3) : '';
-      const h2 = hEvs.length > 0 ? ((lap.ts - hEvs[0].ts) / 1000).toFixed(3) : '';
-      rows.push(`${i+1};${lt};${h1};${h2};${cum};${pLt};${df}`);
-    });
-    const a = document.createElement('a');
-    a.href = `data:text/csv;charset=utf-8,\uFEFF${encodeURIComponent(rows.join('\n'))}`;
-    a.download = `verfolgung_${fileDate}_${(planName(activePlanRef.current)).replace(/\s/g, '_')}.csv`;
-    a.click();
+  function endTimer() {
+    setActivePlan(null);
+    setView('plans');
   }
 
-  // ════════════════════════════════════════════════════════════════════════════
-  // VIEW: ATHLETENANZEIGE
-  // ════════════════════════════════════════════════════════════════════════════
-  if (view === 'display') {
-    // Zentrale Anzeige-Logik (Einstellungen → Renntimer-Anzeige), geräteweit.
-    const dcfg = readDisplaySettings();
-    const ds = pursuitDisplayStyle(delta, dcfg);
-    const lapText   = lastLapT !== null ? `${lastLapT.toFixed(2)}s` : '–';
-    const deltaText = delta !== null ? `${delta > 0 ? '+' : ''}${delta.toFixed(2)}s` : '–';
-    const bigText   = dcfg.num === 'delta' ? deltaText : lapText;
-    const subText   = dcfg.num === 'delta' ? lapText   : deltaText;
+  /** Anzeigename im Timer: Sportler bzw. Team, sonst der Planname. Kurzform,
+   *  weil das während des Rennens auf einen Blick lesbar sein muss. */
+  function timerLabelFor(plan: SavedPlan | null): string {
+    if (!plan) return 'Verfolgungsrennen';
+    const names = plan.athleteIds
+      .map(id => allAthletes.find(a => a.id === id))
+      .filter((a): a is Athlete => !!a)
+      .map(a => athleteShortName(a));
+    return names.length > 0 ? names.join(' & ') : planName(plan);
+  }
 
-    return (
-      <div style={{
-        position: 'fixed', inset: 0, zIndex: 50,
-        background: ds.containerBg,
-        border: ds.containerBorder,
-        display: 'flex', flexDirection: 'column',
-        alignItems: 'center', justifyContent: 'center',
-        textAlign: 'center',
-        transition: 'background-color 0.25s, border-color 0.25s',
-      }}>
-        <div style={{ marginBottom: 8, fontSize: 14, color: ds.metaColor }}>
-          {planName(activePlan)} · Runde {lapCount} / {timerLaps}
-        </div>
-        <div style={{ width: '100%', padding: '0 2cm', boxSizing: 'border-box' }}>
-          <FitText text={bigText} color={ds.bigColor} />
-        </div>
-        <div style={{ fontSize: 'clamp(16px, 3.5vw, 6vh)', fontWeight: 500, marginTop: 8, color: ds.subColor }}>
-          {subText}
-        </div>
-        {countdown > 0 && (
-          <div style={{ marginTop: 20, fontSize: 12, color: ds.metaColor }}>
-            Zurück in {countdown}s
-          </div>
-        )}
-        <button
-          className="btn btn-ghost btn-sm"
-          style={{ position: 'absolute', bottom: 24, color: ds.metaColor }}
-          onClick={() => { clearTimeout(dispTimer.current!); clearInterval(cdInterval.current!); setView('race'); }}
-        >
-          ← Trainer
-        </button>
-      </div>
-    );
+  /** Speicher-Kontext für den Timer. Ohne zugeordnete Sportler gibt es keinen —
+   *  ein Lauf ohne Rennen UND ohne Sportler wäre hinterher nirgends auffindbar.
+   *  Der Timer weist in dem Fall sichtbar darauf hin. */
+  function saveContextFor(plan: SavedPlan | null): RunSaveContext | null {
+    if (!plan || plan.athleteIds.length === 0) return null;
+    const isTeam = plan.athleteMode === 'mannschaft';
+    const riderGears = plan.fuehrungsplan?.riderGears ?? null;
+    return {
+      raceId: null,
+      label: planName(plan),
+      eventName: null,
+      athleteIds: plan.athleteIds,
+      trackM: plan.trackM,
+      numRounds: plan.numRounds,
+      planAnfahrtSec: plan.anfahrtSec,
+      planLapSec: plan.lapSec,
+      planTotalSec: plan.totalSec,
+      kb: isTeam ? null : plan.selectedKb,
+      rz: isTeam ? null : plan.selectedRz,
+      gears: isTeam && riderGears
+        ? Object.fromEntries(
+            Object.entries(riderGears).filter(([, g]) => !!g) as [string, { kb: number; rz: number }][]
+          )
+        : null,
+    };
   }
 
   // ════════════════════════════════════════════════════════════════════════════
-  // VIEW: RENNTIMER (Trainer)
+  // VIEW: RENNTIMER
   // ════════════════════════════════════════════════════════════════════════════
-  if (view === 'race') {
-    const mainLabel = events.length === 0
-      ? 'RUNDE ⏱ (Start)'
-      : autoAlt ? (nextIsHalf ? '½ RUNDE →' : 'RUNDE ⏱') : 'RUNDE ⏱';
-
-    const finDiff = activePlan && totalT !== null
-      ? (activePlan.anfahrtSec + activePlan.lapSec * (timerLaps - 1)) - totalT
-      : null;
-    const finStyle = diffStyle(finDiff);
-
+  if (view === 'timer') {
+    const saveCtx = saveContextFor(activePlan);
     return (
       <div className="page container">
         <div className="breadcrumb">
           <Link to="/">Veranstaltungen</Link><span>›</span>
           <button className="btn btn-ghost btn-sm" style={{ padding: '0 4px', fontSize: 13 }}
-            onClick={() => { resetTimer(); setView('plans'); }}>
+            onClick={endTimer}>
             Verfolgung
           </button>
           <span>›</span>{planName(activePlan)}
         </div>
 
-        <div className="flex-between mb-4">
-          <div>
-            <h1>{planName(activePlan)}</h1>
-            <p className="text-sm text-muted" style={{ margin: '2px 0 0' }}>
-              {timerLaps} Runden
-              {activePlan && ` · Plan ${fmtSec(activePlan.anfahrtSec + activePlan.lapSec * (timerLaps - 1))}`}
-            </p>
-          </div>
-        </div>
-
-        {/* Ziel-Anzeige */}
-        {finished && (
-          <div className="card mb-4" style={{ textAlign: 'center', padding: 24 }}>
-            <h2 style={{ marginBottom: 8 }}>Zielzeit</h2>
-            <div style={{ fontSize: 52, fontWeight: 500, fontVariantNumeric: 'tabular-nums', marginBottom: 8 }}>
-              {totalT !== null ? fmtSec(totalT) : '–'}
-            </div>
-            {finDiff !== null && (
-              <div style={{ fontSize: 20, color: finStyle.text, marginBottom: 16 }}>
-                {finStyle.label} vs Plan ({fmtSec(activePlan!.anfahrtSec + activePlan!.lapSec * (timerLaps - 1))})
-              </div>
-            )}
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
-              <button className="btn btn-secondary" onClick={doExport}>CSV exportieren</button>
-              <button className="btn btn-ghost" onClick={() => { resetTimer(); setView('plans'); }}>Beenden</button>
-            </div>
-          </div>
-        )}
-
-        {!finished && (
-          <>
-            {/* Zwischenstand */}
-            <div className="grid-2" style={{ marginBottom: 12 }}>
-              <div className="card" style={{ padding: '11px 14px' }}>
-                <div className="text-xs text-muted">{planName(activePlan)}</div>
-                <div style={{ fontSize: 20, fontWeight: 500, margin: '3px 0' }}>
-                  Runde {lapCount || '–'} / {timerLaps}
-                </div>
-                <div className="text-sm text-muted">
-                  Gesamt: <span style={{ color: 'var(--c-text)', fontWeight: 500 }}>
-                    {totalT !== null ? fmtSec(totalT) : '–'}
-                  </span>
-                </div>
-                {planCumT && (
-                  <div className="text-sm text-muted">
-                    Plan: <span style={{ fontWeight: 500 }}>{fmtSec(planCumT)}</span>
-                    {totalT !== null && (
-                      <span style={{ marginLeft: 6, color: diffStyle(planCumT - totalT).text, fontWeight: 500 }}>
-                        {diffStyle(planCumT - totalT).label}
-                      </span>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              <div className="card" style={{
-                padding: '11px 14px', textAlign: 'center',
-                background: delta !== null
-                  ? delta > TOLERANCE ? '#dcfce7' : delta < -TOLERANCE ? '#fee2e2' : '#dbeafe'
-                  : undefined,
-              }}>
-                <div className="text-xs text-muted" style={{ marginBottom: 3 }}>letzte runde</div>
-                <div style={{ fontSize: 36, fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>
-                  {lastLapT !== null ? `${lastLapT.toFixed(2)}s` : '–'}
-                </div>
-                <div style={{ fontSize: 14, fontWeight: 500, color: style.text }}>{style.label}</div>
-              </div>
-            </div>
-
-            {/* Haupt-Tipp-Knopf — löst beim Loslassen aus (onPointerUp) */}
-            <button
-              onPointerDown={e => {
-                e.preventDefault();
-                (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-                setBtnArmed(true);
-              }}
-              onPointerUp={e => {
-                if (!btnArmed) return;
-                setBtnArmed(false);
-                mainTap();
-              }}
-              onPointerCancel={() => setBtnArmed(false)}
-              onContextMenu={e => e.preventDefault()}
-              style={{
-                width: '100%',
-                height: 'clamp(100px, 22vh, 160px)',
-                fontSize: 'clamp(20px, 4vw, 26px)',
-                fontWeight: 500,
-                borderRadius: 12,
-                cursor: 'pointer',
-                marginBottom: 8,
-                border: `3px solid var(--c-primary)`,
-                color: btnArmed ? 'white' : 'var(--c-primary)',
-                background: btnArmed ? 'var(--c-primary)' : '#dbeafe',
-                fontFamily: 'inherit',
-                transition: 'background 0.08s, color 0.08s',
-                userSelect: 'none',
-                WebkitUserSelect: 'none',
-                touchAction: 'none',
-              }}
-            >
-              {btnArmed ? '↑ Loslassen zum Auslösen' : mainLabel}
-            </button>
-
-            {/* Nebensteuerung */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(70px, 1fr))', gap: 6, marginBottom: 14 }}>
-              <button className="btn btn-secondary btn-sm" onClick={manualHalf}
-                style={{ opacity: autoAlt ? 0.35 : 1, pointerEvents: autoAlt ? 'none' : 'auto' }}>
-                ½ Runde
-              </button>
-              <button className="btn btn-secondary btn-sm" onClick={togAuto}
-                style={{
-                  background: autoAlt ? '#dcfce7' : undefined,
-                  borderColor: autoAlt ? 'var(--c-success)' : undefined,
-                  color: autoAlt ? 'var(--c-success)' : undefined,
-                }}>
-                Auto: {autoAlt ? 'EIN' : 'AUS'}
-              </button>
-              <button className="btn btn-secondary btn-sm" disabled={events.length <= 1} onClick={undoLast}>
-                ↩ Undo
-              </button>
-              <button className="btn btn-ghost btn-sm" onClick={() => { resetTimer(); setView('plans'); }}>
-                Beenden
-              </button>
-            </div>
-
-            {/* Verlauf */}
-            {lapHistory.length > 0 && (
-              <div style={{ fontSize: 12 }}>
-                {lapHistory.map(({ lapNum, lt, diff, half }) => {
-                  const ds = diffStyle(diff);
-                  return (
-                    <div key={lapNum} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid var(--c-border)' }}>
-                      <span className="text-muted">Rd. {lapNum}</span>
-                      <span style={{ fontWeight: 500 }}>
-                        {lt.toFixed(2)}s
-                        {half && <span className="text-muted" style={{ fontSize: 11, marginLeft: 6 }}>({half.h1.toFixed(2)} | {half.h2.toFixed(2)})</span>}
-                      </span>
-                      <span style={{ color: ds.text }}>{diff !== null ? ds.label : ''}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </>
-        )}
+        <RenntimerView
+          key={activePlan?.id ?? 'ohne-plan'}
+          anfahrtSec={activePlan?.anfahrtSec ?? null}
+          lapSec={activePlan?.lapSec ?? null}
+          numRounds={activePlan?.numRounds ?? NO_PLAN_ROUNDS}
+          planLabel={timerLabelFor(activePlan)}
+          save={saveCtx}
+          onBack={endTimer}
+          backLabel="← Zurück zur Planliste"
+        />
       </div>
     );
   }
@@ -610,6 +288,14 @@ export default function PursuitPage() {
                     </>
                   )}
                 </div>
+
+                {/* Ohne zugeordnete Sportler kann der Timer den Lauf nirgends
+                    ablegen. Der Hinweis gehört vor den Start, nicht ins Ziel. */}
+                {plan.athleteIds.length === 0 && (
+                  <div className="text-xs" style={{ marginTop: 7, color: 'var(--c-danger)' }}>
+                    Kein Sportler zugeordnet — gefahrene Läufe lassen sich nicht speichern.
+                  </div>
+                )}
 
                 {hasGear && (
                   <div style={{ display: 'inline-flex', alignItems: 'center', gap: 12, background: 'var(--c-primary)', borderRadius: 6, padding: '5px 12px', marginTop: 8 }}>
