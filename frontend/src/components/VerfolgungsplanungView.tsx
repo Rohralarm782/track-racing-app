@@ -1221,7 +1221,18 @@ function RenntimerView({ anfahrtSec, lapSec, numRounds, planLabel, save, onBack 
     if (!start) return;
     const laps  = eventsRef.current.filter(e => e.type === 'lap');
     const halfs = eventsRef.current.filter(e => e.type === 'half');
-    const rows = ['Runde;Zeit (s);Halbrunde 1 (s);Halbrunde 2 (s);Kumuliert (s);Plan (s);Differenz (s)'];
+    // Wanduhrzeit des Starts aus dem performance.now()-Offset rekonstruieren
+    const startedAt = new Date(Date.now() - (performance.now() - start.ts));
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const dateStr = `${pad(startedAt.getDate())}.${pad(startedAt.getMonth() + 1)}.${startedAt.getFullYear()}`;
+    const timeStr = `${pad(startedAt.getHours())}:${pad(startedAt.getMinutes())}:${pad(startedAt.getSeconds())}`;
+    const fileDate = `${startedAt.getFullYear()}-${pad(startedAt.getMonth() + 1)}-${pad(startedAt.getDate())}`;
+    const rows = [
+      `Datum;${dateStr}`,
+      `Startzeit;${timeStr}`,
+      '',
+      'Runde;Zeit (s);Halbrunde 1 (s);Halbrunde 2 (s);Kumuliert (s);Plan (s);Differenz (s)',
+    ];
     laps.forEach((lap, i) => {
       const prevTs = i > 0 ? laps[i - 1].ts : start.ts;
       const lt  = ((lap.ts - prevTs) / 1000).toFixed(3);
@@ -1236,7 +1247,7 @@ function RenntimerView({ anfahrtSec, lapSec, numRounds, planLabel, save, onBack 
     });
     const a = document.createElement('a');
     a.href = `data:text/csv;charset=utf-8,\uFEFF${encodeURIComponent(rows.join('\n'))}`;
-    a.download = `verfolgung_${planLabel.replace(/\s/g, '_')}.csv`;
+    a.download = `verfolgung_${fileDate}_${planLabel.replace(/\s/g, '_')}.csv`;
     a.click();
   }
 
