@@ -7,6 +7,10 @@
 //    nirgends geschrieben, das Feld ist also immer leer, und es stehen zu
 //    lassen kostet nichts, verhindert aber einen Absturz des alten Frontends
 //    im Fenster zwischen Backend- und Frontend-Commit.
+//  - GET / liefert zusätzlich `runCount`: Anzahl der gefahrenen Läufe je
+//    Sportler (model PursuitRun). `_count.raceLinks` bleibt unverändert im
+//    Response — es wird zwar nicht mehr angezeigt, kostet aber nichts und
+//    verhindert einen Bruch im Fenster zwischen Backend- und Frontend-Commit.
 import { Router } from 'express';
 import { z } from 'zod';
 import prisma from '../prisma';
@@ -15,13 +19,36 @@ import { requireAdmin } from '../middleware/auth';
 const router = Router();
 
 // ── GET /api/athletes — Liste aller Sportler, öffentlich ─────────────────────
+// `runCount` zählt die gefahrenen Läufe. PursuitRun.athleteIds ist eine
+// String-Liste und KEINE Prisma-Relation, deshalb geht dort kein `_count`:
+// die Läufe werden schlank geladen (nur die ID-Liste) und hier ausgezählt.
+// Mannschaftsläufe zählen bei jedem beteiligten Fahrer — dieselbe Regel wie im
+// Profil, wo `athleteIds: { has: … }` filtert. Die Zahl in der Liste entspricht
+// damit genau der Anzahl der Zeilen im Profil.
 router.get('/', async (_req, res, next) => {
   try {
-    const athletes = await prisma.athlete.findMany({
-      orderBy: [{ vorname: 'asc' }, { nachname: 'asc' }],
-      include: { _count: { select: { raceLinks: true } } },
-    });
-    res.json(athletes);
+    const [athletes, runs] = await Promise.all([
+      prisma.athlete.findMany({
+        orderBy: [{ vorname: 'asc' }, { nachname: 'asc' }],
+        include: { _count: { select: { raceLinks: true } } },
+      }),
+      prisma.pursuitRun.findMany({ select: { athleteIds: true } }),
+    ]);
+
+    const runCounts = new Map<string, number>();
+    for (const run of runs) {
+      for (const id of run.athleteIds) {
+        runCounts.set(id, (runCounts.get(id) ?? 0) + 1);
+      }
+    }
+
+    // Bewusst for-of statt .map(): ohne generierten Prisma-Client wäre der
+    // Rückrufparameter ein implizites any (noImplicitAny), und eine
+    // Typannotation von Hand würde die Antwort auf die annotierten Felder
+    // einengen — beides unnötig, die Schleife tut dasselbe.
+    const payload = [];
+    for (const a of athletes) payload.push({ ...a, runCount: runCounts.get(a.id) ?? 0 });
+    res.json(payload);
   } catch (e) { next(e); }
 });
 

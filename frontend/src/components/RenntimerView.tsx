@@ -276,24 +276,57 @@ export default function RenntimerView({
     const dateStr = `${pad(startedAt.getDate())}.${pad(startedAt.getMonth() + 1)}.${startedAt.getFullYear()}`;
     const timeStr = `${pad(startedAt.getHours())}:${pad(startedAt.getMinutes())}:${pad(startedAt.getSeconds())}`;
     const fileDate = `${startedAt.getFullYear()}-${pad(startedAt.getMonth() + 1)}-${pad(startedAt.getDate())}`;
+    // Zahlen mit deutschem Dezimalkomma. Das Spaltentrennzeichen ist ';',
+    // deshalb kollidiert das Komma nicht — und Tabellenkalkulationen mit
+    // deutschem Gebietsschema rechnen ohne Suchen-und-Ersetzen weiter.
+    const dec = (secs: number) => secs.toFixed(3).replace('.', ',');
+    // Zusätzliche Darstellung m:ss,mmm für die kumulierte Zeit, die als
+    // einzige Spalte regelmäßig über eine Minute geht (2:31,123).
+    const mmss = (secs: number) => {
+      // Erst auf Millisekunden runden, dann zerlegen. Andernfalls ergäbe
+      // 59,9996 s die Ausgabe „0:60,000“ statt „1:00,000“.
+      const ms = Math.round(secs * 1000);
+      const m  = Math.floor(ms / 60000);
+      const s  = (ms - m * 60000) / 1000;
+      return `${m}:${s < 10 ? '0' : ''}${dec(s)}`;
+    };
     const rows = [
       `Datum;${dateStr}`,
       `Startzeit;${timeStr}`,
       '',
-      'Runde;Zeit (s);Halbrunde 1 (s);Halbrunde 2 (s);Kumuliert (s);Plan (s);Differenz (s)',
+      'Runde;Zeit (s);Halbrunde 1 (s);Halbrunde 2 (s);Kumuliert (m:s);Kumuliert (s);Plan (s);Differenz (s)',
     ];
     laps.forEach((lap, i) => {
       const prevTs = i > 0 ? laps[i - 1].ts : start.ts;
-      const lt  = ((lap.ts - prevTs) / 1000).toFixed(3);
-      const cum = ((lap.ts - start.ts) / 1000).toFixed(3);
+      const ltNum  = (lap.ts - prevTs)   / 1000;
+      const cumNum = (lap.ts - start.ts) / 1000;
+      const lt     = dec(ltNum);
+      const cum    = dec(cumNum);
+      const cumMs  = mmss(cumNum);
       const pLtNum = hasPlan ? (i === 0 ? anfahrtSec! : lapSec!) : null;
-      const pLt = pLtNum !== null ? pLtNum.toFixed(3) : '';
-      const df  = pLtNum !== null ? (pLtNum - parseFloat(lt)).toFixed(3) : '';
+      const pLt = pLtNum !== null ? dec(pLtNum) : '';
+      // Differenz aus dem Rohwert, nicht aus dem formatierten String:
+      // parseFloat('18,412') liefert 18 und würde die Millisekunden schlucken.
+      const df  = pLtNum !== null ? dec(pLtNum - ltNum) : '';
       const hEvs = halfs.filter(h => h.ts > prevTs && h.ts < lap.ts);
-      const h1 = hEvs.length > 0 ? ((hEvs[0].ts - prevTs) / 1000).toFixed(3) : '';
-      const h2 = hEvs.length > 0 ? ((lap.ts - hEvs[0].ts) / 1000).toFixed(3) : '';
-      rows.push(`${i + 1};${lt};${h1};${h2};${cum};${pLt};${df}`);
+      const h1 = hEvs.length > 0 ? dec((hEvs[0].ts - prevTs) / 1000) : '';
+      const h2 = hEvs.length > 0 ? dec((lap.ts - hEvs[0].ts) / 1000) : '';
+      rows.push(`${i + 1};${lt};${h1};${h2};${cumMs};${cum};${pLt};${df}`);
     });
+    // Abschlusszeile. In jeder Spalte steht die Summe der Spalte darüber:
+    // die Summe der Rundenzeiten ist die Gesamtzeit, die letzte kumulierte
+    // Zeit ebenfalls — deshalb stehen dort dieselben Werte. Der Plan wird über
+    // die TATSÄCHLICH gefahrenen Runden summiert, nicht über die geplante
+    // Distanz: bei einem abgebrochenen Lauf wäre die Differenz sonst wertlos.
+    // Die Halbrunden bleiben leer, weil sie nicht bei jeder Runde getippt
+    // werden und eine Teilsumme mehr verwirrt als hilft.
+    if (laps.length > 0) {
+      const totNum  = (laps[laps.length - 1].ts - start.ts) / 1000;
+      const pTotNum = hasPlan ? anfahrtSec! + lapSec! * (laps.length - 1) : null;
+      const pTot = pTotNum !== null ? dec(pTotNum) : '';
+      const dTot = pTotNum !== null ? dec(pTotNum - totNum) : '';
+      rows.push(`Gesamt;${dec(totNum)};;;${mmss(totNum)};${dec(totNum)};${pTot};${dTot}`);
+    }
     const a = document.createElement('a');
     a.href = `data:text/csv;charset=utf-8,\uFEFF${encodeURIComponent(rows.join('\n'))}`;
     a.download = `verfolgung_${fileDate}_${planLabel.replace(/\s/g, '_')}.csv`;

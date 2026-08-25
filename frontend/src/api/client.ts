@@ -53,6 +53,9 @@ export interface Athlete {
   createdAt: string;
   updatedAt: string;
   _count?: { raceLinks: number };
+  /** Anzahl der gefahrenen Läufe (model PursuitRun). Liefert GET /api/athletes
+   *  ab Backend-Stand 1.3.0; älteres Backend lässt das Feld weg. */
+  runCount?: number;
 }
 
 /** Kurzanzeige (z.B. Chips, Dropdowns während des Rennens): nur Vorname. */

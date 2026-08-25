@@ -11,12 +11,16 @@
 //  - Sortierung innerhalb der Gruppe nach Vorname (wie bisher; das Backend
 //    liefert bereits vorname asc, hier nochmal clientseitig, weil hier
 //    umgruppiert wird).
-//  - Meta rechts in der Zeile: "N Rennen · KB×RZ Gänge" statt der alten
-//    Zweitzeile. `_count.raceLinks` zählt Rennverknüpfungen, KEINE Zeiten —
-//    RaceAthlete.timeMs wird nirgends geschrieben, das alte Label "N Zeiten"
-//    war irreführend. Echte Läufe liegen in PursuitRun (athleteIds String[]),
-//    dafür gäbe es hier keinen Zähler ohne neue Backend-Aggregation.
-//  - Kein Backend- oder Schema-Eingriff: reine Frontend-Änderung.
+//  - Meta rechts in der Zeile: "N Zeiten · KB×RZ Gänge" statt der alten
+//    Zweitzeile. Gezählt werden die gefahrenen Läufe aus PursuitRun; die Zahl
+//    liefert das Backend als `runCount` (GET /api/athletes), weil athleteIds
+//    eine String-Liste und keine Relation ist und Prisma dort nicht zählen
+//    kann. Der frühere Wert `_count.raceLinks` zählte Rennverknüpfungen und
+//    war trackside durchgehend 0 — er wird nicht mehr angezeigt.
+//    Bei 0 Läufen entfällt der Teil ganz: eine Null trägt keine Information
+//    und macht die Zeile nur unruhig.
+//  - Kein Schema-Eingriff. Braucht Backend-Stand 1.3.0; gegen ein älteres
+//    Backend fehlt `runCount` und der Zeitenteil entfällt wie bei 0 Läufen.
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { athletesApi, athleteFullName, type Athlete } from '../api/client';
@@ -214,7 +218,9 @@ export default function AthletesPage() {
   }
 
   function metaLine(a: Athlete): string {
-    const parts = [`${a._count?.raceLinks ?? 0} Rennen`];
+    const parts: string[] = [];
+    const runs = a.runCount ?? 0;
+    if (runs > 0) parts.push(runs === 1 ? '1 Zeit' : `${runs} Zeiten`);
     if (a.kettenblaetter.length || a.ritzel.length) {
       parts.push(`${a.kettenblaetter.length}\u00d7${a.ritzel.length} Gänge`);
     }
