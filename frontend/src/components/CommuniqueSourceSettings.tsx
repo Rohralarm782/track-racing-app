@@ -56,7 +56,7 @@ export default function CommuniqueSourceSettings({ eventId }: { eventId: string 
   async function save() {
     const base = parseSourceInput(input);
     if (!base) {
-      setError('Bitte einen Nextcloud-Share-Link oder eine Webseiten-URL (https://…) eingeben.');
+      setError('Bitte einen Nextcloud-Share-Link, einen Google-Drive-Ordner oder eine Webseiten-URL (https://…) eingeben.');
       return;
     }
     const config = { ...base, htmlSections: base.sourceType === 'HTML' ? sections : [] };
@@ -104,8 +104,9 @@ export default function CommuniqueSourceSettings({ eventId }: { eventId: string 
       ) : editing ? (
         <>
           <p className="text-sm text-muted" style={{ marginTop: 0, marginBottom: 8 }}>
-            Nextcloud-Share-Link oder Webseiten-Adresse(n). Mehrere URLs durch
-            Leerzeichen, Komma oder Zeilenumbruch trennen.
+            Nextcloud-Share-Link, Google-Drive-Ordner oder Webseiten-Adresse(n).
+            Mehrere URLs durch Leerzeichen, Komma oder Zeilenumbruch trennen.
+            Beim Drive-Ordner bitte die vollständige Adresse einfügen.
           </p>
           <textarea
             className="form-input"
@@ -122,6 +123,8 @@ export default function CommuniqueSourceSettings({ eventId }: { eventId: string 
               <span className="badge badge-gray">{input.trim() ? 'nicht erkennbar' : '—'}</span>
             ) : detected.sourceType === 'WEBDAV' ? (
               <span className="badge badge-blue">WebDAV (Nextcloud)</span>
+            ) : detected.sourceType === 'GDRIVE' ? (
+              <span className="badge badge-purple">Google-Drive-Ordner</span>
             ) : (
               <span className="badge badge-green">
                 HTML · {detected.htmlPageUrls!.length} {detected.htmlPageUrls!.length === 1 ? 'Seite' : 'Seiten'}
@@ -153,8 +156,14 @@ export default function CommuniqueSourceSettings({ eventId }: { eventId: string 
       ) : source ? (
         <>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-            <span className={`badge ${source.sourceType === 'WEBDAV' ? 'badge-blue' : 'badge-green'}`}>
-              {source.sourceType === 'WEBDAV' ? 'WebDAV' : 'HTML'}
+            <span className={`badge ${
+              source.sourceType === 'WEBDAV' ? 'badge-blue'
+              : source.sourceType === 'GDRIVE' ? 'badge-purple'
+              : 'badge-green'
+            }`}>
+              {source.sourceType === 'WEBDAV' ? 'WebDAV'
+                : source.sourceType === 'GDRIVE' ? 'Drive'
+                : 'HTML'}
             </span>
             {source.lastPolledAt && (
               <span className="text-xs text-muted">
@@ -197,8 +206,9 @@ export default function CommuniqueSourceSettings({ eventId }: { eventId: string 
       ) : (
         <>
           <p className="text-sm text-muted" style={{ margin: 0 }}>
-            Noch keine Quelle hinterlegt. Über „Quelle hinterlegen" einen Nextcloud-Share-Link
-            oder die Webseiten-Adresse(n) mit den PDF-Links eintragen.
+            Noch keine Quelle hinterlegt. Über „Quelle hinterlegen" einen Nextcloud-Share-Link,
+            die Adresse eines freigegebenen Google-Drive-Ordners oder die Webseiten-Adresse(n)
+            mit den PDF-Links eintragen.
           </p>
           {msg && <p className="text-xs" style={{ color: 'var(--c-success, #16a34a)', marginTop: 10, marginBottom: 0 }}>{msg}</p>}
         </>

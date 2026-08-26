@@ -265,13 +265,14 @@ export interface CommuniqueDocument {
   missingSince?: string | null;
 }
 
-export type CommuniqueSourceType = 'WEBDAV' | 'HTML';
+export type CommuniqueSourceType = 'WEBDAV' | 'HTML' | 'GDRIVE';
 
 export interface CommuniqueSource {
   id: string;
   eventId: string;
   sourceType: CommuniqueSourceType;
   shareToken: string | null;   // nur WEBDAV
+  driveFolderId: string | null; // nur GDRIVE: ID des freigegebenen Ordners
   htmlPageUrls: string[];      // nur HTML
   // nur HTML: gewählte Überschriften-Blöcke der Seite; leer = ganze Seite
   htmlSections: string[];
@@ -285,10 +286,12 @@ export interface CommuniqueSource {
 }
 
 // Konfiguration, die der Setup-Endpunkt erwartet — je nach sourceType ist
-// entweder shareToken (WEBDAV) oder htmlPageUrls (HTML) gesetzt.
+// entweder shareToken (WEBDAV), htmlPageUrls (HTML) oder driveFolderId (GDRIVE)
+// gesetzt.
 export interface CommuniqueSourceConfig {
   sourceType: CommuniqueSourceType;
   shareToken?: string;
+  driveFolderId?: string;
   htmlPageUrls?: string[];
   htmlSections?: string[];
   label?: string;

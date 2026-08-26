@@ -7,6 +7,18 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
 
 interface PdfViewerProps {
   url: string;
+  /**
+   * Dateiname des Dokuments. Nur nötig, um Bilder von PDFs zu unterscheiden —
+   * fehlt er, wird wie bisher ein PDF angenommen. Bilder kommen vor, seit
+   * Kommuniqués auch aus einem eigenen Drive-Ordner stammen können: aus einer
+   * WhatsApp-Gruppe kommt der Aushang oft abfotografiert.
+   */
+  fileName?: string;
+}
+
+/** True, wenn der Dateiname auf ein Bildformat hindeutet. */
+function isImageFileName(name: string | undefined): boolean {
+  return !!name && /\.(jpe?g|png|webp|hei[cf]|gif)$/i.test(name);
 }
 
 /**
@@ -18,12 +30,21 @@ interface PdfViewerProps {
  * nutzt) rendern wir die Seiten selbst — das Ergebnis sieht auf jedem Gerät
  * gleich aus.
  */
-export default function PdfViewer({ url }: PdfViewerProps) {
+export default function PdfViewer({ url, fileName }: PdfViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [errorMsg, setErrorMsg] = useState('');
+  // Bilder: eingepasst (Vorgabe) oder in voller Größe. Ein abfotografierter
+  // Aushang ist eingepasst oft nicht lesbar — Antippen vergrößert, der
+  // umgebende Container scrollt dann in beide Richtungen.
+  const [imageZoomed, setImageZoomed] = useState(false);
+  const isImage = isImageFileName(fileName);
+
+  useEffect(() => { setImageZoomed(false); }, [url]);
 
   useEffect(() => {
+    // pdf.js würde ein PNG nicht laden können; Bilder rendert der Browser selbst.
+    if (isImage) return;
     let cancelled = false;
     setStatus('loading');
     setErrorMsg('');
@@ -83,7 +104,33 @@ export default function PdfViewer({ url }: PdfViewerProps) {
 
     render();
     return () => { cancelled = true; };
-  }, [url]);
+  }, [url, isImage]);
+
+  if (isImage) {
+    return (
+      <div style={{ height: '100%', overflow: 'auto', background: '#525659', padding: '10px' }}>
+        <div style={{ maxWidth: imageZoomed ? 'none' : 900, margin: '0 auto' }}>
+          <img
+            src={url}
+            alt={fileName ?? 'Kommuniqué'}
+            onClick={() => setImageZoomed(z => !z)}
+            style={{
+              display: 'block',
+              width: imageZoomed ? 'auto' : '100%',
+              maxWidth: imageZoomed ? 'none' : '100%',
+              height: 'auto',
+              cursor: imageZoomed ? 'zoom-out' : 'zoom-in',
+              boxShadow: '0 1px 4px rgba(0,0,0,0.15)',
+              background: 'white',
+            }}
+          />
+        </div>
+        <p style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12, textAlign: 'center', marginTop: 8 }}>
+          {imageZoomed ? 'Zum Verkleinern antippen' : 'Zum Vergrößern antippen'}
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div style={{ height: '100%', overflow: 'auto', background: '#525659', padding: '10px' }}>

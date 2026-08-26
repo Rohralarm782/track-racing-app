@@ -624,17 +624,19 @@ export default function CommuniquesPage() {
         <div className="card">
           <h3 style={{ marginBottom: 8 }}>Kommuniqué-Quelle hinterlegen</h3>
           <p className="text-sm text-muted" style={{ marginTop: 0, marginBottom: 14 }}>
-            Entweder den öffentlichen <strong>Nextcloud-Share-Link</strong> einfügen, oder die
+            Entweder den öffentlichen <strong>Nextcloud-Share-Link</strong> einfügen, die
             <strong> Webseiten-Adresse(n)</strong>, auf denen die PDFs direkt verlinkt sind
-            (z.&nbsp;B. der Ergebnis-/Meldelisten-Bereich der Veranstalter-Homepage). Mehrere
-            Seiten einfach zeilenweise untereinander — die Quellenart wird automatisch erkannt.
+            (z.&nbsp;B. der Ergebnis-/Meldelisten-Bereich der Veranstalter-Homepage), oder die
+            Adresse eines <strong>freigegebenen Google-Drive-Ordners</strong> für eine eigene
+            Ablage. Mehrere Seiten einfach zeilenweise untereinander — die Quellenart wird
+            automatisch erkannt.
           </p>
           <form onSubmit={handleSetupSubmit}>
             <div className="form-group" style={{ marginBottom: 10 }}>
               <textarea
                 className="form-input"
                 rows={3}
-                placeholder={'https://share.spurtlinie.de/index.php/s/…\noder\nhttps://bahndm-buettgen.de/meldelisten-ergebnisse-allgemein/'}
+                placeholder={'https://share.spurtlinie.de/index.php/s/…\noder\nhttps://bahndm-buettgen.de/meldelisten-ergebnisse-allgemein/\noder\nhttps://drive.google.com/drive/folders/…'}
                 value={shareInput}
                 onChange={e => setShareInput(e.target.value)}
                 style={{ resize: 'vertical', fontFamily: 'inherit' }}
@@ -1104,7 +1106,7 @@ export default function CommuniquesPage() {
             )}
           </div>
           <div style={{ flex: 1, minHeight: 0 }}>
-            <PdfViewer url={communiquesApi.fileUrl(eventId, viewingDoc.id)} />
+            <PdfViewer url={communiquesApi.fileUrl(eventId, viewingDoc.id)} fileName={viewingDoc.fileName} />
           </div>
         </div>
       </div>

@@ -5,6 +5,7 @@ import prisma from '../prisma';
 import { requireAdmin } from '../middleware/auth';
 import { listShareFiles } from '../lib/webdav';
 import { listHtmlFiles, scanHtmlSections } from '../lib/htmlScrape';
+import { listDriveFiles, isPdfFileName } from '../lib/gdrive';
 import { fetchDocumentFile } from '../lib/remoteSource';
 import { classifyFileName, parseCommuniqueVersion } from '../lib/classify';
 import { getCachedFile, setCachedFile } from '../lib/fileCache';
@@ -39,8 +40,10 @@ router.get('/:eventId', async (req, res, next) => {
 });
 
 const SourceSchema = z.object({
-  sourceType: z.enum(['WEBDAV', 'HTML']).default('WEBDAV'),
+  sourceType: z.enum(['WEBDAV', 'HTML', 'GDRIVE']).default('WEBDAV'),
   shareToken: z.string().optional(),
+  // Nur GDRIVE: ID des öffentlich freigegebenen Ordners.
+  driveFolderId: z.string().optional(),
   htmlPageUrls: z.array(z.string().url()).optional(),
   // Nur HTML: Auswahl der Seiten-Abschnitte (Überschriften-Blöcke). Leer/fehlend
   // = ganze Seite, wie bisher.
@@ -54,8 +57,13 @@ const SourceSchema = z.object({
 }).refine(
   d => d.sourceType === 'HTML'
     ? (d.htmlPageUrls?.length ?? 0) > 0
-    : !!d.shareToken?.trim(),
-  { message: 'WEBDAV benötigt einen shareToken, HTML mindestens eine Seiten-URL.' },
+    : d.sourceType === 'GDRIVE'
+      ? !!d.driveFolderId?.trim()
+      : !!d.shareToken?.trim(),
+  {
+    message: 'WEBDAV benötigt einen shareToken, HTML mindestens eine Seiten-URL, '
+      + 'GDRIVE eine Ordner-ID.',
+  },
 );
 
 // POST /api/communiques/:eventId — Share-Link hinterlegen (Admin)
@@ -64,12 +72,13 @@ router.post('/:eventId', requireAdmin, async (req, res, next) => {
     const parsed = SourceSchema.safeParse(req.body);
     if (!parsed.success) { res.status(400).json(parsed.error.flatten()); return; }
 
-    const { sourceType, shareToken, htmlPageUrls, htmlSections, label, purgeDocuments } = parsed.data;
+    const { sourceType, shareToken, driveFolderId, htmlPageUrls, htmlSections, label, purgeDocuments } = parsed.data;
     // Nur die zur Quellenart passenden Felder schreiben, die jeweils andere
     // Konfiguration wird geleert (sauberer Wechsel WebDAV <-> HTML).
     const data = {
       sourceType,
       shareToken: sourceType === 'WEBDAV' ? (shareToken?.trim() || null) : null,
+      driveFolderId: sourceType === 'GDRIVE' ? (driveFolderId?.trim() || null) : null,
       htmlPageUrls: sourceType === 'HTML' ? (htmlPageUrls ?? []) : [],
       htmlSections: sourceType === 'HTML' ? (htmlSections ?? []) : [],
       ...(label !== undefined ? { label } : {}),
@@ -263,6 +272,13 @@ router.post('/:eventId/documents/:documentId/import-schedule', requireAdmin, asy
       res.status(400).json({ error: 'Dokument ist nicht als Zeitplan erkannt' });
       return;
     }
+    if (!isPdfFileName(doc.fileName)) {
+      res.status(400).json({
+        error: 'Aus einem Bild kann kein Zeitplan übernommen werden. '
+          + 'Bitte die Einträge von Hand anlegen oder den Zeitplan als PDF ablegen.',
+      });
+      return;
+    }
 
     await autoImportScheduleFromDocument(req.params.eventId, doc, doc.source);
     res.status(204).send();
@@ -417,6 +433,14 @@ export async function pollSource(source: CommuniqueSource) {
       );
     }
     if (problems.length > 0) pollError = problems.join(' · ');
+  } else if (source.sourceType === 'GDRIVE') {
+    // Drive verhält sich wie HTML: Fehler brechen den Poll NICHT ab, sondern
+    // melden complete=false. Ein Teilergebnis ist brauchbar (die gelesenen
+    // Dateien stimmen), nur die Missing-Erkennung muss dann aussetzen.
+    const drive = await listDriveFiles(source.driveFolderId ?? '');
+    remoteFiles = drive.files;
+    listingComplete = drive.complete;
+    if (drive.error) pollError = drive.error;
   } else {
     // WebDAV wirft bei Fehlern und bricht den Poll ab. Damit der Grund nicht
     // nur im Log landet, vor dem Weiterwerfen an der Quelle festhalten.
@@ -507,9 +531,15 @@ export async function pollSource(source: CommuniqueSource) {
     where: { sourceId, docType: 'STARTLISTE' },
   });
   const needsAnalysis = startlists.filter(
-    d => d.starterCount === null
-      || d.mevVersion < MEV_ANALYSIS_VERSION
-      || needsRosterRecheck(d, startlists),
+    // Bilder (abfotografierte Aushänge) werden hier bewusst übergangen: die
+    // Auswertung schickt die Datei als PDF-Block an das Modell und liefe in
+    // einen Fehler. Weil der Trigger starterCount === null lautet, würde das
+    // OHNE diesen Filter bei JEDEM Poll erneut versucht — die Datei würde
+    // jedes Mal neu geladen. Auswertung von Fotos ist ein eigener Schritt.
+    d => isPdfFileName(d.fileName)
+      && (d.starterCount === null
+        || d.mevVersion < MEV_ANALYSIS_VERSION
+        || needsRosterRecheck(d, startlists)),
   );
   for (const doc of needsAnalysis) {
     await analyzeMevForDocument(doc, source);
@@ -523,12 +553,15 @@ export async function pollSource(source: CommuniqueSource) {
     const refreshed = await prisma.communiqueDocument.findMany({
       where: { sourceId, docType: 'STARTLISTE' },
     });
-    for (const doc of refreshed.filter(d => needsRosterRecheck(d, refreshed))) {
+    for (const doc of refreshed.filter(d => isPdfFileName(d.fileName) && needsRosterRecheck(d, refreshed))) {
       await analyzeMevForDocument(doc, source);
     }
   }
 
-  const newZeitplanDocs = created.filter(d => d.docType === 'ZEITPLAN');
+  // Wie bei der MEV-Analyse: der Zeitplan-Import liest ein PDF. Ein als
+  // Zeitplan erkanntes Foto würde nur einen API-Fehler erzeugen; es bleibt
+  // sichtbar und kann von Hand verknüpft werden.
+  const newZeitplanDocs = created.filter(d => d.docType === 'ZEITPLAN' && isPdfFileName(d.fileName));
   for (const doc of newZeitplanDocs) {
     await autoImportScheduleFromDocument(eventId, doc, source);
   }

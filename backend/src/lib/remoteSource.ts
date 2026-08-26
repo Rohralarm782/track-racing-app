@@ -1,6 +1,7 @@
 import type { SourceType } from '@prisma/client';
 import { fetchShareFile } from './webdav';
 import { fetchHtmlFile } from './htmlScrape';
+import { fetchDriveFile } from './gdrive';
 
 /**
  * Einheitlicher Zugriffspunkt auf die PDF-Bytes eines Dokuments, unabhängig
@@ -22,6 +23,14 @@ export async function fetchDocumentFile(
       throw new Error(`HTML-Dokument ohne remoteUrl: ${doc.fileName}`);
     }
     return fetchHtmlFile(doc.remoteUrl, doc.fileName);
+  }
+  if (source.sourceType === 'GDRIVE') {
+    // Bei Drive steht in remoteUrl die Datei-ID, nicht eine Adresse — der
+    // Ordner selbst wird hier nicht gebraucht, die ID genügt zum Abruf.
+    if (!doc.remoteUrl) {
+      throw new Error(`Drive-Dokument ohne Datei-ID: ${doc.fileName}`);
+    }
+    return fetchDriveFile(doc.remoteUrl, doc.fileName);
   }
   if (!source.shareToken) {
     throw new Error('WebDAV-Quelle ohne shareToken');

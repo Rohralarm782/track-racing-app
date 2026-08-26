@@ -121,6 +121,9 @@ h3 { font-size: 0.95rem; font-weight: 600; margin: 0; }
 .badge-gray { background: #f3f4f6; color: #6b7280; }
 .badge-green { background: #dcfce7; color: #166534; }
 .badge-yellow { background: #fef9c3; color: #854d0e; }
+/* Dritte Quellenart (Google-Drive-Ordner) — muss sich von WebDAV (blau) und
+   HTML (grün) auf einen Blick unterscheiden. */
+.badge-purple { background: #ede9fe; color: #5b21b6; }
 
 /* ── Alerts ──────────────────────────────────────── */
 .alert { padding: 10px 14px; border-radius: 7px; font-size: 13px; margin-bottom: 14px; }

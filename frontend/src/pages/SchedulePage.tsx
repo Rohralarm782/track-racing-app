@@ -1424,7 +1424,7 @@ export default function SchedulePage() {
             <button onClick={() => setViewingDocId(null)} className="btn btn-ghost btn-sm" style={{ fontSize: 18, padding: '4px 10px' }}>✕</button>
           </div>
           <div style={{ flex: 1, minHeight: 0 }}>
-            <PdfViewer url={communiquesApi.fileUrl(eventId, viewingDocId, viewingDoc?.remoteModifiedAt)} />
+            <PdfViewer url={communiquesApi.fileUrl(eventId, viewingDocId, viewingDoc?.remoteModifiedAt)} fileName={viewingDoc?.fileName} />
           </div>
         </div>
       </div>

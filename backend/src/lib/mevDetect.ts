@@ -37,7 +37,7 @@ interface AnalyzableDoc {
   fileName: string;
   ak: string;
   disciplineCode?: string | null;
-  remoteUrl?: string | null; // nur HTML-Quellen; bei WebDAV null/undefined
+  remoteUrl?: string | null; // HTML: PDF-Adresse · GDRIVE: Datei-ID · WebDAV: null
 }
 
 /**
@@ -103,6 +103,12 @@ export async function analyzeMevForDocument(
   doc: AnalyzableDoc,
   source: { sourceType: SourceType; shareToken: string | null },
 ): Promise<void> {
+  // Bilder überspringen. Die Datei wird unten als PDF-Block an das Modell
+  // geschickt; ein Foto würde dort abgewiesen. Der Schutz steht bewusst HIER
+  // und nicht nur beim Aufrufer, damit auch die manuellen Auslöser (Analyse-
+  // Knopf, Verknüpfung im Zeitplan) abgedeckt sind. Das Dokument bleibt
+  // sichtbar und nutzbar, es wird nur nicht automatisch ausgewertet.
+  if (!/\.pdf$/i.test(doc.fileName)) return;
   try {
     const settings = await getSettings();
     const lv = settings.mevLv;

@@ -184,7 +184,10 @@ const GENDER_FIRST_AK_WORD = /\b[MW](E|U1[3579])\b/g;
 // und – im block+laufnr-Format – die unmittelbar folgende Unternummer (01/03/…),
 // NICHT spätere Zahlen-Token wie "5-8" (Platzierungsläufe) oder "500m".
 export function detectPhaseLabel(fileName: string): string | null {
-  const base = fileName.replace(/\.pdf$/i, '');
+  // Bilder (abfotografierte Aushänge aus einer WhatsApp-Gruppe) tragen dieselben
+  // Namensmuster wie die PDFs — die Endung muss nur mit abgeschnitten werden,
+  // sonst hängt sie im letzten Segment und verfälscht die Phasenerkennung.
+  const base = fileName.replace(/\.(pdf|jpe?g|png|webp|hei[cf])$/i, '');
   const tokens = base.split(/\s-\s|[-_]/).map(s => s.trim()).filter(Boolean);
 
   // Führende K-Block-Marke entfernen ("K28", "K198B") …

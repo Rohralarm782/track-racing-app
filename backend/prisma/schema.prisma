@@ -39,6 +39,7 @@ enum FlagType {
 enum SourceType {
   WEBDAV // Nextcloud Public Share per WebDAV (share.spurtlinie.de) — Standard
   HTML   // Öffentliche Webseite mit direkten PDF-Links (z.B. bahndm-buettgen.de)
+  GDRIVE // Öffentlich freigegebener Google-Drive-Ordner (eigene Ablage)
 }
 
 enum DocType {
@@ -373,6 +374,12 @@ model CommuniqueSource {
   // Abschnitt gar nicht mehr, landet das als lastPollError in der Quellen-Karte
   // — sonst blieben die Kommuniqués still leer.
   htmlSections String[] @default([])
+
+  // Nur GDRIVE: ID des öffentlich freigegebenen Google-Drive-Ordners (der Teil
+  // der Ordner-Adresse nach /folders/). Der API-Schlüssel steht NICHT hier,
+  // sondern serverseitig in GOOGLE_DRIVE_API_KEY — er gehört zum Server, nicht
+  // zur Veranstaltung, und hat in der Datenbank nichts zu suchen.
+  driveFolderId String?
 
   label      String?  // optionaler Anzeigename, z.B. "LVM Bahn 2026"
   lastPolledAt DateTime?

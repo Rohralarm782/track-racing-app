@@ -518,6 +518,9 @@ export async function autoImportScheduleFromDocument(
   doc: { id: string; fileName: string; remoteUrl?: string | null },
   source: { sourceType: SourceType; shareToken: string | null },
 ): Promise<void> {
+  // Wie in mevDetect: analyzeZeitplanPdf() sendet die Datei als PDF-Block.
+  // Ein als Zeitplan erkanntes Foto würde dort scheitern.
+  if (!/\.pdf$/i.test(doc.fileName)) return;
   try {
     const file = await fetchDocumentFile(source, { fileName: doc.fileName, remoteUrl: doc.remoteUrl ?? null });
     const base64 = file.data.toString('base64');
