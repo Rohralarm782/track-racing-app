@@ -13,6 +13,30 @@ export function extractShareToken(input: string): string | null {
   return null;
 }
 
+// True, wenn die Eingabe die Adresse eines Nextcloud-Share-Ordners ist.
+//
+// Ohne diese Prüfung wurde ein VOLLER Share-Link (…/index.php/s/<token>) als
+// HTML-Quelle behandelt: der Token-Zweig verlangt, dass kein "://" enthalten
+// ist, und der HTML-Zweig greift vor dem Token-Fallback am Ende. Die App legte
+// dann eine HTML-Quelle auf die Nextcloud-Seite an — die ihre Dateiliste per
+// JavaScript aufbaut, also keine PDF-Links im Quelltext hat. Ergebnis: null
+// Dokumente, ohne Fehlermeldung.
+//
+// Bewusst eng gefasst, damit eine gewöhnliche Webseite nicht fälschlich als
+// Nextcloud gilt. Der Teil hinter /s/ muss
+//   • mindestens zehn Zeichen lang sein UND
+//   • eine Ziffer enthalten ODER Groß- und Kleinbuchstaben mischen.
+// Nextcloud erzeugt Tokens aus 15 gemischten Zeichen, erfüllt das also immer.
+// Ein Seitenpfad wie "/s/ergebnisse" ist rein kleingeschrieben und fällt damit
+// weiterhin sauber in den HTML-Zweig.
+export function isNextcloudShareUrl(input: string): string | null {
+  const match = input.trim().match(/\/(?:index\.php\/)?s\/([A-Za-z0-9]{10,})(?:[/?#]|$)/);
+  if (!match) return null;
+  const token = match[1];
+  const looksLikeToken = /\d/.test(token) || (/[a-z]/.test(token) && /[A-Z]/.test(token));
+  return looksLikeToken ? token : null;
+}
+
 // Akzeptiert die Adresse eines Google-Drive-Ordners (…/drive/folders/<id>, mit
 // oder ohne ?usp=…) oder die blanke Ordner-ID. Drive-IDs sind 20+ Zeichen lang
 // und enthalten neben Buchstaben/Ziffern auch "-" und "_" — daran lassen sie
@@ -27,11 +51,12 @@ export function extractDriveFolderId(input: string): string | null {
 }
 
 // Erkennt aus der Eingabe automatisch die Quellenart:
-//   • Nextcloud-Share-Link (…/s/<token>) oder blanker Token          → WEBDAV
+//   • Nextcloud-Share-Link (…/s/<token>), volle Adresse oder Token    → WEBDAV
 //   • Google-Drive-Ordner (…/drive/folders/<id>) oder blanke ID       → GDRIVE
 //   • eine oder mehrere http(s)-Seiten-URLs (Zeile/Komma/Leerzeichen) → HTML
-// Der Token-Check läuft zuerst; eine reine Webseiten-URL (mit "://") kann ihn
-// nicht auslösen, fällt also sauber in den HTML-Zweig.
+// Geprüft wird von eng nach weit: blanker Token, dann Share-Adresse, dann
+// Drive-Ordner, zuletzt beliebige Webseiten. Eine reine Webseiten-URL kann die
+// ersten drei nicht auslösen und fällt sauber in den HTML-Zweig.
 //
 // Die Drive-Prüfung MUSS vor dem HTML-Zweig stehen: eine Drive-Ordneradresse
 // beginnt mit https:// und würde sonst als Webseite mit PDF-Links behandelt —
@@ -42,6 +67,10 @@ export function parseSourceInput(raw: string): CommuniqueSourceConfig | null {
 
   const token = extractShareToken(text);
   if (token && !text.includes('://')) return { sourceType: 'WEBDAV', shareToken: token };
+
+  // Voller Nextcloud-Share-Link — muss vor dem HTML-Zweig geprüft werden.
+  const shareUrlToken = isNextcloudShareUrl(text);
+  if (shareUrlToken) return { sourceType: 'WEBDAV', shareToken: shareUrlToken };
 
   const driveFolderId = extractDriveFolderId(text);
   if (driveFolderId) return { sourceType: 'GDRIVE', driveFolderId };
