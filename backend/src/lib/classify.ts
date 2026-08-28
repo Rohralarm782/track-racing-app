@@ -63,6 +63,26 @@ export function detectAK(fileName: string): string {
     found.add((base === 'Elite' || base === 'Masters') ? `${base} ${gender}` : `${base}${gender}`);
   }
 
+  // Ausgeschriebene Altersklassen. Kommuniqués selbst schreiben praktisch immer
+  // aus ("weibl. Jugend" statt "U17w"), und manche Veranstalter übernehmen das
+  // in ihre Dateinamen. Ohne diese Stufe landen deren Kommuniqués sämtlich in
+  // "Ohne Zuordnung".
+  // Reihenfolge ist wichtig: "Juniorinnen" muss vor "Junioren" geprüft werden,
+  // sonst schlägt die kürzere Form im längeren Wort an.
+  if (found.size === 0) {
+    const langformen: Array<[RegExp, string]> = [
+      [/\b(weibl|weibliche)\.?\s*Jugend\b/i, 'U17w'],
+      [/\b(m(ä|ae)nnl|m(ä|ae)nnliche)\.?\s*Jugend\b/i, 'U17m'],
+      [/\bJuniorinnen\b/i, 'U19w'],
+      [/\bJunioren\b/i, 'U19m'],
+      [/\bSch(ü|ue)lerinnen\b/i, 'U15w'],
+      [/\bSch(ü|ue)ler\b/i, 'U15m'],
+      [/\bElite\s*Frauen\b/i, 'Elite w'],
+      [/\bElite\s*M(ä|ae)nner\b/i, 'Elite m'],
+    ];
+    for (const [re, ak] of langformen) if (re.test(fileName)) found.add(ak);
+  }
+
   if (found.size === 0) {
     const genderFirstRe = /\b([MW])(E|U1[3579])\b/g;
     while ((m = genderFirstRe.exec(fileName))) {
@@ -71,6 +91,14 @@ export function detectAK(fileName: string): string {
       const base = code === 'E' ? 'Elite' : code;
       found.add(base === 'Elite' ? `Elite ${gender}` : `${base}${gender}`);
     }
+  }
+
+  // Letzte Stufe: blankes "Frauen"/"Männer" als Elite. Bewusst ganz am Ende und
+  // nur, wenn sonst nichts gefunden wurde — die Wörter kommen auch in
+  // Disziplinnamen und Zusätzen vor und wären weiter oben zu fehleranfällig.
+  if (found.size === 0) {
+    if (/\bFrauen\b/i.test(fileName)) found.add('Elite w');
+    else if (/\bM(ä|ae)nner\b/i.test(fileName)) found.add('Elite m');
   }
 
   if (found.size === 0) return 'Alle';

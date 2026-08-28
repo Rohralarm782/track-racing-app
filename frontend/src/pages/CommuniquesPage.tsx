@@ -10,10 +10,11 @@ import { useAdmin, useKiosk } from '../components/Layout';
 import { parseSourceInput } from '../lib/communiqueSource';
 import CommuniqueSectionPicker from '../components/CommuniqueSectionPicker';
 import {
-  api, communiquesApi,
-  type CommuniqueSource,
+  api, communiquesApi, documentLabel,
+  type CommuniqueSource, type ClassificationUpdate,
   type CommuniqueDocument as CommuniqueDocumentT, type Event as EventT,
 } from '../api/client';
+import DocumentClassifyDialog from '../components/DocumentClassifyDialog';
 
 const AK_OPTIONS = ['U15m', 'U15w', 'U17m', 'U17w', 'U19m', 'U19w', 'Elite m', 'Elite w'];
 const DISCIPLINE_LABELS: Record<string, string> = { Alle: 'Alle', SPRINT: 'Sprint', AUSDAUER: 'Ausdauer' };
@@ -151,6 +152,8 @@ export default function CommuniquesPage() {
   const [viewingDoc, setViewingDoc] = useState<CommuniqueDocumentT | null>(null);
   // Dokument, für das gerade der Ausblenden-Bestätigungsdialog offen ist.
   const [pendingHide, setPendingHide] = useState<CommuniqueDocumentT | null>(null);
+  // Dokument, dessen Zuordnung gerade von Hand gesetzt wird (null = Dialog zu).
+  const [classifying, setClassifying] = useState<CommuniqueDocumentT | null>(null);
   const [sortMode, setSortMode] = useState<'chrono' | 'number'>(
     () => (localStorage.getItem('communique_sort_mode') as 'chrono' | 'number') ?? 'chrono'
   );
@@ -575,14 +578,22 @@ export default function CommuniquesPage() {
     .filter(d => catFilter === 'alle' || d.docType === catFilter)
     .filter(d => selectedAKs.has('Alle') || d.ak === 'Alle' || selectedAKs.has(d.ak))
     .filter(d => selectedDisciplines.has('Alle') || d.discipline === 'ALLGEMEIN' || selectedDisciplines.has(d.discipline))
-    .filter(d => !searchQuery.trim() || d.fileName.toLowerCase().includes(searchQuery.trim().toLowerCase()))
+    // Auch im erkannten Namen suchen: bei einem Foto steht die K-Nummer nur
+    // dort, im Dateinamen ("IMG-20260919-WA0037.jpg") wäre sie nicht zu finden.
+    .filter(d => {
+      const q = searchQuery.trim().toLowerCase();
+      if (!q) return true;
+      return d.fileName.toLowerCase().includes(q)
+        || (d.displayName ?? '').toLowerCase().includes(q);
+    })
     .sort((a, b) => {
       const pinDiff = (b.isPinned ? 1 : 0) - (a.isPinned ? 1 : 0);
       if (pinDiff !== 0) return pinDiff; // Angeheftete immer zuerst
       const dir = sortDir === 'asc' ? 1 : -1;
       if (sortMode === 'number') {
-        const pa = parseDocNumber(a.fileName);
-        const pb = parseDocNumber(b.fileName);
+        // Bei Fotos steht die K-Nummer in communiqueNumber, nicht im Dateinamen.
+        const pa = parseDocNumber(a.communiqueNumber ?? a.fileName);
+        const pb = parseDocNumber(b.communiqueNumber ?? b.fileName);
         if (pa.num !== pb.num) return (pa.num - pb.num) * dir;
         return pa.suffix.localeCompare(pb.suffix) * dir;
       }
@@ -954,9 +965,22 @@ export default function CommuniquesPage() {
                           fontSize: 13.5, fontWeight: 600, overflow: 'hidden',
                           textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                         }}>
-                          {d.fileName}
+                          {documentLabel(d)}
                         </span>
                         {unread && !hiddenReason(d) && <span className="badge badge-blue">NEU</span>}
+                        {/* Unsicher erkannt: die Zuordnung wurde gesetzt, das Foto war
+                            aber schlecht lesbar. Bewusst sichtbar markiert statt
+                            stillschweigend übernommen — eine falsche Zuordnung, die
+                            richtig aussieht, ist trackside gefährlicher als gar keine. */}
+                        {d.imageConfident === false && !hiddenReason(d) && (
+                          <span className="badge badge-yellow">unsicher</span>
+                        )}
+                        {d.classificationManual && !hiddenReason(d) && (
+                          <span className="badge badge-green">von Hand</span>
+                        )}
+                        {d.displayName && !d.classificationManual && d.imageConfident !== false && !hiddenReason(d) && (
+                          <span className="badge badge-purple">📷 aus Bild</span>
+                        )}
                         {hiddenReason(d) === 'superseded' && (
                           <span className="badge badge-yellow">
                             ersetzt{d.supersededBy ? ` durch ${docNumberLabel(d.supersededBy.fileName)}` : ''}
@@ -990,6 +1014,19 @@ export default function CommuniquesPage() {
                           }}
                         >
                           {d.isHidden ? '↩️' : '🙈'}
+                        </button>
+                        <button
+                          onClick={e => { e.stopPropagation(); setClassifying(d); }}
+                          title="Zuordnung ändern"
+                          style={{
+                            border: 'none', background: 'transparent', cursor: 'pointer',
+                            fontSize: 16, padding: 4,
+                            // Auffällig, solange die Zuordnung unsicher ist — dann ist
+                            // dieser Knopf genau der, der gedrückt werden soll.
+                            opacity: d.imageConfident === false ? 1 : 0.35, lineHeight: 1,
+                          }}
+                        >
+                          ✏️
                         </button>
                       </div>
                     ) : d.isPinned ? (
@@ -1042,7 +1079,7 @@ export default function CommuniquesPage() {
                 fontSize: 13.5, fontWeight: 600, overflow: 'hidden',
                 textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: '1 1 auto', minWidth: 0,
               }}>
-                {viewingDoc.fileName}
+                {documentLabel(viewingDoc)}
               </span>
               <button
                 onClick={() => handlePrintDoc(viewingDoc)}
@@ -1114,6 +1151,18 @@ export default function CommuniquesPage() {
 
     {/* Bestätigung vor dem Ausblenden — erscheint IMMER, wenn ein Dokument
         ausgeblendet werden soll. */}
+    {classifying && (
+      <DocumentClassifyDialog
+        eventId={eventId!}
+        doc={classifying}
+        onClose={() => setClassifying(null)}
+        onSaved={updated => setSource(prev => prev && ({
+          ...prev,
+          documents: prev.documents.map(d => (d.id === updated.id ? { ...d, ...updated } : d)),
+        }))}
+      />
+    )}
+
     {pendingHide && (
       <div
         onClick={() => setPendingHide(null)}
@@ -1137,7 +1186,7 @@ export default function CommuniquesPage() {
             fontSize: 14, lineHeight: 1.5, marginBottom: 20,
             color: 'var(--c-text-muted)',
           }}>
-            „{pendingHide.fileName}“ wird aus der Standardliste entfernt und ist
+            „{documentLabel(pendingHide)}“ wird aus der Standardliste entfernt und ist
             für Athlet:innen nicht mehr sichtbar. Du kannst es jederzeit wieder
             einblenden.
           </div>

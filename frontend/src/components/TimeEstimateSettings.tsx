@@ -129,6 +129,26 @@ export default function TimeEstimateSettings() {
       </div>
 
       <div className="card mb-3">
+        <p className="text-sm" style={{ fontWeight: 600, marginBottom: 4 }}>Hinweis zur Erkennung von Fotos</p>
+        <p className="text-xs text-muted" style={{ marginBottom: 10 }}>
+          Abfotografierte Kommuniqués werden über ihren Kopfbereich zugeordnet. Sind die
+          Aushänge bei einer Veranstaltung anders aufgebaut als üblich, kann das hier
+          in einem Satz ergänzt werden — zum Beispiel „Die Kommuniqué-Nummer steht unten
+          rechts". Leer lassen, solange die Zuordnung stimmt.
+        </p>
+        <div className="form-group" style={{ margin: 0 }}>
+          <textarea
+            className="form-input"
+            rows={2}
+            maxLength={500}
+            placeholder="(kein Zusatz)"
+            value={settings.docRecognitionHint ?? ''}
+            onChange={e => patch({ docRecognitionHint: e.target.value })}
+          />
+        </div>
+      </div>
+
+      <div className="card mb-3">
         <p className="text-sm" style={{ fontWeight: 600, marginBottom: 10 }}>Massenstart (Punktefahren, Madison, Scratch, Temporunden, Omnium)</p>
         <div className="grid-3" style={{ gap: 10 }}>
           <NumField label="Startaufstellung" value={settings.massStartSetupMin} suffix="Min." onChange={v => patch({ massStartSetupMin: v })} />

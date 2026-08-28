@@ -426,6 +426,36 @@ model CommuniqueDocument {
   disciplineCode String?  // z.B. "MA", "PR", "OM", "TR", "VF" — aus Dateinamen erkannt
   phaseLabel     String?  // z.B. "1. VL", "A-Lauf", "Finale" — aus Dateinamen erkannt
 
+  // ─── Bild-Erkennung (Fotos aus der eigenen Ablage) ─────────────────────────
+  // Ein abfotografierter Aushang heißt "IMG-20260919-WA0037.jpg" und gibt über
+  // seinen Namen nichts her. Deshalb wird bei Bildern der KOPF DES DOKUMENTS
+  // ausgewertet — dort stehen Kommuniqué-Nummer, Altersklasse, Disziplin, Phase
+  // und Art. Für PDFs bleibt die Erkennung über den Dateinamen unverändert.
+  //
+  // displayName ersetzt in der Anzeige den Dateinamen. Der Dateiname selbst
+  // bleibt unangetastet: er ist zusammen mit sourceId der eindeutige Schlüssel,
+  // über den der Poll ein Dokument wiedererkennt.
+  displayName      String?
+  // Erkannte Kommuniqué-Nummer, normalisiert als "K68-05". Im Dokumentkopf
+  // steht sie ohne K ("Kommunique: 68-05"). Wird von applySupersessions
+  // bevorzugt vor dem Dateinamen benutzt, damit auch Fotos eine ältere Fassung
+  // desselben Aushangs verdrängen können.
+  communiqueNumber String?
+  // false = Klassifizierung stammt aus Dateiname oder Bild und darf beim
+  // nächsten Poll neu berechnet werden. true = von Hand gesetzt und bleibt.
+  // Ohne dieses Feld würde toReclassify in pollSource jede Korrektur beim
+  // nächsten Abruf wieder überschreiben (gleiches Muster wie
+  // ScheduleEntry.linkedDocumentManual).
+  classificationManual Boolean @default(false)
+  imageAnalyzedAt  DateTime? // wann das Bild zuletzt ausgewertet wurde
+  // Selbsteinschätzung der Auswertung. false = Zuordnung wurde trotzdem
+  // gesetzt, ist aber unsicher und wird in der Liste gelb markiert.
+  // null = noch nicht ausgewertet oder kein Bild.
+  imageConfident   Boolean?
+  // Stand des Auswertungs-Prompts (siehe IMAGE_ANALYSIS_VERSION in
+  // imageClassify.ts). Kleiner = wird beim nächsten Poll neu ausgewertet.
+  imageVersion     Int @default(0)
+
 // ─── MEV-Erkennung (nur bei STARTLISTE-Dokumenten, per Hintergrund-Analyse) ──
   mevNames      String[]  @default([]) // Namen erkannter MEV-Fahrer/Teams (nur Namen, für Abwärtskompatibilität)
   mevRiders     Json      @default("[]") // [{ name, startNo, lauf, laufLabel, team, startPos }] — startPos: "ZG"/"GG" (Ziel-/Gegengerade, Einzelstart) bzw. "B"/"M" (Ballustrade/Messlinie, Massenstart); laufLabel: textueller Lauf wie "Platz 3/4" (Sprint-Finale)
@@ -612,6 +642,12 @@ model AppSettings {
   // Landesverband-Kürzel, nach dem in Startlisten gesucht wird (MEV-Erkennung,
   // Lauf-Nummer, Team-Namen). Macht die App über MEV hinaus wiederverwendbar.
   mevLv String @default("MEV")
+
+  // Freitext, der an die Bild-Auswertung angehängt wird. Zweck: Wenn der
+  // Aufbau der Aushänge bei einer Veranstaltung von der Erwartung abweicht,
+  // lässt sich das hier OHNE Deploy nachziehen (z.B. "Die Kommuniqué-Nummer
+  // steht unten rechts"). Leer = kein Zusatz.
+  docRecognitionHint String @default("")
 
   // Massenstart-Formel: Startaufstellung + (Min./Runde × Runden) + Abräumen
   massStartSetupMin    Float @default(5)

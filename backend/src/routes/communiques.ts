@@ -6,6 +6,10 @@ import { requireAdmin } from '../middleware/auth';
 import { listShareFiles } from '../lib/webdav';
 import { listHtmlFiles, scanHtmlSections } from '../lib/htmlScrape';
 import { listDriveFiles, isPdfFileName } from '../lib/gdrive';
+import {
+  IMAGE_ANALYSIS_VERSION, analyzeImageForDocument, classifyImageDocument,
+  buildDisplayName, isImageFileName, isAnalyzableImage,
+} from '../lib/imageClassify';
 import { fetchDocumentFile } from '../lib/remoteSource';
 import { classifyFileName, parseCommuniqueVersion } from '../lib/classify';
 import { getCachedFile, setCachedFile } from '../lib/fileCache';
@@ -119,6 +123,76 @@ router.post('/:eventId/poll', async (req, res, next) => {
 
     const newDocs = await pollSource(source);
     res.json({ newCount: newDocs.length, newDocs });
+  } catch (e) { next(e); }
+});
+
+// PATCH /api/communiques/:eventId/documents/:docId/classification
+// Zuordnung von Hand setzen. Markiert das Dokument als classificationManual,
+// damit weder der Poll noch eine erneute Bild-Auswertung sie überschreibt.
+const ClassificationSchema = z.object({
+  communiqueNumber: z.string().max(20).nullable().optional(),
+  ak: z.string().min(1).max(40).optional(),
+  disciplineCode: z.string().max(4).nullable().optional(),
+  phaseLabel: z.string().max(60).nullable().optional(),
+  docType: z.enum(['STARTLISTE', 'ERGEBNIS', 'ZEITPLAN', 'SONSTIGES']).optional(),
+  displayName: z.string().max(200).nullable().optional(),
+  // false zurücksetzen = wieder der automatischen Erkennung überlassen
+  classificationManual: z.boolean().optional(),
+});
+
+router.patch('/:eventId/documents/:docId/classification', requireAdmin, async (req, res, next) => {
+  try {
+    const parsed = ClassificationSchema.safeParse(req.body);
+    if (!parsed.success) { res.status(400).json(parsed.error.flatten()); return; }
+
+    const doc = await prisma.communiqueDocument.findUnique({ where: { id: req.params.docId } });
+    if (!doc) { res.status(404).json({ error: 'Dokument nicht gefunden' }); return; }
+
+    const d = parsed.data;
+    const manual = d.classificationManual ?? true;
+    const updated = await prisma.communiqueDocument.update({
+      where: { id: doc.id },
+      data: {
+        ...(d.communiqueNumber !== undefined ? { communiqueNumber: d.communiqueNumber } : {}),
+        ...(d.ak !== undefined ? { ak: d.ak } : {}),
+        ...(d.disciplineCode !== undefined ? { disciplineCode: d.disciplineCode } : {}),
+        ...(d.phaseLabel !== undefined ? { phaseLabel: d.phaseLabel } : {}),
+        ...(d.docType !== undefined ? { docType: d.docType } : {}),
+        ...(d.displayName !== undefined ? { displayName: d.displayName } : {}),
+        classificationManual: manual,
+        // Von Hand gesetzt heißt: die Unsicherheits-Markierung ist erledigt.
+        // Wird die Zuordnung wieder freigegeben, greift beim nächsten Poll die
+        // automatische Auswertung erneut (imageVersion zurücksetzen).
+        ...(manual ? { imageConfident: true } : { imageVersion: 0 }),
+      },
+    });
+    res.json(updated);
+  } catch (e) { next(e); }
+});
+
+// POST /api/communiques/:eventId/documents/:docId/recognize
+// Erkennung prüfen, ohne etwas zu speichern. Zweck: am Vorabend einer
+// Veranstaltung testen, ob die Aushänge gelesen werden — und bei Bedarf den
+// Hinweistext in den Einstellungen nachziehen, statt am Renntag zu deployen.
+router.post('/:eventId/documents/:docId/recognize', requireAdmin, async (req, res, next) => {
+  try {
+    const doc = await prisma.communiqueDocument.findUnique({
+      where: { id: req.params.docId },
+      include: { source: true },
+    });
+    if (!doc) { res.status(404).json({ error: 'Dokument nicht gefunden' }); return; }
+    if (!isAnalyzableImage(doc.fileName)) {
+      res.status(400).json({
+        error: isImageFileName(doc.fileName)
+          ? 'Dieses Bildformat kann nicht ausgewertet werden (HEIC/HEIF). Bitte von Hand zuordnen.'
+          : 'Die Erkennung aus dem Dokument gibt es nur für Fotos. PDFs werden über den Dateinamen zugeordnet.',
+      });
+      return;
+    }
+
+    const result = await classifyImageDocument(doc, doc.source);
+    if (!result) { res.status(422).json({ error: 'Aus diesem Bild ließ sich nichts lesen.' }); return; }
+    res.json({ ...result, displayName: buildDisplayName(result, doc.fileName) });
   } catch (e) { next(e); }
 });
 
@@ -308,12 +382,19 @@ export async function applySupersessions(sourceId: string): Promise<void> {
     select: {
       id: true, fileName: true, ak: true, disciplineCode: true,
       phaseLabel: true, docType: true, supersededById: true,
+      communiqueNumber: true,
     },
   });
 
+  // Bei Fotos steht die Nummer nicht im Dateinamen, sondern wurde aus dem
+  // Dokumentkopf gelesen. Sie hat deshalb Vorrang; fehlt sie, bleibt es beim
+  // bisherigen Verhalten (Dateiname).
+  const versionKey = (d: { fileName: string; communiqueNumber?: string | null }) =>
+    parseCommuniqueVersion(d.communiqueNumber ?? d.fileName);
+
   const groups = new Map<string, typeof docs>();
   for (const d of docs) {
-    const { number } = parseCommuniqueVersion(d.fileName);
+    const { number } = versionKey(d);
     if (number === Number.MAX_SAFE_INTEGER) continue; // keine K-Nummer → nicht versionierbar
     const key = [number, d.ak, d.disciplineCode ?? '', d.phaseLabel ?? '', d.docType].join('::');
     const bucket = groups.get(key);
@@ -328,7 +409,7 @@ export async function applySupersessions(sourceId: string): Promise<void> {
   for (const group of groups.values()) {
     if (group.length < 2) continue;
     const winner = [...group].sort((a, b) =>
-      parseCommuniqueVersion(a.fileName).suffix.localeCompare(parseCommuniqueVersion(b.fileName).suffix)
+      versionKey(a).suffix.localeCompare(versionKey(b).suffix)
     ).at(-1)!;
     for (const d of group) {
       if (d.id === winner.id) continue;
@@ -465,6 +546,13 @@ export async function pollSource(source: CommuniqueSource) {
   const toReclassify = known.filter(d => {
     const remote = remoteByName.get(d.fileName);
     if (!remote || remote.modifiedAt.getTime() !== d.remoteModifiedAt.getTime()) return false; // steckt schon in toCreate
+    // Von Hand gesetzte Zuordnungen sind unantastbar.
+    if (d.classificationManual) return false;
+    // Bilder ebenfalls: ihre Zuordnung stammt aus dem Dokumentkopf, nicht aus
+    // dem Dateinamen. Ohne diese Ausnahme würde classifyFileName bei JEDEM Poll
+    // ein "IMG-20260919-WA0037.jpg" auf "Alle/SONSTIGES" zurücksetzen und die
+    // Bild-Erkennung damit sofort wieder zunichtemachen.
+    if (isImageFileName(d.fileName)) return false;
     const fresh = classifyFileName(d.fileName);
     return fresh.docType !== d.docType || fresh.ak !== d.ak || fresh.discipline !== d.discipline
       || fresh.disciplineCode !== d.disciplineCode || fresh.phaseLabel !== d.phaseLabel;
@@ -485,10 +573,22 @@ export async function pollSource(source: CommuniqueSource) {
     created = await prisma.$transaction(
       toCreate.map(f => {
         const { docType, ak, discipline, disciplineCode, phaseLabel } = classifyFileName(f.fileName);
+        const existing = knownMap.get(f.fileName);
+        // Wurde die Zuordnung von Hand gesetzt, bleibt sie auch dann stehen,
+        // wenn die Datei in der Quelle ersetzt wurde — nur Zeitstempel und
+        // Adresse werden nachgezogen.
+        const update = existing?.classificationManual
+          ? { remoteModifiedAt: f.modifiedAt, remoteUrl: f.url ?? null }
+          : {
+              remoteModifiedAt: f.modifiedAt, docType, ak, discipline, disciplineCode, phaseLabel,
+              remoteUrl: f.url ?? null,
+              // Bild wurde ausgetauscht → erneut auswerten.
+              ...(isImageFileName(f.fileName) ? { imageVersion: 0, displayName: null } : {}),
+            };
         return prisma.communiqueDocument.upsert({
           where: { sourceId_fileName: { sourceId, fileName: f.fileName } },
           create: { sourceId, fileName: f.fileName, docType, ak, discipline, disciplineCode, phaseLabel, remoteModifiedAt: f.modifiedAt, remoteUrl: f.url ?? null },
-          update: { remoteModifiedAt: f.modifiedAt, docType, ak, discipline, disciplineCode, phaseLabel, remoteUrl: f.url ?? null },
+          update,
         });
       })
     );
@@ -566,12 +666,44 @@ export async function pollSource(source: CommuniqueSource) {
     await autoImportScheduleFromDocument(eventId, doc, source);
   }
 
+  // ── Bild-Auswertung für abfotografierte Kommuniqués ────────────────────────
+  // Muss VOR applySupersessions laufen: erst danach steht communiqueNumber am
+  // Dokument, und ohne die kann eine neuere Fassung desselben Aushangs die
+  // ältere nicht verdrängen.
+  //
+  // Trigger ist imageVersion (nicht imageAnalyzedAt): auch ein fehlgeschlagener
+  // Versuch setzt die Version, sonst würde der Poll dasselbe unlesbare Foto bei
+  // jedem Durchlauf erneut herunterladen und erneut ans Modell schicken.
+  // Sequentiell, aus demselben Grund wie bei der MEV-Analyse weiter unten.
+  const imageDocs = await prisma.communiqueDocument.findMany({
+    where: {
+      sourceId,
+      classificationManual: false,
+      imageVersion: { lt: IMAGE_ANALYSIS_VERSION },
+    },
+    select: { id: true, fileName: true, remoteUrl: true, classificationManual: true },
+  });
+  // isAnalyzableImage statt isImageFileName: HEIC-Aufnahmen sind Bilder, können
+  // vom Modell aber nicht gelesen werden. Sie bleiben unangetastet in der Liste
+  // stehen und werden von Hand zugeordnet.
+  const analyzableImages = imageDocs.filter(d => isAnalyzableImage(d.fileName));
+  let imagesAnalyzed = 0;
+  for (const doc of analyzableImages) {
+    try {
+      await analyzeImageForDocument(doc, source);
+      imagesAnalyzed++;
+    } catch (err) {
+      // Ein einzelnes Foto darf den Poll nicht abbrechen.
+      console.error(`[poll] Bild-Auswertung fehlgeschlagen (${doc.fileName}):`, err);
+    }
+  }
+
   // ── Automatische Ersetzung (K12 → K12A → K12B) ─────────────────────────────
   // Nur nötig, wenn sich Dokumente geändert haben — eine neue Fassung ist immer
   // ein „created" (neuer Dateiname). Blendet veraltete Fassungen aus und hängt
   // bestehende Zeitplan-Verknüpfungen auf den Nachfolger um. Läuft VOR autoMatch,
   // damit ersetzte Dokumente dort schon als Kandidaten ausgeschlossen sind.
-  if (created.length > 0 || toReclassify.length > 0) {
+  if (created.length > 0 || toReclassify.length > 0 || imagesAnalyzed > 0) {
     try {
       await applySupersessions(sourceId);
     } catch (err) {

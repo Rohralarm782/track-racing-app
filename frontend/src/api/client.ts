@@ -263,6 +263,47 @@ export interface CommuniqueDocument {
   // Gesetzt, wenn die Datei beim letzten vollständigen Poll nicht mehr in der
   // Quelle lag (ISO-Zeitstempel des ersten Fehlens).
   missingSince?: string | null;
+
+  // ─── Bild-Erkennung (Fotos aus einer eigenen Ablage) ──────────────────────
+  // displayName ersetzt in der Anzeige den Dateinamen; null = Dateiname zeigen.
+  displayName?: string | null;
+  communiqueNumber?: string | null;
+  // true = von Hand zugeordnet, bleibt bei jedem weiteren Abruf erhalten.
+  classificationManual?: boolean;
+  imageAnalyzedAt?: string | null;
+  // false = ausgewertet, aber unsicher — wird in der Liste gelb markiert.
+  // null/undefined = kein Bild oder noch nicht ausgewertet.
+  imageConfident?: boolean | null;
+}
+
+// Was der Betrachter und die Liste anzeigen sollen: erkannter Name, sonst
+// Dateiname. An einer Stelle, damit Liste, Betrachter und Zeitplan nicht
+// auseinanderlaufen.
+export function documentLabel(doc: Pick<CommuniqueDocument, 'fileName' | 'displayName'>): string {
+  return doc.displayName?.trim() || doc.fileName;
+}
+
+// Ergebnis der Erkennungs-Prüfung (nichts gespeichert).
+export interface RecognitionPreview {
+  communiqueNumber: string | null;
+  ak: string;
+  disciplineCode: string | null;
+  disciplineName: string | null;
+  phaseLabel: string | null;
+  docType: DocType;
+  discipline: Discipline;
+  confident: boolean;
+  displayName: string;
+}
+
+export interface ClassificationUpdate {
+  communiqueNumber?: string | null;
+  ak?: string;
+  disciplineCode?: string | null;
+  phaseLabel?: string | null;
+  docType?: DocType;
+  displayName?: string | null;
+  classificationManual?: boolean;
 }
 
 export type CommuniqueSourceType = 'WEBDAV' | 'HTML' | 'GDRIVE';
@@ -427,6 +468,14 @@ export const communiquesApi = {
   setSource: (eventId: string, config: CommuniqueSourceConfig) =>
     api.post<CommuniqueSource>(`/api/communiques/${eventId}`, config),
 
+  // Zuordnung von Hand setzen (bleibt bei weiteren Abrufen erhalten).
+  setClassification: (eventId: string, docId: string, data: ClassificationUpdate) =>
+    api.patch<CommuniqueDocument>(`/api/communiques/${eventId}/documents/${docId}/classification`, data),
+
+  // Erkennung prüfen, ohne zu speichern.
+  recognize: (eventId: string, docId: string) =>
+    api.post<RecognitionPreview>(`/api/communiques/${eventId}/documents/${docId}/recognize`, {}),
+
   scanSections: (eventId: string, htmlPageUrls: string[]) =>
     api.post<CommuniqueSectionScan>(`/api/communiques/${eventId}/scan-sections`, { htmlPageUrls }),
 
@@ -586,6 +635,8 @@ export const raceFuehrungsplanApi = {
 export interface AppSettings {
   id: string;
   mevLv: string;
+  // Freitext-Zusatz für die Auswertung abfotografierter Kommuniqués.
+  docRecognitionHint?: string;
   massStartSetupMin: number;
   massStartPerRoundMin: number;
   massStartClearMin: number;

@@ -11,4 +11,4 @@
 // angezeigt: der Zeitstempel sagt, WANN dieses Gerät zuletzt geladen hat, die
 // Versionsnummer sagt, WAS drin ist. Trackside sind beide Angaben nötig, um zu
 // klären, ob ein fremdes Handy auf einem alten Stand hängt.
-export const APP_VERSION = '1.4.1';
+export const APP_VERSION = '1.5.0';

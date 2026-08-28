@@ -15,6 +15,9 @@ router.get('/', async (req, res, next) => {
 
 const SettingsSchema = z.object({
   mevLv: z.string().min(1).max(20).optional(),
+  // Freitext-Zusatz für die Bild-Auswertung, siehe imageClassify.ts. Länge
+  // begrenzt, damit niemand versehentlich einen ganzen Text in den Prompt kippt.
+  docRecognitionHint: z.string().max(500).optional(),
   massStartSetupMin: z.number().min(0).optional(),
   massStartPerRoundMin: z.number().min(0).optional(),
   massStartClearMin: z.number().min(0).optional(),
