@@ -1,0 +1,1081 @@
+* { box-sizing: border-box; }
+    /* 100dvh statt 100vh: auf Android One UI ist 100vh groesser als der
+       wirklich sichtbare Bereich, der untere Rand rutscht sonst unter
+       die Systemleiste. 100% bleibt als Ersatz fuer alte Browser davor. */
+    html, body { height: 100%; height: 100dvh; margin: 0; font-family: sans-serif; }
+    #map { height: 100%; height: 100dvh; }
+    /* Attribution sitzt sonst unter den Knoepfen der Bedienleiste. */
+    .leaflet-control-attribution {
+      margin-bottom: calc(46px + env(safe-area-inset-bottom, 0px)) !important;
+    }
+    @media (min-width: 768px) {
+      .leaflet-control-attribution { margin-bottom: 0 !important; }
+    }
+
+    /* LOGIN MODAL */
+    #loginModal {
+      display: flex;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      z-index: 10000;
+      background: rgba(0,0,0,0.6);
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    #loginModal.hidden { display: none !important; }
+    .loginBox {
+      background: white;
+      padding: 40px;
+      border-radius: 12px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+      width: 100%;
+      max-width: 380px;
+      text-align: center;
+    }
+    .loginBox h2 { margin: 0 0 10px 0; color: #333; font-size: 24px; }
+    .loginBox p { color: #666; margin: 10px 0 25px 0; font-size: 14px; }
+    .loginBox input {
+      width: 100%; padding: 12px; margin-bottom: 15px;
+      border: 2px solid #ddd; border-radius: 6px; font-size: 14px;
+      transition: border-color 0.3s;
+    }
+    .loginBox input:focus { outline: none; border-color: #2196F3; }
+    .loginBox button {
+      width: 100%; padding: 12px; background: #2196F3; color: white;
+      border: none; border-radius: 6px; cursor: pointer;
+      font-size: 16px; font-weight: bold; transition: background 0.3s;
+    }
+    .loginBox button:hover { background: #1976D2; }
+    .loginBox .error { color: #d32f2f; font-size: 13px; margin-top: 15px; min-height: 20px; }
+
+    /* BUTTONS */
+    .btnGroup { display: none; }
+    .btn {
+      padding: 10px 14px; background: white; border: 1px solid #ccc;
+      border-radius: 6px; cursor: pointer; font-size: 13px;
+      font-family: sans-serif; transition: all 0.2s;
+      white-space: nowrap; flex: 1; min-width: 120px;
+    }
+    .btn:hover { background: #f5f5f5; }
+    .btn.primary { background: #2196F3; color: white; border-color: #1976D2; }
+    .btn.primary:hover { background: #1976D2; }
+    .btn.logout { background: #f44336; color: white; border-color: #c62828; }
+    .btn.logout:hover { background: #d32f2f; }
+    .btn.reset { color: #f44336; }
+    .btn.wakeLock { color: #333; }
+    .btn.wakeLock.active { border-color: #ffc107; color: #ff6f00; background: #fff8e1; }
+    .btn.hidden { display: none; }
+    .btn.rain-active { border-color: #1565c0; color: #0d47a1; background: #e3f2fd; }
+    .btn.autoZoom.active { border-color: #4caf50; color: #2e7d32; background: #f1f8e9; }
+
+    /* OPTIONS MENU */
+    /* Die untere Leiste lag in der installierten App genau unter der
+       Android-Systemleiste: sichtbar, aber der Tipp landete auf Zurueck
+       bzw. Home. env() liefert auf Desktop und im normalen Browser den
+       Ersatzwert 0px, dort aendert sich also nichts. */
+    #optionsBtn {
+      position: absolute;
+      bottom: calc(10px + env(safe-area-inset-bottom, 0px)); left: 10px; right: calc(50% + 5px);
+      /* Ueber der Rennleiste (999) und der Leaflet-Zoomleiste (1000):
+         die Bedienknoepfe sind das Letzte, was verdeckt werden darf. */
+      z-index: 1002; padding: 10px 14px; background: white;
+      border: 1px solid #ccc; border-radius: 6px;
+      cursor: pointer; font-size: 13px; font-family: sans-serif;
+      transition: all 0.2s; width: auto;
+    }
+    #optionsBtn:hover { background: #f5f5f5; }
+    #optionsMenu {
+      position: absolute;
+      bottom: calc(50px + env(safe-area-inset-bottom, 0px)); left: 10px; right: 10px;
+      z-index: 999;
+      background: white; border: 1px solid #ccc;
+      border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      overflow: hidden; display: flex; flex-direction: column;
+    }
+    #optionsMenu.hidden { display: none; }
+    #optionsMenu .btn {
+      width: 100%; border: none; border-bottom: 1px solid #eee;
+      border-radius: 0; flex: 0; min-width: unset; margin: 0;
+    }
+    #optionsMenu .btn:last-child { border-bottom: none; }
+    #optionsMenu .btn:hover { background: #f5f5f5; }
+
+    @media (min-width: 768px) {
+      #optionsBtn  { position: absolute; top: 10px; left: auto; right: 120px; bottom: auto; width: auto; }
+      #taktikBtn   { top: 10px; right: 10px; bottom: auto; left: auto; width: auto; }
+      #optionsMenu { position: absolute; top: 50px; left: auto; right: 10px; bottom: auto; width: 230px; flex-direction: column; }
+      #optionsMenu .btn { width: 100%; }
+      #status { right: auto; left: 10px; width: fit-content; }
+    }
+
+    #teamCarToggle {
+      display: flex; align-items: center; gap: 8px;
+      cursor: pointer; user-select: none;
+      padding: 10px 14px; background: white;
+      border: none; border-bottom: 1px solid #eee;
+      width: 100%; font-size: 13px; font-family: sans-serif;
+      color: #666; transition: all 0.2s;
+    }
+    #teamCarToggle:hover { background: #f5f5f5; color: #333; }
+    #teamCarToggle.hidden { display: none; }
+    #teamCarToggle input[type="checkbox"] { cursor: pointer; width: 16px; height: 16px; accent-color: #e53935; flex-shrink: 0; }
+    #teamCarToggle.active { background: #fff3e0; color: #c62828; }
+    #optionsMenu #teamCarToggle:last-child { border-bottom: none; }
+
+    /* GESAMTE STRECKE (ab 2.6.6)
+       Dritter Knopf in der Spalte der Leaflet-Zoomleiste: gleiche
+       Aussenbreite (34 px), gleicher Rahmen, gleiche Rundung - er soll
+       aussehen, als gehoerte er dazu.
+       Die Zoomleiste endet bei rund 74 px (10 px Rand + zwei Knoepfe
+       a 30 px + 2 px Rahmen); 82 px lassen darunter denselben Abstand.
+       Bewusst OHNE env(safe-area-inset-top): die Zoomleiste rechnet es
+       auch nicht ein, und der Knopf soll unter ihr bleiben statt neben
+       ihr zu haengen.
+       z-index 1001: ueber Zoomleiste (1000) und Rennleiste (999),
+       unter Optionen und Taktik (1002). Die Rennleiste beginnt bei
+       left:52px und wird deshalb nicht verdeckt. */
+    #fitBtn {
+      position: absolute; top: 82px; left: 10px;
+      z-index: 1001; width: 34px; height: 34px; padding: 0;
+      display: flex; align-items: center; justify-content: center;
+      background: #fff; border: 2px solid rgba(0,0,0,0.2);
+      border-radius: 4px; cursor: pointer; color: #333;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #fitBtn:hover  { background: #f4f4f4; }
+    #fitBtn:active { background: #e9e9e9; }
+    #fitBtn svg {
+      width: 20px; height: 20px; fill: none; stroke: currentColor;
+      stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+    }
+    /* Im Streckenmodus liegt oben die Eingabeleiste (z-index 1000, auf
+       dem Handy mehrzeilig). Solange sie offen ist, tritt der Knopf
+       zurueck, statt ueber ihrem Eingabefeld zu liegen. Reines CSS -
+       der Geschwisterselektor greift, weil #fitBtn im DOM hinter
+       #streckenBar steht. */
+    #streckenBar:not(.hidden) ~ #fitBtn { display: none; }
+
+    /* NAECHSTE PUNKTE (ab 2.7.0)
+       Liste am linken Rand, unter dem Knopf "Gesamte Strecke": Symbol
+       und Kilometer, sonst nichts. Namen bleiben draussen - im
+       fahrenden Auto wird die Zahl gelesen, nicht der Text, und eine
+       Spalte aus Namen waere je nach Wertung verschieden breit.
+       top:124px = 82px Knopfoberkante + 34px Knopf + 8px Abstand,
+       dieselbe Luecke wie zwischen Zoomleiste und Knopf.
+       pointer-events:none wie bei der Rennuhr: die Liste darf keinen
+       Kartentipp abfangen, sonst laesst sich hinter ihr nicht mehr
+       verschieben.
+       z-index 999 wie die Rennleiste, also UNTER dem Knopf (1001) -
+       ueberlappen kann sich beides ohnehin nicht. */
+    #naechstePunkte {
+      position: absolute; top: 124px; left: 10px; z-index: 999;
+      width: max-content; min-width: 78px;
+      padding: 3px; border-radius: 8px;
+      background: rgba(255,255,255,0.90); border: 1px solid #ccc;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+      font-size: 13px; font-variant-numeric: tabular-nums; color: #333;
+      pointer-events: none;
+    }
+    #naechstePunkte.hidden { display: none; }
+    /* Grund statt stiller Ausblendung: der Kasten sagt, warum er leer
+       ist. Zurueckgenommen, damit er nicht wie eine Meldung wirkt. */
+    #naechstePunkte.grund { color: #90a4ae; }
+    #naechstePunkte .npG { padding: 3px 6px; white-space: nowrap; font-size: 12px; }
+    #naechstePunkte .npZ {
+      display: flex; align-items: center; gap: 7px;
+      padding: 3px 6px; white-space: nowrap;
+    }
+    #naechstePunkte .npZ + .npZ { border-top: 1px solid #f2f4f5; }
+    #naechstePunkte .npI { font-size: 15px; width: 19px; text-align: center; }
+    #naechstePunkte .npKm { margin-left: auto; font-weight: 500; }
+    /* Punkte der naechsten Runde: dieselbe Zeile, nur zurueckgenommen.
+       Eine Rundennummer daneben wuerde die Liste doppelt so breit
+       machen; der Abstand sagt dasselbe. */
+    #naechstePunkte .npZ.spaeter { color: #90a4ae; }
+    /* Zonenende: durchgestrichenes Symbol. Anfang und Ende einer
+       Verpflegungszone tragen dasselbe Zeichen und waeren sonst nicht
+       zu unterscheiden. */
+    #naechstePunkte .npI.ende { position: relative; }
+    #naechstePunkte .npI.ende::after {
+      content: ''; position: absolute; left: -1px; right: -1px; top: 50%;
+      border-top: 2px solid #c62828; transform: rotate(-20deg);
+    }
+    /* Abseits der Strecke - Abkuerzung, Umleitung, Konvoi: die Zahlen
+       stehen weiter da, sind aber blass, und im Kopf steht, wie weit
+       die Projektion danebenliegt. */
+    #naechstePunkte.abseits { color: #b0bec5; }
+    #naechstePunkte .npWeg {
+      padding: 3px 6px; font-size: 11px; color: #c62828; white-space: nowrap;
+    }
+    @media (max-width: 767px) {
+      #naechstePunkte {
+        font-size: 12px; background: rgba(255,255,255,0.86);
+        box-shadow: 0 1px 3px rgba(0,0,0,0.10);
+      }
+    }
+    /* Im Streckenmodus tritt die Liste zurueck - wie der Knopf
+       darueber. Der Geschwisterselektor greift, weil #naechstePunkte
+       im DOM hinter #streckenBar steht. */
+    #streckenBar:not(.hidden) ~ #naechstePunkte { display: none; }
+
+    /* CHANGE 1: Status hidden but JS logic intact */
+    #status {
+      display: none !important;
+      position: absolute; top: 10px; right: 10px;
+      z-index: 999; padding: 8px 14px; border-radius: 6px;
+      font-size: 13px; background: white; border: 1px solid #ccc; font-weight: 500;
+    }
+    /* Oben mittig: links sitzt die Leaflet-Zoomleiste, rechts auf dem
+       Desktop der Taktik-Knopf. Die Mitte ist die einzige Stelle, die
+       auf beiden Groessen frei bleibt. */
+    #raceClock {
+      position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+      z-index: 999; padding: 6px 14px; border-radius: 6px;
+      background: rgba(255,255,255,0.94); border: 1px solid #ccc;
+      font-size: 14px; font-weight: 500; font-variant-numeric: tabular-nums;
+      color: #333; white-space: nowrap; pointer-events: none;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+    }
+    #raceClock.hidden { display: none; }
+
+    /* RENNLEISTE - eine Zeile je laufendem Rennen, ab 2.1.0 zugleich
+       die Rennauswahl. Sie beginnt rechts neben der Leaflet-Zoomleiste
+       und endet auf dem Desktop vor der Knopfreihe: die Chipleiste aus
+       2.0.0 lag genau ueber dem Optionen-Knopf und machte ihn
+       unbedienbar.
+       pointer-events liegt nur auf den Zeilen selbst - eine kuenftige
+       Ueberdeckung kann damit keinen Knopf mehr lahmlegen. */
+    #raceClock.rennliste {
+      top: 8px; left: 52px; right: 8px; transform: none;
+      max-width: none; text-align: left; white-space: normal;
+      display: flex; flex-direction: column; gap: 4px;
+      padding: 4px; border-radius: 8px;
+      font-size: 13px; font-weight: 400;
+    }
+    @media (min-width: 768px) {
+      #raceClock.rennliste { right: 250px; }
+    }
+    /* HANDY-ANSICHT (ab 2.5.2). Bis 2.5.1 spannte die Leiste ueber
+       left:52px/right:8px die ganze Restbreite auf - bei zwei kurzen
+       Kuerzeln war der Kasten zu drei Vierteln leer und verdeckte
+       trotzdem ein Sechstel der Karte. Jetzt ist er nur so breit wie
+       sein Inhalt und insgesamt zurueckhaltender.
+       max-width faengt lange Rennnamen ab, damit nichts unter den
+       rechten Rand laeuft; die Zahlen bleiben untereinander, weil
+       .rcLapBox weiterhin margin-left:auto traegt.
+       Die Rundenknoepfe behalten bewusst ihre 26px: darunter wird das
+       Treffen im fahrenden Auto zur Gluecksache. Ab 768px (Desktop)
+       aendert sich nichts. */
+    @media (max-width: 767px) {
+      #raceClock.rennliste {
+        right: auto; width: max-content; max-width: calc(100vw - 60px);
+        gap: 2px; padding: 3px;
+        font-size: 12px;
+        background: rgba(255,255,255,0.86);
+        box-shadow: 0 1px 3px rgba(0,0,0,0.10);
+      }
+      #raceClock.rennliste .rcRow { padding: 2px 5px; gap: 6px; }
+      #raceClock.rennliste .rcRow + .rcRow { border-top-color: #f2f4f5; }
+      #raceClock.rennliste .rcD { width: 8px; height: 8px; }
+      #raceClock.rennliste .rcLapTxt { min-width: 54px; }
+    }
+
+    /* Leiste des Streckenmodus. Sitzt oben, weil unten die Bedienleiste
+       und die Rennuhr liegen; auf dem Handy bricht sie um. */
+    #streckenBar {
+      position: absolute; top: 10px; left: 10px; right: 10px; z-index: 1000;
+      background: #fff; border: 1px solid var(--blau, #1565c0); border-radius: 8px;
+      padding: 8px 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.18);
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      font-size: 13px;
+    }
+    #streckenBar.hidden { display: none; }
+
+    /* Versionsanzeige im Fuss der erweiterten Einstellungen: klein und
+       grau, bis sie veraltet ist. */
+    #versionInfo {
+      display: block; margin-bottom: 9px; text-align: center;
+      font-size: 12px; color: #999;
+      font-variant-numeric: tabular-nums;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    #versionInfo.veraltet { color: #c62828; font-weight: 500; }
+    #streckenBar .sbTitel { font-weight: 600; color: #1565c0; }
+    #streckenBar .sbHint  { color: #777; flex: 1; }
+    #streckenBar input {
+      width: 78px; padding: 6px 8px; border: 1px solid #ccc; border-radius: 6px;
+      font-size: 13px; font-family: inherit; text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+    #streckenBar .btn { padding: 6px 12px; font-size: 13px; }
+    /* Markerlage: andere Randfarbe, damit auf einen Blick klar ist,
+       dass gerade NICHT der Zielstrich gesetzt wird. */
+    #streckenBar.mkModus { border-color: #6a1b9a; }
+    #streckenBar.mkModus .sbTitel { color: #6a1b9a; }
+    #streckenBar input.hidden,
+    #streckenBar .btn.hidden { display: none; }
+    @media (max-width: 560px) {
+      #streckenBar .sbHint { flex-basis: 100%; order: 3; font-size: 12px; }
+    }
+    /* Naechster Streckenpunkt. Bricht auf schmalen Geraeten in eine
+       eigene Zeile, damit die Uhr nicht aus dem Kasten laeuft. */
+    #raceClock .rcNext {
+      color: #6a1b9a; font-weight: 500; margin-left: 10px;
+      padding-left: 10px; border-left: 1px solid #ddd;
+    }
+    @media (max-width: 560px) {
+      #raceClock { white-space: normal; max-width: 92vw; text-align: center; }
+      #raceClock .rcNext { display: block; margin: 4px 0 0; padding: 0; border-left: 0; }
+    }
+    /* Die Uhr selbst faengt keine Tipper ab, die Knoepfe schon. */
+    #raceClock .rcLapBox {
+      display: inline-flex; align-items: center; gap: 4px; margin-left: 10px;
+      padding-left: 10px; border-left: 1px solid #ddd; pointer-events: auto;
+    }
+    #raceClock .rcLapBox.final .rcLapTxt { color: #c62828; font-weight: 600; }
+    #raceClock .rcLapTxt { min-width: 62px; text-align: center; }
+    #raceClock .rcLap {
+      width: 26px; height: 26px; padding: 0; line-height: 1;
+      border: 1px solid #ccc; border-radius: 5px; background: #fff;
+      font-size: 15px; color: #555; cursor: pointer;
+    }
+    #raceClock .rcLap:active { background: #eee; }
+    #raceClock.geplant { color: #999; }
+
+    #status.ok   { border-color: #4caf50; color: #2e7d32; background: #f1f8e9; }
+    #status.warn { border-color: #f44336; color: #c62828; background: #ffebee; }
+
+    /* MARKER CONTEXT MENU */
+    .markerMenu {
+      background: white; border: 1px solid #ddd; border-radius: 6px;
+      padding: 0; box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      position: absolute; z-index: 9500; min-width: 200px; overflow: hidden;
+    }
+    .markerMenu button {
+      display: block; width: 100%; padding: 10px 14px;
+      background: none; border: none; text-align: left; cursor: pointer;
+      font-size: 13px; font-family: sans-serif; color: #666;
+      transition: background 0.2s; border-bottom: 1px solid #f0f0f0;
+    }
+    .markerMenu button:last-child { border-bottom: none; }
+    .markerMenu button:hover { background: #f5f5f5; color: #333; }
+    .markerMenu input {
+      display: block; width: 100%; padding: 10px 14px;
+      border: none; border-bottom: 1px solid #f0f0f0;
+      font-size: 13px; font-family: sans-serif;
+    }
+    .markerMenu input:focus { outline: none; background: #f9f9f9; }
+
+
+    /* BETREUER + LOGIN EXTRAS */
+    .loginBox button:disabled { background: #90caf9; cursor: default; }
+    .loginBox .btnSecondary {
+      background: #eee; color: #555; margin-top: 8px; font-size: 14px; font-weight: normal;
+    }
+    .loginBox .btnSecondary:hover { background: #ddd; }
+
+    /* BETREUER MODAL */
+    #betreuerModal {
+      display: flex; position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      z-index: 10000; background: rgba(0,0,0,0.6);
+      align-items: center; justify-content: center; padding: 20px;
+    }
+    #betreuerModal.hidden { display: none !important; }
+
+    /* KI-IMPORT MODAL */
+    #aiImportModal {
+      display: flex; position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      z-index: 10000; background: rgba(0,0,0,0.6);
+      align-items: flex-start; justify-content: center;
+      padding: 20px; overflow-y: auto;
+    }
+    #aiImportModal.hidden { display: none !important; }
+    .aiBox {
+      background: white; padding: 28px; border-radius: 12px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+      width: 100%; max-width: 420px; margin: auto;
+    }
+    .aiBox h2 { margin: 0 0 6px 0; color: #333; font-size: 20px; }
+    .aiBox p  { color: #666; margin: 0 0 18px 0; font-size: 13px; line-height: 1.5; }
+    .aiBox label { display: block; font-size: 11px; color: #888; margin-bottom: 4px; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; }
+    .aiBox input[type="text"] {
+      width: 100%; padding: 10px 12px; margin-bottom: 14px;
+      border: 2px solid #ddd; border-radius: 6px; font-size: 14px; transition: border-color 0.2s;
+    }
+    .aiBox input[type="text"]:focus { outline: none; border-color: #2196F3; }
+    .aiBtnPrimary {
+      width: 100%; padding: 11px; background: #2196F3; color: white;
+      border: none; border-radius: 6px; cursor: pointer;
+      font-size: 14px; font-weight: bold; transition: background 0.2s;
+    }
+    .aiBtnPrimary:hover    { background: #1976D2; }
+    .aiBtnPrimary:disabled { background: #90caf9; cursor: default; }
+    .aiBtnSecondary {
+      width: 100%; padding: 9px; background: #eee; color: #555;
+      border: none; border-radius: 6px; cursor: pointer;
+      font-size: 14px; margin-top: 8px; transition: background 0.2s;
+    }
+    .aiBtnSecondary:hover { background: #ddd; }
+    #aiPreviewTable {
+      width: 100%; border-collapse: collapse; font-size: 12px;
+      display: block; max-height: 200px; overflow-y: auto; margin: 10px 0 14px;
+      border: 1px solid #eee; border-radius: 6px;
+    }
+    #aiPreviewTable th { background: #f5f5f5; padding: 6px 8px; text-align: left; position: sticky; top: 0; font-size: 11px; }
+    #aiPreviewTable td { padding: 5px 8px; border-bottom: 1px solid #f5f5f5; }
+    #aiStatus { font-size: 13px; color: #666; padding: 14px 0; text-align: center; }
+
+    /* FAVORITEN MODAL */
+    #favModal {
+      display: flex; position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      z-index: 10000; background: rgba(0,0,0,0.6);
+      align-items: flex-start; justify-content: center;
+      padding: 20px; overflow-y: auto;
+    }
+    #favModal.hidden { display: none !important; }
+    #favModal input[type="text"] {
+      width: 100%; padding: 10px 12px; margin-bottom: 10px;
+      border: 2px solid #ddd; border-radius: 6px; font-size: 14px;
+    }
+    #favModal input[type="text"]:focus { outline: none; border-color: #2196F3; }
+    #favBody {
+      max-height: 45vh; overflow-y: auto;
+      border: 1px solid #eee; border-radius: 6px; padding: 4px 8px;
+    }
+    .fav-row {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 2px; border-bottom: 1px solid #f5f5f5;
+    }
+    .fav-row:last-child { border-bottom: none; }
+    .fav-row.on { background: #fffdf5; }
+    .fav-star {
+      background: white; border: 1px solid #eee; border-radius: 6px;
+      cursor: pointer; font-size: 15px; line-height: 1;
+      padding: 4px 6px; color: #ccc; flex-shrink: 0;
+    }
+    .fav-row.on .fav-star { border-color: #ffca28; color: #f9a825; }
+    .fav-star:disabled { cursor: default; opacity: 0.4; }
+    .fav-empty { text-align: center; color: #bbb; font-size: 13px; padding: 24px 8px; }
+
+    /* TAKTIK BUTTON */
+    #taktikBtn {
+      position: absolute; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); right: 10px; left: calc(50% + 5px);
+      /* Wie beim Optionen-Knopf: ueber der Rennleiste und der
+         Leaflet-Zoomleiste. */
+      z-index: 1002; padding: 10px 14px; background: white;
+      border: 1px solid #ccc; border-radius: 6px;
+      cursor: pointer; font-size: 13px; font-family: sans-serif;
+      transition: all 0.2s; width: auto;
+    }
+    #taktikBtn:hover { background: #f5f5f5; }
+    /* CHANGE 2: Override after base rule so desktop media query wins */
+    @media (min-width: 768px) {
+      #taktikBtn { top: 10px; right: 10px; bottom: auto; left: auto; width: auto; }
+    }
+
+    /* MENUE-EBENEN */
+    #optionsMain { display: flex; flex-direction: column; }
+    #optionsMain.hidden { display: none; }
+
+    /* ERWEITERTE EINSTELLUNGEN (Bottom Sheet) */
+    #advancedModal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 10000; }
+    #advancedModal.hidden { display: none !important; }
+    #advScrim {
+      position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.35); animation: advFade 0.2s ease-out;
+    }
+    @keyframes advFade { from { opacity: 0; } to { opacity: 1; } }
+    #advSheet {
+      position: absolute; left: 0; right: 0; bottom: 0;
+      background: white; border-radius: 16px 16px 0 0;
+      box-shadow: 0 -6px 28px rgba(0,0,0,0.28);
+      max-height: 72vh; overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      padding-bottom: env(safe-area-inset-bottom);
+      animation: advUp 0.22s cubic-bezier(0.2,0.8,0.3,1);
+    }
+    @keyframes advUp { from { transform: translateY(100%); } to { transform: none; } }
+    #advGrip { width: 40px; height: 4px; background: #dfe4e6; border-radius: 2px; margin: 10px auto 0; }
+    .adv-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 18px 2px;
+    }
+    .adv-head h2 { margin: 0; font-size: 18px; color: #333; font-weight: 600; }
+    #advCloseX {
+      background: none; border: none; font-size: 20px; color: #b0bec5;
+      cursor: pointer; padding: 4px 6px; border-radius: 6px; line-height: 1;
+      font-family: sans-serif;
+    }
+    #advCloseX:hover { background: #f2f4f5; color: #666; }
+    .adv-intro { margin: 0; padding: 2px 18px 4px; font-size: 12px; color: #90a4ae; line-height: 1.5; }
+    #advRaceGroup { display: flex; flex-direction: column; }
+    #advRaceGroup.hidden { display: none; }
+    .adv-group {
+      padding: 16px 18px 6px; font-size: 10px; font-weight: 600;
+      color: #9aa4ab; text-transform: uppercase; letter-spacing: 0.06em;
+      font-family: sans-serif; display: flex; align-items: center; gap: 6px;
+    }
+    .adv-lock {
+      font-size: 9px; font-weight: 700; background: #eceff1; color: #607d8b;
+      border-radius: 3px; padding: 2px 5px; text-transform: none; letter-spacing: 0;
+    }
+    .adv-row {
+      display: flex; align-items: center; justify-content: space-between; gap: 14px;
+      padding: 12px 18px; border-bottom: 1px solid #f0f0f0;
+    }
+    .adv-txt { font-size: 14px; color: #333; font-weight: 500; }
+    .adv-sub { font-size: 11px; color: #999; margin-top: 3px; line-height: 1.4; }
+
+    /* Kartenstil: Auswahl wirkt sofort, die Karte hinter dem Sheet ist die Vorschau */
+    #mapStyleSeg {
+      display: flex; margin: 4px 18px 0;
+      border: 1px solid #d5dade; border-radius: 7px; overflow: hidden;
+    }
+    #mapStyleSeg button {
+      flex: 1; border: none; background: white; padding: 9px 12px;
+      font-size: 13px; cursor: pointer; color: #607d8b;
+      font-family: sans-serif; border-right: 1px solid #e4e8ea; transition: all 0.15s;
+    }
+    #mapStyleSeg button:last-child { border-right: none; }
+    #mapStyleSeg button:hover { background: #f5f7f8; }
+    #mapStyleSeg button.on { background: #2196F3; color: white; font-weight: 600; }
+
+    /* Schalter */
+    .adv-switch {
+      width: 46px; height: 26px; border-radius: 13px; background: #bbb;
+      cursor: pointer; position: relative; transition: background 0.2s; flex-shrink: 0;
+    }
+    .adv-switch.on { background: #2196F3; }
+    .adv-switch i {
+      position: absolute; top: 3px; left: 3px; width: 20px; height: 20px;
+      background: white; border-radius: 50%; transition: left 0.2s;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+    }
+    .adv-switch.on i { left: 23px; }
+
+    /* Gruppenmarker: fasst mehrere Fahrer zu einem Kreis mit Anzahl
+       zusammen. Bei 30 m Abstand liegen die Einzelmarker auf der
+       Karte ohnehin uebereinander. */
+    .lt-group-bubble {
+      width: 34px; height: 34px; border-radius: 50%;
+      background: #1d9e75; border: 2px solid #0f6e56; color: #fff;
+      font: 600 15px/30px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      text-align: center; box-shadow: 0 1px 4px rgba(0,0,0,0.35);
+    }
+    #syncLagRange { width: 100%; margin-top: 8px; }
+    /* In dieser Datei gibt es keine generische .hidden-Regel - jedes
+       .hidden ist an eine ID gebunden. Ohne diese Zeile bliebe der
+       Regler immer sichtbar, weil .adv-row auf display:flex steht. */
+    #syncLagRow.hidden { display: none; }
+
+    #modeToggleRow {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 18px; border-bottom: 1px solid #f0f0f0;
+    }
+    #modeSwitch {
+      width: 44px; height: 24px; border-radius: 12px;
+      cursor: pointer; position: relative; transition: background 0.2s; flex-shrink: 0;
+    }
+    #modeThumb {
+      position: absolute; top: 2px; width: 20px; height: 20px;
+      background: white; border-radius: 50%; transition: left 0.2s;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+    }
+
+    /* Gefahrenzone: abgesetzt, damit ein Fehlgriff im fahrenden Auto auffaellt */
+    .adv-danger {
+      margin: 10px 14px 0; border: 1px solid #ffcdd2; border-radius: 8px;
+      background: #fff8f8; overflow: hidden;
+    }
+    .adv-danger .adv-group { color: #c62828; padding-top: 11px; }
+    .adv-danger .adv-row   { border-bottom: none; }
+    #resetBtn {
+      border: 1px solid #ef9a9a; background: white; color: #d32f2f;
+      padding: 8px 14px; border-radius: 6px; font-size: 13px;
+      cursor: pointer; font-family: sans-serif; flex-shrink: 0;
+    }
+    #resetBtn:hover { background: #ffebee; }
+    #resetBtn.hidden { display: none; }
+
+    /* Loesch-Rueckfrage: eigener Dialog mittig im Bild, ueber dem Sheet.
+       Die raeumliche Trennung zum Ausloeser ist hier der eigentliche Schutz. */
+    #confirmClearModal {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 10001;
+      display: flex; align-items: center; justify-content: center; padding: 20px;
+    }
+    #confirmClearModal.hidden { display: none !important; }
+    #ccScrim {
+      position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.45); animation: advFade 0.18s ease-out;
+    }
+    #ccBox {
+      position: relative; width: 100%; max-width: 340px; box-sizing: border-box;
+      background: white; border-radius: 14px; padding: 20px 20px 16px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.35);
+      animation: ccPop 0.18s cubic-bezier(0.2,0.8,0.3,1);
+    }
+    @keyframes ccPop {
+      from { opacity: 0; transform: scale(0.94); }
+      to   { opacity: 1; transform: none; }
+    }
+    #ccTitle {
+      font-size: 16px; font-weight: 600; color: #c62828; font-family: sans-serif;
+    }
+    #ccText {
+      font-size: 13px; color: #555; line-height: 1.45; margin-top: 8px;
+      font-family: sans-serif;
+    }
+    #ccActions { display: flex; gap: 8px; margin-top: 18px; }
+    #ccActions button {
+      flex: 1; padding: 11px 12px; border-radius: 8px; font-size: 14px;
+      cursor: pointer; font-family: sans-serif;
+    }
+    #ccCancelBtn { background: #eee; color: #444; border: none; }
+    #ccCancelBtn:hover { background: #ddd; }
+    #ccConfirmBtn {
+      background: #d32f2f; color: white; border: none; font-weight: 600;
+      transition: background 0.15s;
+    }
+    #ccConfirmBtn:disabled { background: #e6b9b9; cursor: default; }
+
+    /* Scharf-Balken: laeuft einmal durch, danach ist der rote Knopf aktiv */
+    #ccArmBar {
+      height: 3px; margin-top: 10px; border-radius: 2px;
+      background: #f2e0e0; overflow: hidden;
+    }
+    #ccArmBar > i { display: block; height: 100%; width: 0; background: #d32f2f; }
+    #confirmClearModal.arming #ccArmBar > i { animation: ccArm 800ms linear forwards; }
+    #confirmClearModal.armed  #ccArmBar { visibility: hidden; }
+    @keyframes ccArm { from { width: 0; } to { width: 100%; } }
+    .adv-foot { padding: 12px 18px 18px; }
+    #advDoneBtn {
+      width: 100%; padding: 11px; background: #eee; color: #555; border: none;
+      border-radius: 6px; cursor: pointer; font-size: 14px; font-family: sans-serif;
+    }
+    #advDoneBtn:hover { background: #ddd; }
+
+    /* Am Desktop schwebt das Fenster unten rechts, die Karte bleibt frei */
+    @media (min-width: 768px) {
+      #advSheet {
+        left: auto; right: 20px; bottom: 20px; width: 430px;
+        border-radius: 16px; max-height: 80vh;
+      }
+      #advGrip { display: none; }
+      .adv-head { padding-top: 18px; }
+    }
+
+    /* STATUS TRAINING */
+    #status.training { border-color: #f9a825; color: #e65100; background: #fffde7; }
+    #status.searching { border-color: #90a4ae; color: #455a64; background: #eceff1; }
+
+    /* TAKTIK STRIP */
+    #taktikStrip {
+      position: fixed; top: 50%; right: 8px; width: 70px;
+      transform: translateY(-50%);
+      z-index: 998;
+      background: rgba(255,255,255,0.90);
+      border: 1px solid rgba(0,0,0,0.10);
+      border-radius: 10px;
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; padding: 14px 0;
+    }
+    .markerMenu .markerDel { color: #c62828; background: #fff8f8; }
+    .markerMenu .markerDel:hover { background: #ffebee; color: #b71c1c; }
+
+    /* RENNZUORDNUNG IM MARKER-MENUE */
+    .markerMenu .markerZuTitel {
+      padding: 8px 14px 2px; font-size: 11px; color: #90a4ae;
+      font-family: sans-serif; letter-spacing: .03em;
+    }
+    .markerMenu .markerZu {
+      display: block; width: calc(100% - 20px); margin: 0 10px 8px;
+      padding: 7px 8px; font-size: 13px; font-family: sans-serif;
+      border: 1px solid #ddd; border-radius: 5px; background: white; color: #333;
+    }
+
+    /* TYP-SCHALTER IM MARKER-MENUE.
+       Zwei Werte, deshalb ein Schalter statt eines Aufklappmenues: der
+       Zustand muss im fahrenden Auto ohne Tippen ablesbar sein.
+       .markerMenu button setzt display:block und width:100% - beides
+       wuerde die zwei Knoepfe untereinander stellen. Der Selektor
+       .markerMenu .typWahl button ist eine Klasse spezifischer und
+       gewinnt damit unabhaengig von der Reihenfolge im Stylesheet. */
+    .markerMenu .typWahl { display: flex; margin: 0 10px 8px; }
+    .markerMenu .typWahl button {
+      display: block; flex: 1; width: auto; padding: 7px 4px;
+      font-size: 12px; text-align: center; color: #78909c;
+      border: 1px solid #ddd; background: white;
+    }
+    .markerMenu .typWahl button:first-child { border-radius: 5px 0 0 5px; }
+    .markerMenu .typWahl button:last-child  { border-radius: 0 5px 5px 0; border-left: none; }
+    .markerMenu .typWahl button.an {
+      background: #eceff1; color: #263238; font-weight: 600; border-color: #b0bec5;
+    }
+
+    /* TRACKERVERWALTUNG IN DER RENNVERWALTUNG */
+    .tk-panel {
+      background: #fcfcfc; border-top: 1px solid #f0f0f0;
+      border-bottom: 1px solid #f0f0f0;
+    }
+    .tk-hdr {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 14px; border-bottom: 1px solid #f0f0f0;
+    }
+    .tk-hdr .t { font-size: 13px; font-weight: 500; color: #333; }
+    .tk-hdr .n { font-size: 12px; color: #999; }
+    .tk-leer   { padding: 14px; text-align: center; color: #bbb; font-size: 13px; }
+    .tk-row {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      padding: 9px 14px; border-bottom: 1px solid #f0f0f0;
+    }
+    .tk-row:last-of-type { border-bottom: none; }
+    .tk-dot {
+      width: 9px; height: 9px; border-radius: 50%; flex: 0 0 9px;
+      box-shadow: 0 0 0 1px rgba(0,0,0,.12);
+    }
+    .tk-name {
+      font-size: 13px; color: #333; flex: 1 1 110px; min-width: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .tk-name small { display: block; font-size: 10px; color: #b0bec5; }
+    .tk-state { font-size: 11px; flex: 0 0 auto; }
+    .tk-on    { color: #2e7d32; }
+    .tk-off   { color: #b0bec5; }
+    .tk-sel {
+      padding: 6px 7px; font-size: 12px; font-family: sans-serif;
+      border: 1px solid #ddd; border-radius: 5px; background: white; color: #333;
+      flex: 0 1 150px; max-width: 170px; min-width: 110px;
+    }
+    .tk-typ { display: flex; flex: 0 0 auto; }
+    .tk-typ button {
+      padding: 6px 10px; font-size: 13px; line-height: 1;
+      border: 1px solid #ddd; background: white; color: #90a4ae;
+      cursor: pointer; font-family: sans-serif;
+    }
+    .tk-typ button:first-child { border-radius: 5px 0 0 5px; }
+    .tk-typ button:last-child  { border-radius: 0 5px 5px 0; border-left: none; }
+    .tk-typ button.an { background: #eceff1; color: #263238; border-color: #b0bec5; }
+    .tk-neu {
+      display: flex; gap: 8px; padding: 10px 14px; flex-wrap: wrap;
+      border-top: 1px solid #f0f0f0;
+    }
+    .tk-neu input {
+      flex: 1 1 150px; min-width: 0; padding: 7px 9px; font-size: 12px;
+      font-family: sans-serif; border: 1px solid #ddd; border-radius: 5px;
+    }
+    .tk-hint {
+      padding: 0 14px 11px; font-size: 11px; color: #aaa; line-height: 1.5;
+    }
+
+    /* Farbiger Pin. Der Standard-divIcon von Leaflet bringt einen
+       weissen Kasten mit - der muss weg, sonst steht das SVG in einem
+       Rahmen. */
+    .leaflet-marker-icon.rennPin { background: none; border: none; }
+
+    /* ZUGEORDNETE TRACKER IN DER RENNVERWALTUNG */
+    .ev-tracker {
+      display: flex; align-items: center; gap: 7px;
+      padding: 5px 14px 8px 22px; font-size: 11px; color: #78909c;
+    }
+    .ev-tracker .tPunkt {
+      width: 9px; height: 9px; border-radius: 50%; flex: 0 0 9px;
+      box-shadow: 0 0 0 1px rgba(0,0,0,.12);
+    }
+
+    #taktikStrip.hidden { display: none; }
+
+    /* ZEILE DER RENNLEISTE. Fahrtzeit und Feldschnitt sind seit 2.0
+       entfallen, die Runde bleibt: an ihr haengen die
+       Korrekturknoepfe. */
+    .rcRow {
+      display: flex; align-items: center; gap: 7px;
+      padding: 3px 5px; border-radius: 6px; pointer-events: auto;
+    }
+    .rcRow + .rcRow { border-top: 1px solid #eceff1; }
+    .rcRow.waehlbar { cursor: pointer; -webkit-tap-highlight-color: transparent; }
+    .rcRow.aus { opacity: .42; }
+    .rcD { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
+    .rcN { font-weight: 600; }
+    .rcMe { font-size: 12px; }
+    .rcAus { margin-left: auto; font-size: 11px; color: #78909c; }
+    /* Der Rundenstand rueckt an den rechten Rand, damit die Zahlen
+       untereinander stehen. */
+    #raceClock.rennliste .rcLapBox { margin-left: auto; }
+
+    /* KOPF DES TAKTIK-STREIFENS. Bis 2.0.0 stand hier ein Reiter je
+       Rennen. Der Reiter schaltete aber nur die Beschriftung um, nicht
+       die Datenquelle: groups gibt es im Server genau einmal und
+       gehoert dem Leitrennen. Ab 2.1.0 steht deshalb nur noch da,
+       wessen Taktik der Streifen zeigt. */
+    .stripKopf {
+      display: flex; align-items: center; justify-content: center; gap: 5px;
+      font-size: 11px; font-weight: 700; color: #263238;
+      padding: 0 0 5px; margin: 0 6px 5px;
+      border-bottom: 2px solid #cfd8dc; overflow: hidden;
+    }
+    .stripKopfP { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+
+    /* 2.3.0 kennzeichnete hier einen nur lesbaren Fremdstand. Ab 2.4.0
+       wird das gezeigte Rennen auch bearbeitet - die Kennzeichnung
+       entfaellt ersatzlos. */
+
+    /* RENNKACHELN im Kopf der Taktik. Nur sichtbar, wenn mehr als ein
+       Rennen laeuft. Ein Tipp wechselt das Arbeitsrennen; die Farbe
+       ist dieselbe wie in der Rennleiste und auf der Karte. */
+    .tkRenn { display: flex; gap: 6px; padding: 9px 10px 0; }
+    .tkRennK {
+      flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px;
+      padding: 7px 9px; font-size: 12px; line-height: 1.2;
+      border: 1px solid #e0e0e0; border-radius: 7px; background: #fff;
+      color: #666; cursor: pointer; overflow: hidden;
+    }
+    .tkRennK.an { font-weight: 600; color: #263238; }
+    .tkRennD { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
+    .tkRennN { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tkRennA { margin-left: auto; font-size: 10px; font-weight: 400; color: #78909c; flex: 0 0 auto; }
+
+    /* Tooltip eines zusammengelegten Punktes: eine Zeile je Rennen. */
+    .lt-tt .lt-tt-h { font-weight: 600; margin-bottom: 3px; }
+    .lt-tt .lt-tt-r { display: flex; align-items: center; gap: 5px; font-size: 11px; }
+    .lt-tt .lt-tt-d { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+    .strip-grp   { text-align: center; width: 100%; padding: 4px 6px; }
+    .strip-dot   { width: 8px; height: 8px; border-radius: 50%; margin: 0 auto 2px; }
+    .strip-name  { font-size: 11px; font-weight: 500; color: #333; white-space: nowrap; overflow: hidden; }
+    .strip-cnt   { font-size: 15px; font-weight: 500; color: #333; line-height: 1.2; }
+    .strip-conn  { display: flex; flex-direction: column; align-items: center; padding: 2px 0; }
+    .strip-line  { width: 1px; height: 8px; background: #ccc; }
+    .strip-gap   { font-size: 11px; font-weight: 500; color: #aaa; }
+
+    /* TAKTIK VOLLANSICHT */
+    #taktikView {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      z-index: 2000; background: #f5f5f5; overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    #taktikView.hidden { display: none; }
+    #taktikBody.hidden, #eventsBody.hidden { display: none; }
+    .tk-header {
+      position: sticky; top: 0; background: white; border-bottom: 1px solid #eee;
+      padding: 12px 16px; display: flex; align-items: center; justify-content: space-between;
+      z-index: 10;
+    }
+    .tk-body { padding: 12px; }
+
+    /* GROUP CARDS */
+    .gc       { background: white; border: 1px solid #eee; border-radius: 10px; overflow: hidden; margin-bottom: 10px; }
+    .gc-hdr   { padding: 11px 14px 9px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .gc-sec   { border-top: 1px solid #f0f0f0; padding: 9px 14px; }
+    .gc-dot   { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+    /* Gruppengroesse im Kopf. Zurueckgenommen wie der HF-Marker: die
+       Zahl soll im Blick liegen, aber den Namen nicht ueberstimmen. */
+    .gc-cnt   { flex-shrink: 0; font-size: 11px; font-weight: 600;
+                padding: 2px 6px; border-radius: 10px;
+                background: #f2f4f5; color: #555; border: 1px solid #e3e6e8;
+                font-variant-numeric: tabular-nums; }
+    /* Rueckstand auf die Spitze, unter dem Abstand zum Vordermann.
+       Grau und klein: im Auto zaehlt der Vordermann, die Spitze ist
+       Einordnung. */
+    .gc-spitze { font-size: 10px; color: #999; margin-top: 2px; white-space: nowrap;
+                 font-variant-numeric: tabular-nums; }
+    .r-row    { display: flex; align-items: flex-start; gap: 7px; padding: 4px 0; }
+    .r-nr     { background: #f0f0f0; color: #666; padding: 2px 5px; border-radius: 4px; font-size: 11px; font-weight: 500; min-width: 26px; text-align: center; margin-top: 2px; flex-shrink: 0; }
+    .r-name   { font-size: 13px; font-weight: 500; color: #333; }
+    .r-team   { font-size: 11px; color: #999; }
+    .r-none   { font-size: 13px; color: #bbb; font-style: italic; }
+
+    /* STARTLISTEN PANEL */
+    .sl-panel { background: white; border: 1px solid #eee; border-radius: 10px; margin-bottom: 12px; overflow: hidden; }
+    .sl-item  { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid #f0f0f0; flex-wrap: wrap; }
+    .sl-item:last-child { border-bottom: none; }
+    .sl-dot   { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+    /* RENNVERWALTUNG (Rennen-Tab)
+       Diese Klassen werden von race/events-ui.js erzeugt. Ohne sie
+       greift fuer die vielen kleinen Knoepfe je Rennzeile die
+       Grundregel .btn { flex:1; min-width:120px } - fuenf Knoepfe
+       a 120px sprengen jedes Handydisplay. */
+    #eventsBody .btn { flex: 0 0 auto; min-width: unset; }
+    .ev-card  { background: white; border: 1px solid #eee; border-radius: 10px; margin-bottom: 12px; overflow: hidden; }
+    .ev-hdr   { display: flex; align-items: center; gap: 6px; padding: 11px 14px; border-bottom: 1px solid #f0f0f0; }
+    .ev-name  { font-size: 14px; font-weight: 500; color: #333; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ev-meta  { font-size: 11px; color: #aaa; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ev-race  { display: flex; align-items: center; gap: 5px; padding: 9px 14px; border-bottom: 1px solid #f7f7f7; }
+    .ev-rname { font-size: 13px; font-weight: 500; color: #333; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ev-ak    { flex-shrink: 0; font-size: 11px; font-weight: 500; color: #1565c0;
+                background: #e3f2fd; border: 1px solid #bbdefb; border-radius: 10px; padding: 2px 7px; }
+    .ev-form  { padding: 11px 14px; background: #fafafa; border-bottom: 1px solid #f0f0f0; }
+    .ev-form input { width: 100%; padding: 8px 10px; margin-bottom: 8px; border: 1px solid #ddd;
+                     border-radius: 6px; font-size: 13px; font-family: sans-serif; }
+    .ev-form input:focus { outline: none; border-color: #2196F3; }
+    .ev-form .row { display: flex; gap: 8px; }
+    .ev-form .row input { flex: 1; min-width: 0; }
+    .ev-empty { text-align: center; color: #bbb; font-size: 13px; padding: 30px 12px; }
+
+    /* START/ZIEL je Rennen - Panel unter der Rennzeile. Blaeulich
+       abgesetzt wie die Streckenleiste auf der Karte, damit beide
+       Wege sichtbar zusammengehoeren. */
+    .ev-ziel  { padding: 10px 14px; background: #f2f7fd; border-bottom: 1px solid #e3f2fd; }
+    .ev-ziel .zTitel { font-size: 12px; font-weight: 600; color: #1565c0; margin-bottom: 8px;
+                       overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ev-ziel .row    { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+    .ev-ziel input   { flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid #ddd;
+                       border-radius: 6px; font-size: 13px; font-family: sans-serif; }
+    .ev-ziel input:focus { outline: none; border-color: #2196F3; }
+    .ev-ziel .zBtns  { display: flex; gap: 6px; flex-wrap: wrap; }
+    .ev-ziel .zHint  { font-size: 11px; color: #999; margin-top: 8px; line-height: 1.4; }
+    .ev-ziel .zUnter {
+      font-size: 10px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase;
+      color: #90a4ae; margin: 12px 0 6px;
+    }
+    .ev-ziel .zUnter:first-of-type { margin-top: 0; }
+
+    /* Punkte auf der Strecke. Grosszuegige Zeilenhoehe: die Knoepfe
+       muessen im fahrenden Auto einhaendig zu treffen sein. */
+    .mk-zeile {
+      display: flex; align-items: center; gap: 8px; padding: 7px 9px; margin-bottom: 6px;
+      background: #fff; border: 1px solid #e3f2fd; border-radius: 7px;
+    }
+    .mk-zeile .mk-icon { font-size: 17px; flex: 0 0 auto; }
+    .mk-zeile .mk-name {
+      font-size: 13px; font-weight: 500; color: #333;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    /* Schalter fuer das Zonenband, direkt unter dem Ende-Feld. */
+    .mk-form .mkBandZ {
+      display: flex; align-items: center; gap: 7px;
+      font-size: 12px; color: #607d8b; margin: 2px 0 2px 2px; cursor: pointer;
+    }
+    .mk-form .mkBandZ input { width: 15px; height: 15px; margin: 0; cursor: pointer; }
+
+    .mk-zeile .mk-meta { font-size: 11px; color: #90a4ae; margin-top: 1px;
+                         font-variant-numeric: tabular-nums; }
+    .mk-form {
+      background: #fff; border: 1px solid #bbdefb; border-radius: 8px;
+      padding: 10px; margin-bottom: 8px;
+    }
+    .mk-form input {
+      width: 100%; padding: 8px 10px; margin-bottom: 8px; border: 1px solid #ddd;
+      border-radius: 6px; font-size: 13px; font-family: sans-serif;
+    }
+    .mk-form input:focus { outline: none; border-color: #2196F3; }
+    .mk-form .row { display: flex; gap: 8px; align-items: flex-start; }
+    .mk-form .row input { flex: 1; min-width: 0; }
+    .mk-typen { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 9px; }
+
+    /* Symbol eines Streckenpunkts auf der Karte. Die weisse Scheibe
+       tragen seit 2.8.0 nur noch Zwischenzeit und freier Punkt -
+       Sprint, Berg und Verpflegung sind gezeichnete Schilder (.lt-sym). */
+    .lt-mk {
+      width: 24px; height: 24px; border-radius: 50%; background: rgba(255,255,255,.95);
+      border: 2px solid #999; display: flex; align-items: center; justify-content: center;
+      font-size: 13px; line-height: 1; box-shadow: 0 1px 3px rgba(0,0,0,.35);
+    }
+
+    /* Ende einer Zone, wo es kein gezeichnetes Schild gibt: dieselbe
+       weisse Scheibe, gedaempft und durchgestrichen. Der Strich traegt
+       einen weissen Saum, damit er auf jedem Kartengrund steht. */
+    .lt-mk.lt-mk-ende { position: relative; }
+    .lt-mk-ende::after {
+      content: ''; position: absolute; left: -2px; right: -2px; top: 50%;
+      height: 3px; margin-top: -1.5px; border-radius: 2px;
+      background: #c62828; box-shadow: 0 0 0 1.5px rgba(255,255,255,.95);
+      transform: rotate(-45deg);
+    }
+
+    /* Gezeichnetes Streckenschild. Der Schatten kommt aus dem Filter und
+       nicht aus box-shadow: das Schild ist rund, der Kasten drumherum
+       quadratisch. */
+    .lt-sym { display: block; filter: drop-shadow(0 1px 2px rgba(0,0,0,.45)); }
+    /* In der Punkteliste und im Streckeneditor steht dasselbe Schild
+       kleiner neben dem Text. */
+    #naechstePunkte .npI .lt-sym { width: 17px; height: 17px; margin: 0 auto; }
+    #naechstePunkte .npZ.spaeter .lt-sym { opacity: .55; }
+    .mk-zeile .mk-icon .lt-sym { width: 18px; height: 18px; }
+    .mk-typen .btn .lt-sym { display: inline-block; width: 15px; height: 15px; vertical-align: -3px; }
+
+    /* STARTLISTEN-EDITOR im Fahrer-Modal */
+    .btn.active { border-color: #4caf50; color: #2e7d32; background: #f1f8e9; }
+    #favModal input[type="number"] {
+      padding: 10px 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px;
+    }
+    #favModal input[type="number"]:focus { outline: none; border-color: #2196F3; }
+    #favAddRow { border: 1px dashed #ddd; border-radius: 6px; padding: 10px; margin-bottom: 10px; }
+    #favAddRow.hidden { display: none; }
+    #favAddRow .row, #favBody .row { display: flex; gap: 8px; align-items: center; }
+    #favAddRow .row input, #favBody .row input { flex: 1; min-width: 0; margin-bottom: 8px; }
+    #favAddRow .error { color: #d32f2f; font-size: 12px; min-height: 0; }
+    #favBody .btn { min-width: unset; }
+
+
+    /* ================= ZEITMESSUNG =================
+       Violett als eigene Kennfarbe: Blau, Orange und Gruen sind in der
+       Taktik bereits belegt (Aufteilen, Zusammenfuehren, Hauptfeld). */
+    #timingModal { position: fixed; inset: 0; z-index: 3000;
+      background: rgba(0,0,0,0.45); display: flex; align-items: flex-start;
+      justify-content: center; padding: 40px 12px; overflow-y: auto; }
+    #timingModal.hidden { display: none; }
+
+    .zmBar { background: #fff; border: 1px solid #b39ddb; border-left: 3px solid #5e35b1;
+      border-radius: 0 10px 10px 0; padding: 10px 12px; margin-bottom: 12px; }
+    .zm-ttl  { font-size: 13px; font-weight: 600; color: #5e35b1; margin-bottom: 3px; }
+    .zm-meta { font-size: 11px; color: #999; margin-bottom: 9px; }
+    .zm-warn { font-size: 11.5px; color: #e65100; margin-bottom: 9px; line-height: 1.45; }
+    .zm-aus  { font-size: 11px; color: #888; margin-bottom: 9px; line-height: 1.45; }
+    .zm-acts { display: flex; gap: 7px; }
+    .zm-acts .btn { flex: 1; min-width: unset; padding: 7px 10px; font-size: 12.5px; }
+    .btn.zm-prim { background: #ede7f6; border-color: #b39ddb; color: #5e35b1; font-weight: 600; }
+
+    .zm-src { font-size: 10px; font-weight: 600; padding: 2px 5px; border-radius: 5px;
+      border: 1px solid; flex-shrink: 0; }
+    .zm-src.auto { background: #ede7f6; color: #5e35b1; border-color: #b39ddb; }
+    .zm-src.hand { background: #fafafa; color: #bbb;    border-color: #eee; }
+
+    /* Bewegungen. Ersetzt das Durchstreichen ausgeschiedener Fahrer:
+       nicht der Zustand zaehlt, sondern was seit dem letzten Blick
+       passiert ist. */
+    .bwBox { background: #fff; border: 1px solid #eee; border-radius: 10px;
+      overflow: hidden; margin-top: 14px; }
+    .bw-hdr { padding: 11px 14px; display: flex; align-items: center; gap: 9px;
+      cursor: pointer; user-select: none; background: #fff; width: 100%;
+      border: none; font-family: inherit; text-align: left; }
+    .bw-hdr b { font-size: 13px; font-weight: 600; flex: 1; }
+    .bw-cnt { font-size: 11px; color: #aaa; flex-shrink: 0; }
+    .bw-neu { font-size: 10.5px; font-weight: 600; padding: 2px 6px; border-radius: 9px;
+      background: #ede7f6; color: #5e35b1; border: 1px solid #b39ddb; flex-shrink: 0; }
+    .bw-chev { font-size: 11px; color: #bbb; flex-shrink: 0;
+      transition: transform 0.18s; display: inline-block; }
+    .bwBox.on .bw-chev { transform: rotate(180deg); }
+    .bw-body { display: none; border-top: 1px solid #f0f0f0; }
+    .bwBox.on .bw-body { display: block; }
+    .bw { display: flex; gap: 9px; padding: 8px 14px; border-bottom: 1px solid #f0f0f0;
+      align-items: flex-start; }
+    .bw:last-child { border-bottom: none; }
+    .bw.neu { background: #faf8fe; }
+    .bw-src { font-size: 10px; font-weight: 600; padding: 2px 4px; border-radius: 4px;
+      border: 1px solid; flex-shrink: 0; margin-top: 1px; }
+    .bw-src.auto { background: #ede7f6; color: #5e35b1; border-color: #b39ddb; }
+    .bw-src.hand { background: #fafafa; color: #bbb;    border-color: #eee; }
+    .bw-t { font-size: 11px; color: #aaa; flex-shrink: 0; margin-top: 2px;
+      font-variant-numeric: tabular-nums; min-width: 34px; }
+    .bw-w { font-size: 12.5px; font-weight: 500; color: #333; line-height: 1.4; }
+    .bw-p { font-size: 11.5px; color: #999; margin-top: 1px; line-height: 1.4; }
+    .bw-p i { font-style: normal; color: #666; font-weight: 500; }
+    .bw-leer { padding: 20px 14px; text-align: center; font-size: 12.5px; color: #bbb; }
+    .bw-mehr { padding: 9px 14px; text-align: center; font-size: 12px; color: #1565c0; }
+
+    /* Einrichtungsdialog */
+    .tm-ev { font-size: 14px; font-weight: 600; margin: 10px 0 8px;
+      display: flex; align-items: baseline; gap: 8px; }
+    .tm-ev span { font-size: 11px; font-weight: 400; color: #aaa; }
+    .tm-row { display: flex; align-items: center; gap: 9px; padding: 8px 0;
+      border-bottom: 1px solid #f0f0f0; flex-wrap: wrap; }
+    .tm-kat { flex: 1; min-width: 130px; }
+    .tm-name { font-size: 13px; font-weight: 500; color: #333; }
+    .tm-merk { font-size: 11px; color: #999; margin-top: 1px; }
+    .tm-sel { padding: 6px 8px; border: 1px solid #ddd; border-radius: 6px;
+      font-size: 12.5px; font-family: inherit; max-width: 46vw; }
+    .tm-foot { display: flex; gap: 8px; margin-top: 12px; }

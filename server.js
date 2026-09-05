@@ -4,6 +4,7 @@ const mqtt    = require('mqtt');
 const fs      = require('fs');
 const path    = require('path');
 const db      = require('./db');
+const rr      = require('./raceresult');
 
 const app = express();
 
@@ -90,6 +91,22 @@ const trackerDisplayNames = Object.create(null);
 // Die Zuordnungen eines Rennens fallen weg, sobald es beendet wird.
 const trackerRace = Object.create(null);
 
+// Hardware-ID -> Rolle. Einziger Wert ist 'teamauto'; kein Eintrag
+// heisst Sportler. Damit ist ein Stand ohne jede Rolle identisch zum
+// Verhalten vor 2.6.0.
+//
+// Absichtlich NICHT 'auto' genannt: autoDisplay{} steht im selben
+// Modul und meint "automatischer Anzeigetext". Zwei Bedeutungen
+// desselben Wortes nebeneinander waeren eine Falle.
+//
+// Die Rolle gehoert zum Geraet, nicht zum Rennen: sie ueberlebt das
+// Rennende, waehrend loeseTrackerZuordnung() die Rennzuordnung loest.
+const trackerRolle = Object.create(null);
+
+function istTeamauto(id) {
+  return trackerRolle[id] === 'teamauto';
+}
+
 // Tracker, die sich gemeldet haben, aber noch keinen GPS-Fix haben.
 // id -> { since, timestamp, sats }
 //   since     = erste Meldung DIESER Suchphase (fuer die Laufzeit-Anzeige)
@@ -109,12 +126,18 @@ const PENDING_TIMEOUT_MS = 90000;
 const POSITION_MAX_AGE_MS  = 12 * 60 * 60 * 1000;
 const STALE_ON_ACTIVATE_MS = 15 * 60 * 1000;
 
-function sweepPositions(maxAgeMs, reason) {
+// schoneAktive: Positionen von Trackern, die einem noch laufenden
+// Rennen zugeordnet sind, bleiben stehen. Ohne das wuerde das
+// Aktivieren eines zweiten Rennens die Marker des ersten abraeumen -
+// betroffen waere jeder Tracker, der gerade laenger als eine
+// Viertelstunde keinen Fix geliefert hat.
+function sweepPositions(maxAgeMs, reason, schoneAktive) {
   const now = Date.now();
   let n = 0;
   for (const [id, p] of Object.entries(positions)) {
     if (!p || typeof p.timestamp !== 'number') continue;
     if (now - p.timestamp <= maxAgeMs) continue;
+    if (schoneAktive && istAktiv(trackerRace[id])) continue;
     delete positions[id];
     n++;
   }
@@ -146,7 +169,12 @@ const DISPLAY_MAX = 60;
 //   foreignNrsMaxSize ab dieser Gruppengroesse gar keine Fremdnummern
 //                     mehr - drei von zwanzig Nummern sind keine
 //                     Information. Favoriten sind davon ausgenommen.
-let displaySettings = { foreignNrs: 2, foreignNrsMaxSize: 6 };
+//   autoTextLeer      Was ein Automatik-Tracker sieht, solange sein
+//                     Rennen noch keine Gruppen hat. Leer schaltet ab.
+let displaySettings = {
+  foreignNrs: 2, foreignNrsMaxSize: 6,
+  autoTextLeer: 'Vorwaerts immer, rueckwaerts nimmer'
+};
 
 function sanitizeSettings(s) {
   const clamp = (v, def, max) => {
@@ -155,7 +183,13 @@ function sanitizeSettings(s) {
   };
   return {
     foreignNrs:        clamp(s && s.foreignNrs,        displaySettings.foreignNrs,        5),
-    foreignNrsMaxSize: clamp(s && s.foreignNrsMaxSize, displaySettings.foreignNrsMaxSize, 99)
+    foreignNrsMaxSize: clamp(s && s.foreignNrsMaxSize, displaySettings.foreignNrsMaxSize, 99),
+    // Text statt Zahl, deshalb kein clamp(): durch denselben
+    // ASCII-Filter wie jeder andere Anzeigetext. Ein leeres Feld
+    // schaltet den Spruch ab - dann bleibt das Display leer wie bisher.
+    autoTextLeer: (s && s.autoTextLeer !== undefined)
+      ? sanitizeDisplay(s.autoTextLeer)
+      : displaySettings.autoTextLeer
   };
 }
 
@@ -208,18 +242,21 @@ function sanitizeGroups(list) {
 // Index der Hauptfeld-Gruppe. Vorrang hat die ausdrueckliche Markierung
 // (main: true), sonst gilt wie bisher die letzte Gruppe. Damit bleibt
 // der Text auch fuer alte Rennen ohne Marker richtig.
-function mainGroupIndex() {
-  const i = groups.findIndex(g => g && g.main === true);
-  return i >= 0 ? i : groups.length - 1;
+// Ohne Argument weiterhin die Liste des aktiven Rennens.
+function mainGroupIndex(gruppen) {
+  const gs = Array.isArray(gruppen) ? gruppen : groups;
+  const i = gs.findIndex(g => g && g.main === true);
+  return i >= 0 ? i : gs.length - 1;
 }
 
 // Startnummern der Favoriten des aktiven Rennens.
 // Quelle ist die Startliste - ein Fahrer ohne Startlisten-Eintrag
 // kann kein Favorit sein.
-function favNrs() {
+function favNrs(raceId) {
+  const rid = (raceId === undefined) ? activeRaceId : raceId;
   const s = new Set();
-  if (!activeRaceId || !races[activeRaceId]) return s;
-  for (const r of races[activeRaceId].riders) {
+  if (!rid || !races[rid]) return s;
+  for (const r of races[rid].riders) {
     if (r && r.fav && r.nr !== undefined && r.nr !== null) s.add(Number(r.nr));
   }
   return s;
@@ -235,13 +272,34 @@ function isOutState(s) { return s === 'dsq' || s === 'dnf'; }
 // aber nicht mehr in die Gruppengroesse und stehen nicht mehr auf dem
 // Garmin. Eine Spitzengruppe als "4x" zu melden, in der einer
 // disqualifiziert ist, waere schlicht falsch.
-function outNrs() {
+function outNrs(raceId) {
+  const rid = (raceId === undefined) ? activeRaceId : raceId;
   const s = new Set();
-  if (!activeRaceId || !races[activeRaceId]) return s;
-  for (const r of races[activeRaceId].riders) {
+  if (!rid || !races[rid]) return s;
+  for (const r of races[rid].riders) {
     if (r && isOutState(r.status) && r.nr !== undefined && r.nr !== null) s.add(Number(r.nr));
   }
   return s;
+}
+
+// Gruppen eines beliebigen Rennens. Fuer das aktive Rennen bewusst die
+// Spiegelvariable und nicht races[...].groups: POST /groups setzt erst
+// groups und spiegelt danach: waehrend eines Durchlaufs koennten die
+// beiden sonst auseinanderliegen.
+function groupsOf(raceId) {
+  if (!raceId) return [];
+  if (raceId === activeRaceId) return groups;
+  const r = races[raceId];
+  return (r && Array.isArray(r.groups)) ? r.groups : [];
+}
+
+// Was steht auf dem Garmin, solange es keine Gruppen gibt? Ein leeres
+// Display liest sich wie ein Fehler, der letzte Stand waere gelogen -
+// deshalb ein fester Text, sobald ein Rennbezug besteht. Ohne Rennen
+// (Leerlauf, Trainingsfahrt) bleibt es leer wie bisher.
+function leerText(raceId) {
+  if (!raceId || !races[raceId]) return '';
+  return sanitizeDisplay(displaySettings.autoTextLeer || '');
 }
 
 // Baut den Anzeigetext aus dem aktuellen Gruppenstand.
@@ -264,19 +322,22 @@ function outNrs() {
 // Reicht das Zeichenbudget nicht, wird gestuft gekuerzt statt hinten
 // abgeschnitten. Reihenfolge: Fremdnummern von hinten nach vorn,
 // dann Favoriten von hinten nach vorn. Die Kopfzeilen bleiben.
-function buildAutoText() {
-  if (!Array.isArray(groups) || groups.length === 0) return '';
+// raceId waehlt das Rennen; ohne Argument das aktive.
+function buildAutoText(raceId) {
+  const rid     = (raceId === undefined) ? activeRaceId : raceId;
+  const gruppen = groupsOf(rid);
+  if (!Array.isArray(gruppen) || gruppen.length === 0) return leerText(rid);
 
-  const mainIdx = mainGroupIndex();
-  const favs    = favNrs();
-  const gone    = outNrs();
+  const mainIdx = mainGroupIndex(gruppen);
+  const favs    = favNrs(rid);
+  const gone    = outNrs(rid);
   const maxFor  = displaySettings.foreignNrs;
   const maxSize = displaySettings.foreignNrsMaxSize;
 
   // Segmente bis einschliesslich Hauptfeld
   const segs = [];
-  for (let i = 0; i <= mainIdx && i < groups.length; i++) {
-    const g = groups[i];
+  for (let i = 0; i <= mainIdx && i < gruppen.length; i++) {
+    const g = gruppen[i];
     if (!g || typeof g !== 'object') continue;
     const riders = (Array.isArray(g.riders) ? g.riders : [])
       .map(r => (r && r.nr !== undefined) ? Number(r.nr) : Number(r))
@@ -286,7 +347,7 @@ function buildAutoText() {
     if (i === mainIdx) {
       head = 'HF';
     } else {
-      const next = groups[i + 1];
+      const next = gruppen[i + 1];
       const gap  = next && next.gap ? String(next.gap).trim() : '';
       head = String(riders.length) + 'x' + (gap.length > 0 ? ' ' + gap : '');
     }
@@ -345,9 +406,15 @@ function buildAutoText() {
 // Taktik-Klick Funkverkehr auf allen Trackern.
 function pushAutoDisplays() {
   if (!mqttClient || !mqttClient.connected) return;
-  const text = buildAutoText();
+  // Je Rennen einmal bauen, nicht je Tracker: buildAutoText() laeuft
+  // ueber die komplette Gruppenliste und wird bei jedem Taktik-Klick
+  // gerufen. Der Schluessel '' steht fuer "kein Rennbezug".
+  const texte = Object.create(null);
   for (const id of Object.keys(autoDisplay)) {
     if (!autoDisplay[id]) continue;
+    const rid = raceOfTracker(id) || '';
+    if (texte[rid] === undefined) texte[rid] = buildAutoText(rid || null);
+    const text = texte[rid];
     if (displayTexts[id] === text) continue;
     mqttClient.publish(`livetracking-fq4l/display/${id}`, text, { retain: true, qos: 0 });
     if (text.length > 0) displayTexts[id] = text;
@@ -371,7 +438,77 @@ const FALLBACK_EVENT = 'archiv';
 
 let events       = Object.create(null);   // id -> Veranstaltung
 let races        = Object.create(null);   // id -> Rennen
-let activeRaceId = null;
+
+// Bis 1.18.0 galt: genau ein Rennen ist aktiv. Bei einer Veranstaltung
+// mit U15w um 09:08 und U15m um 10:24 hiess das, dass das Aktivieren
+// des zweiten Rennens das erste beendet - mitten im Rennen.
+//
+// Ab 1.19.0 haelt activeRaceIds alle laufenden Rennen (hoechstens
+// MAX_AKTIVE_RENNEN). activeRaceId bleibt daneben bestehen und zeigt
+// auf das LEITRENNEN: das zuerst aktivierte, das noch laeuft. Daran
+// haengen weiterhin der gespiegelte Taktik-Stand (groups) und alle
+// Endpunkte ohne race-Parameter.
+//
+// Diese Ableitung ist Absicht. activeRaceId wird an ueber fuenfzig
+// Stellen gelesen; sie alle in einem Zug umzubauen waere genau die Art
+// Grossumbau, die still Funktionen verliert. Umgestellt werden hier
+// nur die Stellen, an denen "ist dieses Rennen aktiv" gemeint ist.
+let activeRaceId  = null;
+const activeRaceIds     = new Set();
+const MAX_AKTIVE_RENNEN = 4;
+
+function istAktiv(id) { return !!id && activeRaceIds.has(id); }
+
+// Einzige Stelle, an der activeRaceId geschrieben wird. Ein Set haelt
+// die Einfuegereihenfolge, das erste Element ist damit das am
+// laengsten laufende Rennen.
+function aktivNeuBerechnen() {
+  const erstes = activeRaceIds.values().next();
+  activeRaceId = erstes.done ? null : erstes.value;
+}
+
+// false, wenn der Deckel erreicht ist. Vier Rennen sind die Grenze der
+// Farbpalette und der Lesbarkeit auf einem Handydisplay, nicht die des
+// Servers.
+function aktivHinzufuegen(id) {
+  if (activeRaceIds.has(id)) return true;
+  if (activeRaceIds.size >= MAX_AKTIVE_RENNEN) return false;
+  activeRaceIds.add(id);
+  aktivNeuBerechnen();
+  return true;
+}
+
+function aktivEntfernen(id) {
+  if (!activeRaceIds.delete(id)) return false;
+  aktivNeuBerechnen();
+  return true;
+}
+
+// Aktive Menge aus einer geladenen Liste setzen - beim Start aus Disk
+// oder Datenbank. Unbekannte Rennen fallen weg, der Deckel gilt auch
+// hier.
+function aktivSetzen(ids) {
+  activeRaceIds.clear();
+  for (const id of (Array.isArray(ids) ? ids : [])) {
+    if (typeof id === 'string' && races[id] && activeRaceIds.size < MAX_AKTIVE_RENNEN) {
+      activeRaceIds.add(id);
+    }
+  }
+  aktivNeuBerechnen();
+}
+
+// Streckenpositionen aller Tracker vergessen, deren Rennen nicht mehr
+// laeuft. Bis 1.18.0 wurde trackerS beim Aktivieren komplett geleert;
+// bei zwei parallelen Rennen wuerde das dem bereits laufenden Rennen
+// die Bezugswerte wegnehmen und der Rundenzaehler meldete beim
+// naechsten Fix einen Rueckwaertssprung.
+function vergissStreckenpositionen(trackerS, trackerRace) {
+  for (const k of Object.keys(trackerS)) {
+    const rz = trackerRace[k];
+    if (rz && istAktiv(rz)) continue;
+    delete trackerS[k];
+  }
+}
 
 function newId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
@@ -429,7 +566,11 @@ function loadRacesFromDisk() {
     const src = raw.races || raw.lists || Object.create(null);
     races = Object.create(null);
     for (const r of Object.values(src)) races[r.id] = normalizeRace(r);
-    activeRaceId = (raw.activeId && races[raw.activeId]) ? raw.activeId : null;
+    // activeIds ist das Format ab 1.19.0. activeId bleibt als
+    // Rueckfallebene stehen, damit ein races.json aus 1.18.0 ohne
+    // Migration weiterlaeuft.
+    aktivSetzen(Array.isArray(raw.activeIds) ? raw.activeIds
+                                             : (raw.activeId ? [raw.activeId] : []));
     console.log(`📋 ${Object.keys(races).length} Rennen von Disk geladen (${file === LEGACY_FILE ? 'Altformat' : 'races.json'})`);
   } catch (e) { console.error('❌ Rennen laden:', e.message); }
 }
@@ -439,7 +580,10 @@ function saveRacesToDisk() {
   if (db.enabled) return;
   try {
     fs.writeFileSync(RACES_FILE,
-      JSON.stringify({ events, races, activeId: activeRaceId }, null, 2));
+      // activeId wird weiter mitgeschrieben: nach einem Rollback auf
+      // 1.18.0 findet der aeltere Server so wenigstens das Leitrennen.
+      JSON.stringify({ events, races, activeId: activeRaceId,
+                       activeIds: [...activeRaceIds] }, null, 2));
   } catch (e) { console.error('❌ Rennen speichern:', e.message); }
 }
 
@@ -513,14 +657,53 @@ function persistRuntime() {
     autoDisplay:         Object.keys(autoDisplay).filter(id => autoDisplay[id]),
     currentMode,
     trackerDisplayNames,
-    trackerRace
+    trackerRace,
+    // Als Liste statt als Objekt: es gibt genau eine Rolle, und eine
+    // Liste von IDs liest sich in der Datenbank wie autoDisplay.
+    teamautos: Object.keys(trackerRolle).filter(id => trackerRolle[id] === 'teamauto')
   }).catch(dbFail('setSetting runtime'));
 }
 
-function persistGroups() {
-  if (!db.enabled || !activeRaceId) return;
-  db.updateRaceGroups(activeRaceId, groups).catch(dbFail('updateRaceGroups'));
-  db.addGapSnapshot(activeRaceId, groups).catch(dbFail('addGapSnapshot'));
+// Die aktive Menge in die Datenbank schreiben. activeRaceId wandert
+// mit, damit ein Rollback auf 1.18.0 das Leitrennen wiederfindet.
+function persistAktiveRennen() {
+  if (!db.enabled) return;
+  db.setSetting('activeRaceIds', [...activeRaceIds]).catch(dbFail('setSetting activeRaceIds'));
+  db.setSetting('activeRaceId', activeRaceId).catch(dbFail('setSetting activeRaceId'));
+}
+
+// Fuer Logzeilen und /health: "keins" oder die Namen der Rennen.
+function aktivListeText() {
+  if (!activeRaceIds.size) return 'keins';
+  return [...activeRaceIds]
+    .map(id => (races[id] ? races[id].name : id))
+    .join(', ');
+}
+
+// Zaehlt Tracker, die gerade senden, aber keinem Rennen zugeordnet
+// sind. Solange nur ein Rennen lief, war das folgenlos - der Tracker
+// fiel auf dieses zurueck. Bei mehreren laufenden Rennen ist es ein
+// Einrichtungsfehler, der auf der Karte nicht auffaellt: der Marker
+// bekommt die Farbe des Leitrennens und steht damit im falschen
+// Rennen. Deshalb sichtbar in /health.
+function trackerOhneRennen() {
+  return Object.keys(positions).filter(id => !trackerRace[id]).length;
+}
+
+// Ab 2.4.0 mit Rennbezug. Ohne Argument unveraendert das Leitrennen -
+// alle bestehenden Aufrufer bleiben gueltig.
+//
+// Bis 2.3.0 schrieb diese Funktion IMMER activeRaceId. Gruppen, die
+// ueber /timing/apply in ein nicht fuehrendes Rennen gingen, landeten
+// damit nur auf der Disk: nach einem Neustart der Render-Instanz waren
+// sie weg, und der Abstandsverlauf wurde dem falschen Rennen
+// zugeschrieben.
+function persistGroups(raceId) {
+  const rid = (raceId === undefined) ? activeRaceId : raceId;
+  if (!db.enabled || !rid) return;
+  const gs = groupsOf(rid);
+  db.updateRaceGroups(rid, gs).catch(dbFail('updateRaceGroups'));
+  db.addGapSnapshot(rid, gs).catch(dbFail('addGapSnapshot'));
 }
 
 // GPX gehoert zum Rennen. Eigener Schreibpfad, weil upsertRace die
@@ -546,6 +729,18 @@ async function loadStateFromDb() {
     raceMeta = Object.assign(Object.create(null), rm);
     const n = Object.keys(raceMeta).length;
     if (n) console.log(`\u{1F501} Rundendaten fuer ${n} Rennen geladen`);
+  }
+
+  // Zeitmessung. Die Zuordnung muss einen Cold Start ueberleben - sonst
+  // waere sie nach jedem Render-Neustart mitten am Renntag weg.
+  const tm = await db.getSetting('timing');
+  if (tm && typeof tm === 'object') {
+    timing = {
+      ev: Object.assign(Object.create(null), (tm.ev && typeof tm.ev === 'object') ? tm.ev : {}),
+      rc: Object.assign(Object.create(null), (tm.rc && typeof tm.rc === 'object') ? tm.rc : {})
+    };
+    const nv = Object.keys(timing.ev).length, nr = Object.keys(timing.rc).length;
+    if (nv || nr) console.log(`\u23F1 Zeitmessung geladen: ${nv} Veranstaltungen, ${nr} Rennen`);
   }
 
   // Tokens zurueckholen, sonst ist nach jedem Cold Start jeder
@@ -584,7 +779,13 @@ async function loadStateFromDb() {
         if (typeof rid === 'string' && rid) trackerRace[id] = rid;
       }
     }
-    console.log(`\u267B\uFE0F Laufzeit-Zustand geladen: Modus ${currentMode}, ${Object.keys(autoDisplay).length} Auto-Tracker, ${Object.keys(trackerDisplayNames).length} Namen, ${Object.keys(trackerRace).length} Renn-Zuordnung(en)`);
+    // Fehlt der Schluessel - etwa nach einem Rollback auf 2.5.x und
+    // zurueck -, bleibt jeder Tracker Sportler. Das ist der Zustand
+    // vor 2.6.0 und damit die sichere Vorgabe.
+    if (Array.isArray(rt.teamautos)) {
+      for (const id of rt.teamautos) trackerRolle[String(id)] = 'teamauto';
+    }
+    console.log(`\u267B\uFE0F Laufzeit-Zustand geladen: Modus ${currentMode}, ${Object.keys(autoDisplay).length} Auto-Tracker, ${Object.keys(trackerDisplayNames).length} Namen, ${Object.keys(trackerRace).length} Renn-Zuordnung(en), ${Object.keys(trackerRolle).length} Teamauto(s)`);
   }
 
   const rows = await db.listRaces();
@@ -603,7 +804,10 @@ async function loadStateFromDb() {
       if (r.groups.length > 0) await db.updateRaceGroups(r.id, r.groups);
       if (r.gpx)               await db.updateRaceGpx(r.id, r.gpx);
     }
-    if (activeRaceId) await db.setSetting('activeRaceId', activeRaceId);
+    if (activeRaceIds.size) {
+      await db.setSetting('activeRaceIds', [...activeRaceIds]);
+      await db.setSetting('activeRaceId', activeRaceId);
+    }
     console.log(`📤 ${Object.keys(races).length} Rennen in die Datenbank übernommen`);
     return;
   }
@@ -645,8 +849,16 @@ async function loadStateFromDb() {
   }
   if (Object.values(races).some(r => r.eventId === FALLBACK_EVENT)) ensureFallbackEvent();
 
-  const activeId = await db.getSetting('activeRaceId');
-  activeRaceId = (activeId && races[activeId]) ? activeId : null;
+  // Ab 1.19.0 steht die aktive Menge unter activeRaceIds. Fehlt der
+  // Schluessel - erster Start nach dem Update -, wird der Einzelwert
+  // aus 1.18.0 uebernommen.
+  const activeIds = await db.getSetting('activeRaceIds');
+  if (Array.isArray(activeIds)) {
+    aktivSetzen(activeIds);
+  } else {
+    const activeId = await db.getSetting('activeRaceId');
+    aktivSetzen(activeId ? [activeId] : []);
+  }
   syncGroupsFromRace();
 
   // Das frueher globale GPX wird nicht uebernommen, sondern einmalig
@@ -658,14 +870,19 @@ async function loadStateFromDb() {
   }
 
   const withGpx = Object.values(races).filter(r => r.gpx).length;
-  console.log(`💾 ${evRows.length} Veranstaltung(en), ${rows.length} Rennen geladen, aktiv: ${activeRaceId || 'keins'}, ${groups.length} Gruppe(n), ${withGpx} mit Strecke`);
+  console.log(`💾 ${evRows.length} Veranstaltung(en), ${rows.length} Rennen geladen, aktiv: ${aktivListeText()}, ${groups.length} Gruppe(n), ${withGpx} mit Strecke`);
 }
 
 // =======================
 // AUTH
 // Login-Level:
 //   'spolei'   → Vollzugriff (SpoLei / Admin)
-//   'betreuer' → Basis-Zugriff (nur eigenen Standort teilen)
+//   'betreuer' → Rennbegleitung: eigenen Standort teilen, Taktik des
+//                selbst gewaehlten Rennens fuehren (Gruppen, Runden,
+//                Zeitmessungsvorschlag annehmen oder verwerfen).
+//                Ab 2.5.0. Nicht dabei: alles, was ein Rennen als
+//                solches anlegt, aendert oder beendet - Startlisten,
+//                Strecke, Marker, Tracker, Anzeigetexte, Sollrunden.
 // =======================
 const ADMIN_PASSWORD    = process.env.ADMIN_PASSWORD    || 'admin123';
 const BETREUER_PASSWORD = process.env.BETREUER_PASSWORD || 'betreuer123';
@@ -768,7 +985,9 @@ app.get('/health', (req, res) => {
     `DB: ${s.enabled ? (s.degraded ? 'SCHREIBSCHUTZ' : 'ok') : 'aus'}`,
     `Veranstaltungen: ${Object.keys(events).length}`,
     `Rennen: ${Object.keys(races).length}`,
-    `aktiv: ${activeRaceId || 'keins'}`
+    `aktiv: ${aktivListeText()}`,
+    `Tracker ohne Rennen: ${trackerOhneRennen()}`,
+    `Zeitmessung: ${timingHealthText()}`
   ];
   if (s.schemaFehler && s.schemaFehler.length) {
     teile.push(`Schemafehler: ${s.schemaFehler.join(', ')}`);
@@ -904,7 +1123,12 @@ let raceMeta = Object.create(null);
 // "Sprint". Bewusst nur die Beschriftung geaendert: ein Umbenennen des
 // Schluessels wuerde jeden bereits eingetragenen Punkt ungueltig machen
 // und braeuchte eine Migration - fuer ein Wort auf einem Knopf.
-const MARKER_TYPEN    = ['start', 'wertung', 'berg', 'verpflegung', 'frei'];
+// 'zwischenzeit' (Bedienung: "ZZ") kam mit 1.18.0 dazu und markiert
+// beim Zeitfahren den Standort des Zeitnehmers. Bewusst NUR eine
+// Markierung: gemessen wird hier nichts, dafuer muesste jeder Fahrer
+// einen Tracker haben. Deshalb steht der Typ am ENDE der Liste - der
+// Rueckfall in events-ui.js zeigt auf einen festen Index.
+const MARKER_TYPEN    = ['start', 'wertung', 'berg', 'verpflegung', 'frei', 'zwischenzeit'];
 const MARKER_ZONE     = ['verpflegung', 'frei'];
 const MARKER_MAX      = 20;   // Deckel: /active wird alle 20 s gepollt
 const MARKER_NAME_MAX = 30;
@@ -950,6 +1174,280 @@ function persistRaceMeta() {
 }
 
 // =======================
+// ZEITMESSUNG (my.raceresult.com)
+// =======================
+// Ein Link je Veranstaltung, ein Contest je Rennen - so ist es bei
+// race|result auch geschnitten (eine EventID, mehrere Contests).
+//
+// Abgelegt wird alles im settings-Schluessel 'timing'. Bewusst KEINE
+// neuen Spalten in events/races: eine Schemaaenderung vier Tage vor
+// einem Rennen ist genau das Risiko, das am 29.08.2026 den Start
+// gekostet hat. raceMeta macht es seit 1.11 genauso.
+//
+// timing = {
+//   ev:   { <veranstaltungId>: { eventId, host } },
+//   rc:   { <rennenId>: { contest, an, schwelle } },
+//   stand:{ <rennenId>: { ts, modus, liste, gruppen, hinweis } }   // fluechtig
+// }
+let timing = { ev: Object.create(null), rc: Object.create(null) };
+
+// Zuletzt erkundeter Aufbau je Veranstaltung. Nur im Speicher: er
+// veraltet schnell, und ein Neuaufbau kostet wenige Sekunden.
+let timingErkundung = Object.create(null);
+
+// Was der Poller zuletzt gerechnet hat, je Rennen. Vorschlaege, kein
+// Stand - uebernommen wird ausschliesslich durch den Anwender.
+let timingStand = Object.create(null);
+
+// Fingerabdruck eines Vorschlags: Startnummern je Gruppe, Abstand,
+// Hinweis. Zwei Staende mit demselben Abdruck sind fuer den Anwender
+// derselbe Vorschlag.
+// Bis 2.9.x bekam timingStand[].ts bei JEDEM Durchlauf Date.now() -
+// der Balken "Neuer Stand" blinkte alle 15 Sekunden, auch wenn sich
+// nichts bewegt hatte. Und "Verwerfen" loeschte den Stand, den der
+// naechste Abruf sofort identisch wieder hinlegte.
+function timingSignatur(gruppen, hinweis) {
+  const teile = (gruppen || []).map(g =>
+    (g.riders || []).slice().sort((a, b) => a - b).join(',') + '@' + (g.gap || ''));
+  return teile.join('|') + '#' + (hinweis || '');
+}
+
+// Welche Signatur je Rennen zuletzt verworfen oder uebernommen wurde.
+// Der Balken kommt erst wieder, wenn sich der Inhalt aendert.
+let timingErledigt = Object.create(null);
+
+// Betriebszustand. Sichtbar unter /health, damit ein Ausfall nicht
+// erst im Rennen auffaellt.
+let timingLauf = {
+  timer:   null,
+  aktiv:   false,
+  letzter: null,
+  fehler:  0,
+  letzterFehler: null,
+  abgeschaltet: false
+};
+
+const TIMING_TAKT_MS   = 15000;   // Untergrenze; race|result cacht 10-30 s
+const TIMING_MAX_FEHLER = 10;     // danach Ruhe, bis jemand neu startet
+
+function persistTiming() {
+  if (!db.enabled) return;
+  db.setSetting('timing', { ev: timing.ev, rc: timing.rc }).catch(dbFail('setSetting timing'));
+}
+
+function timingEvOf(raceId) {
+  const r = races[raceId];
+  if (!r) return null;
+  const ev = timing.ev[r.eventId];
+  return (ev && ev.eventId) ? ev : null;
+}
+
+function timingRcOf(raceId) {
+  const c = timing.rc[raceId];
+  return (c && c.contest !== undefined && c.contest !== null && c.an !== false) ? c : null;
+}
+
+// Rennen, die gerade laufen UND eine Zuordnung haben.
+function timingRennen() {
+  const out = [];
+  for (const id of activeRaceIds) {
+    if (timingEvOf(id) && timingRcOf(id)) out.push(id);
+  }
+  return out;
+}
+
+// Erkundung holen, hoechstens alle 60 s neu. Der Poller braucht sie in
+// jedem Durchlauf, weil sich Listennamen aendern - am 01.09.2026
+// zweimal innerhalb einer Stunde beobachtet.
+async function timingAufbau(evId, frisch) {
+  const c = timingErkundung[evId];
+  if (!frisch && c && (Date.now() - c.ts) < 60000) return c.daten;
+  const ev = timing.ev[evId];
+  if (!ev || !ev.eventId) return null;
+  const d = await rr.erkunde(ev.eventId);
+  if (d.fehler) return null;
+  timingErkundung[evId] = { ts: Date.now(), daten: d };
+  if (d.host && d.host !== ev.host) { ev.host = d.host; persistTiming(); }
+  return d;
+}
+
+// Ein Rennen abfragen und den Vorschlag ablegen. Schreibt NICHTS in
+// races[].groups - das tut nur applyVorschlag() auf ausdrueckliche
+// Anweisung.
+async function timingRunde(raceId) {
+  const ev = timingEvOf(raceId), rc = timingRcOf(raceId);
+  if (!ev || !rc) return;
+  const aufbau = await timingAufbau(races[raceId].eventId);
+  if (!aufbau) throw new Error('Aufbau nicht lesbar');
+
+  const wahl = rr.waehleListe(aufbau.reiter, rc.contest);
+  if (!wahl) { timingStand[raceId] = { ts: Date.now(), leer: 'keine Ergebnisliste' }; return; }
+
+  const cfg = await rr.holeConfig(ev.eventId, wahl.tab, ev.host);
+  if (cfg.fehler) throw new Error(cfg.fehler);
+  const res = await rr.holeListe(ev.eventId, wahl.tab, cfg.key, wahl.name, rc.contest, ev.host);
+  if (res.fehler) throw new Error(res.fehler);
+
+  const alleEintraege = rr.alsErgebnis(res);
+
+  // Nur wer im Rennen ist, darf die Einteilung bestimmen. Bis 2.9.x
+  // ging die Ergebnisliste ungefiltert in zuGruppen(): am 05.09.2026
+  // standen drei ausgeschiedene Fahrer vor dem Feld, wurden damit zur
+  // Spitzengruppe und haben jeden Abstand dahinter verschoben.
+  // Zwei Gruende schliessen aus:
+  //   * Startnummer nicht in races[].riders - fremdes Rennen
+  //   * Zustand dsq/dnf - aus der Wertung genommen
+  // Ohne Startliste wird nur der zweite Grund geprueft: sonst waere der
+  // Vorschlag fuer jedes noch nicht importierte Rennen leer, und das
+  // waere schlechter als der alte Zustand.
+  const kennt  = new Set(races[raceId].riders.map(r => Number(r.nr)));
+  const gegen  = kennt.size > 0;
+  const draus  = outNrs(raceId);
+  const eintraege   = [];
+  const ausgelassen = [];
+  for (const e of alleEintraege) {
+    const nr = Number(e.nr);
+    if (gegen && !kennt.has(nr)) { ausgelassen.push({ nr, grund: 'nicht im Rennen' }); continue; }
+    if (draus.has(nr))           { ausgelassen.push({ nr, grund: 'DSQ/DNF' });         continue; }
+    eintraege.push(e);
+  }
+
+  const g = rr.zuGruppen(eintraege, { schwelle: rc.schwelle });
+
+  // Bei fahrerscharfen Zeiten - Einzelzeitfahren, Prolog - entsteht
+  // eine formal richtige, sachlich sinnlose Einteilung. Das gehoert
+  // gesagt, nicht verschwiegen.
+  // Bis 2.9.x lautete die Bedingung "Schwellenmodus, mehr als 20 Fahrer,
+  // hoechstens zwei Gruppen". Das beschreibt einen geschlossenen Bunch,
+  // nicht ein Zeitfahren - und es schwieg genau bei den ersten
+  // Zielankuenften, wo der Hinweis gebraucht wird.
+  // Ab 2.10.0 zaehlt das Verhaeltnis: wenn fast jede Gruppe aus einem
+  // einzigen Fahrer besteht, sind die Zeiten fahrerscharf. Der
+  // Listenname zaehlt zusaetzlich, weil der Zeitnehmer ihn ohnehin
+  // eindeutig vergibt.
+  const einzeln = g.gruppen.filter(x => (x.riders || []).length === 1).length;
+  const nameTT  = /time\s*trial|zeitfahren|prolog/i.test(String(wahl.name || ''));
+  const hinweis = (eintraege.length >= 3 && g.gruppen.length > 0
+                   && (nameTT || einzeln >= g.gruppen.length * 0.8))
+    ? 'Zeiten sind fahrerscharf - vermutlich ein Zeitfahren. Gruppen mit Vorsicht.'
+    : null;
+
+  const sig = timingSignatur(g.gruppen, hinweis);
+  const alt = timingStand[raceId];
+  timingStand[raceId] = {
+    // ts nur fortschreiben, wenn sich der Inhalt geaendert hat.
+    ts:          (alt && alt.sig === sig) ? alt.ts : Date.now(),
+    sig,
+    liste:       wahl.name,
+    live:        !!wahl.live,
+    modus:       g.modus,
+    fahrer:      eintraege.length,
+    gruppen:     g.gruppen,
+    // Bis 2.9.x wurde beides stillschweigend geschluckt. Wer im Auto
+    // eine Nummer vermisst, soll nicht raten muessen, warum sie fehlt.
+    verworfen:   Array.isArray(g.verworfen) ? g.verworfen : [],
+    ausgelassen,
+    hinweis
+  };
+}
+
+async function timingZyklus() {
+  const ids = timingRennen();
+  if (ids.length === 0) return;
+  for (const id of ids) {
+    try {
+      await timingRunde(id);
+      timingLauf.fehler = 0;
+      timingLauf.letzterFehler = null;
+    } catch (e) {
+      timingLauf.fehler++;
+      timingLauf.letzterFehler = e.message;
+      if (timingLauf.fehler >= TIMING_MAX_FEHLER) {
+        timingLauf.abgeschaltet = true;
+        stopTimingPoller();
+        console.error(`⏱ Zeitmessung nach ${TIMING_MAX_FEHLER} Fehlversuchen abgeschaltet: ${e.message}`);
+        return;
+      }
+    }
+    // Versetzt statt gleichzeitig: race|result begrenzt auf einen
+    // Aufruf je Sekunde und Adresse, und zwei Rennen einer
+    // Veranstaltung treffen dieselbe.
+    await new Promise(r => setTimeout(r, 1200));
+  }
+  timingLauf.letzter = Date.now();
+}
+
+function startTimingPoller() {
+  if (timingLauf.timer || timingLauf.abgeschaltet) return;
+  if (timingRennen().length === 0) return;
+  timingLauf.aktiv = true;
+  timingLauf.timer = setInterval(() => {
+    timingZyklus().catch(e => console.error('⏱ Zyklus:', e.message));
+  }, TIMING_TAKT_MS);
+  timingLauf.timer.unref?.();
+  timingZyklus().catch(() => {});
+  console.log(`⏱ Zeitmessung gestartet für ${timingRennen().length} Rennen`);
+}
+
+function stopTimingPoller() {
+  if (timingLauf.timer) clearInterval(timingLauf.timer);
+  timingLauf.timer = null;
+  timingLauf.aktiv = false;
+}
+
+// Nach jeder Aenderung an Zuordnung oder aktiven Rennen aufrufen.
+function timingNeuBewerten() {
+  if (timingRennen().length === 0) stopTimingPoller();
+  else                             startTimingPoller();
+}
+
+// Vorschlag uebernehmen. Genau hier - und nur hier - werden Gruppen aus
+// der Zeitmessung geschrieben. Fuer das Leitrennen ueber die
+// Spiegelvariable, fuer jedes andere direkt am Rennen: POST /groups
+// kennt nur das Leitrennen, und diese Datei soll dessen erprobten
+// Schreibweg nicht anfassen.
+function applyVorschlag(raceId, nurGid) {
+  const st = timingStand[raceId];
+  if (!st || !Array.isArray(st.gruppen) || st.gruppen.length === 0) return null;
+  const alt = groupsOf(raceId);
+  const neu = st.gruppen.map((g, i) => {
+    const bestand = alt[i] || null;
+    return {
+      id:      bestand ? bestand.id : newId(),
+      name:    bestand ? bestand.name : (i === 0 ? 'Spitze' : (i === st.gruppen.length - 1 ? 'Feld' : `Gruppe ${i + 1}`)),
+      color:   bestand ? bestand.color : GROUP_FARBEN[i % GROUP_FARBEN.length],
+      gap:     g.gap,
+      gapPrev: bestand ? (bestand.gap || null) : null,
+      main:    bestand ? bestand.main === true : (i === st.gruppen.length - 1),
+      riders:  g.riders
+    };
+  });
+  // Einzelne Gruppe: nur diese ersetzen, der Rest bleibt wie er ist.
+  const ziel = nurGid
+    ? alt.map(g => {
+        if (g.id !== nurGid) return g;
+        const t = neu.find(n => n.id === nurGid);
+        return t || g;
+      })
+    : neu;
+
+  const sauber = sanitizeGroups(ziel);
+  // Ein vollstaendig uebernommener Vorschlag ist erledigt - sonst stuende
+  // der Balken "Neuer Stand" unmittelbar nach dem Uebernehmen wieder da.
+  // Bei einer einzelnen Gruppe bleibt er stehen: der Rest ist offen.
+  if (!nurGid && st.sig) timingErledigt[raceId] = st.sig;
+  if (raceId === activeRaceId) { groups = sauber; syncGroupsToRace(); }
+  else if (races[raceId])      { races[raceId].groups = sauber; }
+  saveRacesToDisk();
+  persistRace(raceId);
+  pushAutoDisplays();
+  persistGroups(raceId);
+  return sauber;
+}
+
+const GROUP_FARBEN = ['#EF9F27', '#378ADD', '#1D9E75', '#D85A30', '#7F77DD', '#888780'];
+
+// =======================
 // TRACKER -> RENNEN
 // =======================
 // Welches Rennen gilt fuer diesen Tracker? Ohne ausdrueckliche
@@ -967,6 +1465,14 @@ function trackerOfRace(raceId) {
     .filter(t => trackerRace[t] === raceId)
     .map(t => trackerDisplayNames[t] || t)
     .sort((a, b) => a.localeCompare(b));
+}
+
+// Wie viele davon sind Teamautos? Getrennt ausgewiesen, weil sich
+// "3 Tracker" sonst wie drei Fahrer im Feld liest.
+function autosOfRace(raceId) {
+  return Object.keys(trackerRace)
+    .filter(t => trackerRace[t] === raceId && istTeamauto(t))
+    .length;
 }
 
 // Zuordnungen loesen. Wird aufgerufen, sobald ein Rennen auf 'beendet'
@@ -1133,7 +1639,11 @@ const HINT_MAX_AGE_MS = 30 * 1000;
 
 // Ein Zieldurchgang ist ein Sprung von hinten (>80 %) nach vorn (<20 %).
 function pruefeRundendurchgang(id, sNeu) {
-  const rid = activeRaceId;
+  // Bis 1.18.0 stand hier activeRaceId. Bei mehreren laufenden Rennen
+  // waere das falsch: der Zaehler wuerde Geometrie und Start/Ziel-
+  // Versatz des Leitrennens gegen ein s pruefen, das auf einer anderen
+  // Strecke gerechnet wurde.
+  const rid = raceOfTracker(id);
   const r   = rid ? races[rid] : null;
   const g   = rid ? trackGeometry(rid) : null;
   if (!r || !g || !g.L) return;
@@ -1252,13 +1762,16 @@ function verfolgeStrecke(id, lat, lon) {
     return brauchbar ? s : null;
   }
 
-  // Der Rundenzaehler bleibt an das aktive Rennen gebunden. Er
-  // vergleicht s gegen die Geometrie und den Start/Ziel-Versatz von
-  // activeRaceId - fuer einen Tracker, dessen s auf einer anderen
-  // Strecke gerechnet wurde, waere dieser Vergleich sinnlos und wuerde
-  // Durchgaenge erfinden. Solange nur ein Rennen aktiv sein kann, geht
-  // dadurch nichts verloren.
-  if (rid === activeRaceId) {
+  // Der Rundenzaehler laeuft fuer jedes Rennen, das gerade aktiv ist -
+  // gerechnet wird auf der Strecke des Rennens, dem der Tracker
+  // zugeordnet ist. Fuer ein nicht aktives Rennen bleibt er aussen
+  // vor: dort waere jeder gemeldete Durchgang erfunden.
+  // Ein Teamauto zaehlt keine Runden. Es faehrt zurueck, kuerzt ab und
+  // steht am Start - jeder dieser Wege sieht fuer die Rundenlogik wie
+  // ein Zieldurchgang aus und wuerde den Zaehler des ganzen Rennens
+  // heben. Die Rundenlogik selbst ist unveraendert; sie wird nur nicht
+  // mehr betreten.
+  if (istAktiv(rid) && !istTeamauto(id)) {
     pruefeRundendurchgang(id, s);
   } else {
     // Wie im Trainings-Zweig: trackerS trotzdem fuehren. Daran haengt
@@ -1556,6 +2069,10 @@ app.get('/positions', (req, res) => {
       const st  = trackerStats[id];
       const avg = avgKmhFor(id);
       enriched[id] = { ...pos, displayName: trackerDisplayNames[id] || id };
+      // Nur setzen, wenn es ein Teamauto ist. Ein fehlendes Feld
+      // bedeutet Sportler - so bleibt die Antwort fuer jeden Stand
+      // ohne Rollen byte-gleich zu 2.5.x.
+      if (istTeamauto(id)) enriched[id].role = 'teamauto';
       if (st)          enriched[id].distM  = Math.round(st.dist);
       if (avg !== null) enriched[id].avgKmh = avg;
       // Streckenposition in Metern. Der Server rechnet sie ohnehin bei
@@ -1772,6 +2289,69 @@ app.post('/tracker-race', requireSpolei, (req, res) => {
   res.json({ ok: true, raceId, color });
 });
 
+// Rolle eines Trackers setzen: 'teamauto' oder null (= Sportler).
+// Eigener Endpoint statt eines Zusatzfeldes an /tracker-race: so
+// bleibt die Zuordnung unberuehrt, und ein Rollback trifft genau eine
+// Route. Wie dort wird nicht geprueft, ob der Tracker je gesendet hat -
+// die Rolle darf vor dem ersten Lebenszeichen feststehen.
+app.post('/tracker-role', requireSpolei, (req, res) => {
+  const { trackerId, role } = req.body || {};
+  if (!trackerId) return res.status(400).json({ error: 'trackerId required' });
+  const key = String(trackerId).slice(0, 40);
+
+  if (role === 'teamauto') {
+    trackerRolle[key] = 'teamauto';
+    persistRuntime();
+    console.log(`\u{1F697} Tracker ${key} ist ein Teamauto`);
+    return res.json({ ok: true, role: 'teamauto' });
+  }
+
+  if (role === null || role === undefined || role === '' || role === 'sportler') {
+    delete trackerRolle[key];
+    persistRuntime();
+    console.log(`\u{1F6B4} Tracker ${key} ist ein Sportler`);
+    return res.json({ ok: true, role: null });
+  }
+
+  res.status(400).json({ error: 'role muss "teamauto", "sportler" oder null sein' });
+});
+
+// Alle bekannten Tracker - fuer die Trackerverwaltung im Rennen-Tab.
+// Bewusst aus vier Quellen zusammengesetzt, damit auch ein Geraet
+// auftaucht, das gerade nichts sendet: nur so laesst sich am Vorabend
+// zuordnen. Betreuer-Marker und das Teamauto des Handys bleiben
+// aussen vor - beide sind keine Tracker im Sinne dieser Liste.
+app.get('/trackers', requireSpolei, (req, res) => {
+  const ids = new Set();
+  for (const id of Object.keys(positions))           ids.add(id);
+  for (const id of Object.keys(pending))             ids.add(id);
+  for (const id of Object.keys(trackerDisplayNames)) ids.add(id);
+  for (const id of Object.keys(trackerRace))         ids.add(id);
+  for (const id of Object.keys(trackerRolle))        ids.add(id);
+  ids.delete('TEAMAUTO');
+
+  const now = Date.now();
+  const out = [];
+  for (const id of ids) {
+    if (String(id).startsWith('betreuer-')) continue;
+    const pos = positions[id];
+    const pnd = pending[id];
+    const ts  = Math.max((pos && pos.timestamp) || 0, (pnd && pnd.timestamp) || 0) || null;
+    const rid = trackerRace[id] && races[trackerRace[id]] ? trackerRace[id] : null;
+    out.push({
+      id,
+      displayName: trackerDisplayNames[id] || id,
+      raceId:      rid,
+      raceName:    rid ? races[rid].name : null,
+      role:        istTeamauto(id) ? 'teamauto' : null,
+      timestamp:   ts,
+      online:      ts !== null && now - ts < 60000
+    });
+  }
+  out.sort((a, b) => a.displayName.localeCompare(b.displayName));
+  res.json({ trackers: out });
+});
+
 // =======================
 // CLAUDE API PROXY
 // API-Key bleibt server-seitig, Browser-CORS-Problem umgangen
@@ -1810,10 +2390,43 @@ app.post('/api/claude', requireSpolei, express.json({ limit: '20mb' }), async (r
 // ein ganzes Wochenende vorbereiten laesst. Gelesen wird ueber /gpx,
 // das immer die Strecke des aktiven Rennens liefert.
 
+// Ab 2.0 kann die Karte mehrere Strecken gleichzeitig zeichnen. Ohne
+// race-Parameter bleibt es beim Leitrennen - so wie es bis 1.19.0 die
+// einzige Moeglichkeit war.
 app.get('/gpx', (req, res) => {
-  const r = activeRaceId ? races[activeRaceId] : null;
+  const id = (typeof req.query.race === 'string' && req.query.race)
+    ? req.query.race : activeRaceId;
+  const r = id ? races[id] : null;
   res.json((r && r.gpx) || null);
 });
+
+// Der Steckbrief eines Rennens. Bis 1.19.0 stand das direkt in
+// /active; fuer 2.0 wird derselbe Block je aktivem Rennen gebraucht.
+// farbe kommt mit, damit das Frontend Strecke, Marker und Reiter
+// einfaerben kann, ohne /races nachzuladen.
+function raceSteckbrief(r) {
+  const ev = events[r.eventId] || null;
+  const m  = raceMetaOf(r.id);
+  return {
+    raceId:      r.id,
+    name:        r.name,
+    eventName:   ev ? ev.name : null,
+    category:    r.category,
+    farbe:       farbeOf(r.id),
+    startTime:   r.startTime,
+    actualStart: r.actualStart || null,
+    riderCount:  r.riders.length,
+    laps:        m.laps,
+    currentLap:  m.currentLap || 1,
+    finalLap:    istZielrunde(r.id),
+    startOffset: Math.round(m.startOffset || 0),
+    marker:      m.marker,
+    trackLength: (() => { const g = trackGeometry(r.id); return g ? Math.round(g.L) : null; })(),
+    hasGpx:      !!r.gpx,
+    gpxName:     r.gpx ? r.gpx.name : null,
+    gpxPoints:   r.gpx ? r.gpx.coords.length : 0
+  };
+}
 
 // Winziger Steckbrief des aktiven Rennens, ohne Startliste und ohne
 // Streckenpunkte. Zwei Probleme auf einmal:
@@ -1827,27 +2440,14 @@ app.get('/active', (req, res) => {
   // Die Version reist hier mit, weil /active ohnehin alle 20 Sekunden
   // abgefragt wird. Ein Tablet, das seit gestern offen ist, merkt so
   // von selbst, dass ein neuer Stand ausgeliefert wird.
-  if (!r) return res.json({ raceId: null, version: VERSION.version });
-  const ev = events[r.eventId] || null;
-  res.json({
-    version:    VERSION.version,
-    raceId:     r.id,
-    name:       r.name,
-    eventName:  ev ? ev.name : null,
-    category:   r.category,
-    startTime:  r.startTime,
-    actualStart: r.actualStart || null,
-    riderCount: r.riders.length,
-    laps:        raceMetaOf(r.id).laps,
-    currentLap:  raceMetaOf(r.id).currentLap || 1,
-    finalLap:    istZielrunde(r.id),
-    startOffset: Math.round(raceMetaOf(r.id).startOffset || 0),
-    marker:      raceMetaOf(r.id).marker,
-    trackLength: (() => { const g = trackGeometry(r.id); return g ? Math.round(g.L) : null; })(),
-    hasGpx:     !!r.gpx,
-    gpxName:    r.gpx ? r.gpx.name : null,
-    gpxPoints:  r.gpx ? r.gpx.coords.length : 0
-  });
+  // races[] steht auch dann da, wenn kein Rennen laeuft - das Frontend
+  // muss so nicht zwei Faelle unterscheiden.
+  const alle = [...activeRaceIds].filter(id => races[id]).map(id => raceSteckbrief(races[id]));
+  if (!r) return res.json({ raceId: null, version: VERSION.version, races: alle });
+  // Die Felder des Leitrennens bleiben auf oberster Ebene liegen. Ein
+  // Geraet mit altem Stand im Cache liest sie weiter und sieht genau
+  // das, was es bis 1.19.0 gesehen hat.
+  res.json(Object.assign({ version: VERSION.version }, raceSteckbrief(r), { races: alle }));
 });
 
 app.put('/races/:id/gpx', requireSpolei, (req, res) => {
@@ -1936,7 +2536,8 @@ function raceView(r) {
     // zugeordneten Tracker.
     color:      farbeOf(r.id),
     tracker:    trackerOfRace(r.id),
-    isActive:   r.id === activeRaceId
+    trackerAutos: autosOfRace(r.id),
+    isActive:   istAktiv(r.id)
   };
 }
 
@@ -1949,31 +2550,34 @@ function racesOfEvent(eventId) {
 
 // Genau ein Rennen ist aktiv. Der Wechsel zieht den Taktik-Stand mit:
 // die Gruppen des alten Rennens bleiben dort gespeichert.
+// Rueckgabe false, wenn schon MAX_AKTIVE_RENNEN laufen. Bis 1.18.0
+// wurde hier das vorherige Rennen beendet und seine Tracker
+// freigegeben - genau das Verhalten, das zwei Rennen einer
+// Veranstaltung unmoeglich machte. Es entfaellt ersatzlos: ein Rennen
+// endet nur noch ueber deactivateRace().
 function activateRace(id) {
-  if (activeRaceId && races[activeRaceId] && activeRaceId !== id) {
-    races[activeRaceId].groups = groups;
-    races[activeRaceId].status = 'beendet';
-    persistRace(activeRaceId);
-    // Das alte Rennen ist beendet - seine Tracker werden frei.
-    loeseTrackerZuordnung(activeRaceId);
-  }
-  activeRaceId = id;
+  const leitVorher = activeRaceId;
+  if (!aktivHinzufuegen(id)) return false;
   races[id].status = 'aktiv';
   sichereFarbe(id);
-  // Streckenpositionen vergessen: sonst vergleicht der Rundenzaehler
-  // den ersten Fix im neuen Rennen mit einem s aus dem alten und
-  // meldet einen Rueckwaertssprung.
-  for (const k of Object.keys(trackerS)) delete trackerS[k];
-  // Marker aus dem vorherigen Rennen abraeumen. Wer gerade sendet,
-  // ist juenger als 15 Minuten und bleibt stehen.
-  sweepPositions(STALE_ON_ACTIVATE_MS, 'Rennenwechsel');
-  syncGroupsFromRace();
+  // Streckenpositionen der Tracker vergessen, deren Rennen nicht mehr
+  // laeuft. Die Tracker der weiterhin aktiven Rennen behalten ihre
+  // Bezugswerte - sonst meldete der Rundenzaehler dort beim naechsten
+  // Fix einen Rueckwaertssprung.
+  vergissStreckenpositionen(trackerS, trackerRace);
+  // Marker abraeumen, aber nur von Trackern ohne laufendes Rennen.
+  sweepPositions(STALE_ON_ACTIVATE_MS, 'Rennenwechsel', true);
+  // Nur wenn dieses Rennen das Leitrennen geworden ist, wird der
+  // Gruppenspiegel neu geladen. Bleibt ein frueher aktiviertes Rennen
+  // fuehrend, wuerde ein Nachladen dessen ungespeicherten Taktik-Stand
+  // ueberschreiben.
+  if (activeRaceId !== leitVorher) syncGroupsFromRace();
   saveRacesToDisk();
-  // Verkettet, nicht parallel: clearActiveStatus wuerde sonst je nach
-  // Pool-Reihenfolge den frisch gesetzten Status wieder auf 'beendet'
-  // zuruecksetzen.
+  // Verkettet, nicht parallel: clearActiveStatusExcept wuerde sonst je
+  // nach Pool-Reihenfolge den frisch gesetzten Status wieder auf
+  // 'beendet' zuruecksetzen.
   if (db.enabled) {
-    db.clearActiveStatus()
+    db.clearActiveStatusExcept([...activeRaceIds])
       .then(() => db.upsertRace({
         id:        races[id].id,
         eventId:   races[id].eventId,
@@ -1984,10 +2588,18 @@ function activateRace(id) {
         status:    'aktiv',
         riders:    races[id].riders
       }))
-      .then(() => db.setSetting('activeRaceId', id))
+      .then(() => {
+        persistAktiveRennen();
+      })
       .catch(dbFail('activateRace'));
   }
   pushAutoDisplays();
+  // Zeitmessung mitziehen: laeuft ein zugeordnetes Rennen, laeuft auch
+  // der Poller. Ohne aktives Rennen wird nicht abgefragt - das spart
+  // auf dem Render-Freikontingent die Stunden, die sonst ein
+  // dauerlaufender Intervall verbraucht.
+  timingNeuBewerten();
+  return true;
 }
 
 // Rennen beenden, ohne ein anderes zu aktivieren. Bis hierhin ging das
@@ -1997,26 +2609,40 @@ function activateRace(id) {
 // Der Taktik-Stand bleibt beim Rennen, genau wie beim Wechsel. Der
 // Aufrufer muss vorher pruefen, dass id wirklich das aktive Rennen ist.
 function deactivateRace(id) {
-  syncGroupsToRace();
+  // Der gespiegelte Gruppenstand gehoert dem Leitrennen. Nur wenn
+  // dieses beendet wird, muss er vorher zurueckgeschrieben werden -
+  // sonst wuerde er dem falschen Rennen zugeschlagen.
+  const warLeit = (id === activeRaceId);
+  if (warLeit) syncGroupsToRace();
   races[id].status = 'beendet';
   loeseTrackerZuordnung(id);
-  activeRaceId = null;
-  groups = [];
-  // Wie beim Rennenwechsel: alte Streckenpositionen vergessen, sonst
-  // vergleicht der Rundenzaehler den ersten Fix des naechsten Rennens
-  // mit einem s aus diesem und meldet einen Rueckwaertssprung.
-  for (const k of Object.keys(trackerS)) delete trackerS[k];
+  aktivEntfernen(id);
+  // Nach dem Entfernen zeigt activeRaceId auf das naechste laufende
+  // Rennen. Dessen Taktik-Stand wird zum neuen Spiegel; laeuft keins
+  // mehr, ergibt syncGroupsFromRace() eine leere Liste - wie bisher.
+  if (warLeit) syncGroupsFromRace();
+  // Wie beim Rennenwechsel: Streckenpositionen der beendeten Rennen
+  // vergessen. Die Tracker weiterhin laufender Rennen bleiben
+  // unberuehrt.
+  vergissStreckenpositionen(trackerS, trackerRace);
   saveRacesToDisk();
   // Verkettet, nicht parallel - dieselbe Begruendung wie in
-  // activateRace(): clearActiveStatus() darf erst laufen, wenn die
+  // activateRace(): der Statusabgleich darf erst laufen, wenn die
   // Gruppen des Rennens geschrieben sind.
   if (db.enabled) {
     db.updateRaceGroups(id, races[id].groups || [])
-      .then(() => db.clearActiveStatus())
-      .then(() => db.setSetting('activeRaceId', null))
+      .then(() => db.clearActiveStatusExcept([...activeRaceIds]))
+      .then(() => {
+        persistAktiveRennen();
+      })
       .catch(dbFail('deactivateRace'));
   }
   pushAutoDisplays();
+  // Vorschlaege des beendeten Rennens verwerfen: ein alter Stand, der
+  // nach dem Zieleinlauf stehenbleibt, liest sich wie ein aktueller.
+  delete timingStand[id];
+  delete timingErledigt[id];
+  timingNeuBewerten();
 }
 
 // --- Veranstaltungen ---
@@ -2024,7 +2650,10 @@ app.get('/events', (req, res) => {
   const list = Object.values(events)
     .sort((a, b) => (b.dateFrom || b.createdAt).localeCompare(a.dateFrom || a.createdAt))
     .map(ev => ({ ...ev, races: racesOfEvent(ev.id) }));
-  res.json({ events: list, activeRaceId });
+  // activeRaceId bleibt im Payload: bestehende Frontend-Stellen lesen
+  // es weiterhin und sehen das Leitrennen. activeRaceIds kommt daneben
+  // dazu, ohne einen davon zu brechen.
+  res.json({ events: list, activeRaceId, activeRaceIds: [...activeRaceIds] });
 });
 
 app.post('/events', requireSpolei, (req, res) => {
@@ -2067,7 +2696,7 @@ app.delete('/events/:id', requireSpolei, (req, res) => {
   const { id } = req.params;
   if (!events[id]) return res.status(404).json({ error: 'Nicht gefunden' });
   const own = Object.values(races).filter(r => r.eventId === id);
-  if (own.some(r => r.id === activeRaceId)) {
+  if (own.some(r => istAktiv(r.id))) {
     return res.status(409).json({ error: 'Aktives Rennen liegt in dieser Veranstaltung' });
   }
   const name = events[id].name;
@@ -2082,12 +2711,17 @@ app.delete('/events/:id', requireSpolei, (req, res) => {
 // --- Rennen ---
 app.get('/races', (req, res) => {
   const list = Object.values(races).map(raceView);
-  res.json({ races: list, activeId: activeRaceId });
+  res.json({ races: list, activeId: activeRaceId, activeIds: [...activeRaceIds] });
 });
 
+// Ab 2.4.0 mit ?race=<id>: der Favoriten- und Startlisteneditor zeigt
+// die Fahrer des Rennens, an dem das Geraet gerade arbeitet. Ohne den
+// Parameter unveraendert das Leitrennen.
 app.get('/races/active', (req, res) => {
-  if (!activeRaceId || !races[activeRaceId]) return res.json([]);
-  res.json(races[activeRaceId].riders);
+  const wunsch = req.query && req.query.race ? String(req.query.race) : null;
+  const rid    = wunsch || activeRaceId;
+  if (!rid || !races[rid]) return res.json([]);
+  res.json(races[rid].riders);
 });
 
 app.post('/races', requireSpolei, (req, res) => {
@@ -2189,7 +2823,11 @@ app.post('/races/:id/start', requireSpolei, (req, res) => {
 // Rundenzaehler von Hand setzen. Die Automatik rechnet danach vom
 // korrigierten Stand weiter - deshalb wird lastLapTs mitgesetzt, sonst
 // koennte der naechste Durchgang sofort erneut hochschalten.
-app.post('/races/:id/lap', requireSpolei, (req, res) => {
+// Ab 2.5.0 auch fuer Betreuer: der Rennbezug steht im Pfad, ein
+// Betreuer korrigiert damit ausschliesslich die Zaehlung des Rennens,
+// dessen Zeile er antippt. Die Sollrundenzahl und der Start/Ziel-
+// Versatz bleiben in PATCH /races/:id/laps beim SpoLei.
+app.post('/races/:id/lap', requireAuth, (req, res) => {
   const r = races[req.params.id];
   if (!r) return res.status(404).json({ error: 'Nicht gefunden' });
   const m = raceMetaOf(r.id);
@@ -2321,13 +2959,18 @@ app.delete('/races/:id/rider/:nr', requireSpolei, (req, res) => {
   const before = r.riders.length;
   r.riders = r.riders.filter(x => !(x && Number(x.nr) === nr));
   if (r.riders.length === before) return res.status(404).json({ error: 'Fahrer nicht in der Startliste' });
-  if (r.id === activeRaceId) {
-    for (const g of groups) {
-      if (!g || !Array.isArray(g.riders)) continue;
-      g.riders = g.riders.filter(x => Number(x) !== nr);
-    }
-    syncGroupsToRace(); persistGroups(); pushAutoDisplays();
+  // Bis 2.3.0 nur fuer das Leitrennen. Seit die Taktik jedes laufenden
+  // Rennens bearbeitet werden kann, muss der Fahrer auch dort aus
+  // seiner Gruppe verschwinden - sonst bleibt eine Nummer ohne
+  // Startlisteneintrag stehen.
+  const gsDel = groupsOf(r.id);
+  for (const g of gsDel) {
+    if (!g || !Array.isArray(g.riders)) continue;
+    g.riders = g.riders.filter(x => Number(x) !== nr);
   }
+  if (r.id === activeRaceId) syncGroupsToRace();
+  else if (races[r.id])      races[r.id].groups = gsDel;
+  persistGroups(r.id); pushAutoDisplays();
   saveRacesToDisk();
   if (db.enabled) db.updateRaceRiders(r.id, r.riders).catch(dbFail('updateRaceRiders del'));
   console.log(`\u{1F5D1} Fahrer entfernt: Nr. ${nr} aus "${r.name}"`);
@@ -2474,9 +3117,14 @@ app.get('/races/:id/gaps', requireAuth, async (req, res) => {
 app.post('/races/:id/activate', requireSpolei, (req, res) => {
   const { id } = req.params;
   if (!races[id]) return res.status(404).json({ error: 'Nicht gefunden' });
-  activateRace(id);
-  console.log(`✅ Aktives Rennen: "${races[id].name}"`);
-  res.json({ ok: true, activeId: activeRaceId });
+  if (!activateRace(id)) {
+    return res.status(409).json({
+      error: `Es laufen bereits ${MAX_AKTIVE_RENNEN} Rennen. Beende zuerst eines davon.`,
+      activeIds: [...activeRaceIds]
+    });
+  }
+  console.log(`✅ Rennen aktiv: "${races[id].name}" – laufend: ${aktivListeText()}`);
+  res.json({ ok: true, activeId: activeRaceId, activeIds: [...activeRaceIds] });
 });
 
 // --- Streckenmarker ---
@@ -2529,8 +3177,16 @@ app.post('/races/:id/marker', requireSpolei, (req, res) => {
     } else if (b.sEnde !== undefined) {
       e.sEnde = (b.sEnde === null || b.sEnde === '') ? null : Math.round(faltenAufRunde(r.id, b.sEnde));
     }
+    // Soll der Abschnitt auf der Karte eingefaerbt werden? Fuer lange
+    // Zonen - etwa die Strecke, auf der aus dem Fahrzeug verpflegt
+    // werden darf - reichen die beiden Schilder. Wer das Feld nicht
+    // mitschickt (Karte antippen, alte Bestaende), behaelt seinen Wert
+    // und bekommt sonst die Vorgabe true.
+    if (b.band !== undefined) e.band = (b.band !== false);
+    else if (e.band === undefined) e.band = true;
   } else {
     delete e.sEnde;
+    delete e.band;
   }
 
   if (b.runden !== undefined) e.runden = normalizeRunden(b.runden);
@@ -2561,11 +3217,11 @@ app.delete('/races/:id/marker/:mid', requireSpolei, (req, res) => {
 app.post('/races/:id/deactivate', requireSpolei, (req, res) => {
   const { id } = req.params;
   if (!races[id])        return res.status(404).json({ error: 'Nicht gefunden' });
-  if (activeRaceId !== id) return res.status(409).json({ error: 'Dieses Rennen ist nicht aktiv' });
+  if (!istAktiv(id)) return res.status(409).json({ error: 'Dieses Rennen ist nicht aktiv' });
   const name = races[id].name;
   deactivateRace(id);
-  console.log(`\u23F9\uFE0F Rennen beendet: "${name}" \u2013 kein Rennen aktiv`);
-  res.json({ ok: true, activeId: null });
+  console.log(`\u23F9\uFE0F Rennen beendet: "${name}" \u2013 laufend: ${aktivListeText()}`);
+  res.json({ ok: true, activeId: activeRaceId, activeIds: [...activeRaceIds] });
 });
 
 app.delete('/races/:id', requireSpolei, (req, res) => {
@@ -2575,12 +3231,14 @@ app.delete('/races/:id', requireSpolei, (req, res) => {
   // Rundendaten weg.
   if (raceMeta[id]) { delete raceMeta[id]; persistRaceMeta(); }
   delete gpxCache[id];
-  const name = races[id].name;
+  const name    = races[id].name;
+  const warLeit = (id === activeRaceId);
   delete races[id];
-  if (activeRaceId === id) {
-    activeRaceId = null;
-    groups = [];
-    if (db.enabled) db.setSetting('activeRaceId', null).catch(dbFail('setSetting activeRaceId'));
+  if (aktivEntfernen(id)) {
+    // War es das Leitrennen, uebernimmt das naechste laufende den
+    // Gruppenspiegel. Lief keins mehr, ergibt das eine leere Liste.
+    if (warLeit) syncGroupsFromRace();
+    persistAktiveRennen();
   }
   saveRacesToDisk();
   if (db.enabled) db.deleteRace(id).catch(dbFail('deleteRace'));
@@ -2599,9 +3257,9 @@ app.get('/startlists', (req, res) => {
     name:       r.name,
     createdAt:  r.createdAt,
     riderCount: r.riders.length,
-    isActive:   r.id === activeRaceId
+    isActive:   istAktiv(r.id)
   }));
-  res.json({ lists: list, activeId: activeRaceId });
+  res.json({ lists: list, activeId: activeRaceId, activeIds: [...activeRaceIds] });
 });
 
 app.get('/startlists/active', (req, res) => {
@@ -2631,12 +3289,12 @@ app.post('/startlists', requireSpolei, (req, res) => {
 app.delete('/startlists/:id', requireSpolei, (req, res) => {
   const { id } = req.params;
   if (!races[id]) return res.status(404).json({ error: 'Nicht gefunden' });
-  const name = races[id].name;
+  const name    = races[id].name;
+  const warLeit = (id === activeRaceId);
   delete races[id];
-  if (activeRaceId === id) {
-    activeRaceId = null;
-    groups = [];
-    if (db.enabled) db.setSetting('activeRaceId', null).catch(dbFail('setSetting activeRaceId'));
+  if (aktivEntfernen(id)) {
+    if (warLeit) syncGroupsFromRace();
+    persistAktiveRennen();
   }
   saveRacesToDisk();
   if (db.enabled) db.deleteRace(id).catch(dbFail('deleteRace'));
@@ -2711,43 +3369,257 @@ app.post('/display', requireSpolei, (req, res) => {
 // =======================
 // GRUPPEN ENDPOINTS
 // =======================
+// ?race=<id> liest den Taktik-Stand eines anderen Rennens. Ohne den
+// Parameter unveraendert das aktive Rennen - alle bestehenden Aufrufer
+// bleiben damit gueltig. Nur lesend: geschrieben wird weiterhin
+// ausschliesslich im aktiven Rennen.
 app.get('/groups', (req, res) => {
+  const wunsch = req.query && req.query.race ? String(req.query.race) : null;
+  if (wunsch && !races[wunsch]) return res.status(404).json({ error: 'Rennen nicht gefunden' });
+  const rid = wunsch || activeRaceId;
+
   const riderMap = Object.create(null);
-  if (activeRaceId && races[activeRaceId]) {
-    for (const r of races[activeRaceId].riders) {
+  if (rid && races[rid]) {
+    for (const r of races[rid].riders) {
       riderMap[Number(r.nr)] = { name: r.name, team: r.team, fav: !!r.fav, status: r.status || null };
     }
   }
   // Zweiter Riegel: auch ein vor diesem Update gespeicherter kaputter
   // Stand aus der Datenbank darf den Endpoint nicht mehr abschiessen.
-  const enriched = groups.filter(g => g && typeof g === 'object').map(g => ({
+  const enriched = groupsOf(rid).filter(g => g && typeof g === 'object').map(g => ({
     ...g,
     riders: (Array.isArray(g.riders) ? g.riders : []).map(nr => ({ nr, ...(riderMap[Number(nr)] || {}) }))
   }));
   res.json(enriched);
 });
 
-app.post('/groups', requireSpolei, (req, res) => {
+// Ab 2.4.0 mit ?race=<id>: der Betreuer kann die Taktik des Rennens
+// fuehren, hinter dem er selbst herfaehrt, auch wenn das nicht das
+// Leitrennen ist. Ohne den Parameter unveraendert das Leitrennen.
+// Das Muster - Spiegel fuer das Leitrennen, sonst direkt ans Rennen -
+// stammt aus applyVorschlag() und laeuft dort seit 2.2.0.
+// Ab 2.5.0 requireAuth statt requireSpolei: Gruppen bilden und
+// aufloesen ist die Kernarbeit des Betreuers. Gefahrlos wurde das erst
+// mit dem race-Parameter oben - vorher waere jeder Schreibzugriff im
+// Leitrennen gelandet, egal welches Rennen der Betreuer begleitet.
+app.post('/groups', requireAuth, (req, res) => {
   const { groups: g } = req.body;
   if (!Array.isArray(g)) return res.status(400).json({ error: 'groups[] erforderlich' });
+  const wunsch = req.query && req.query.race ? String(req.query.race) : null;
+  if (wunsch && !races[wunsch]) return res.status(404).json({ error: 'Rennen nicht gefunden' });
+  const rid = wunsch || activeRaceId;
   // sanitizeGroups() erledigt Typpruefung UND die Regel "genau eine
   // Gruppe ist das Hauptfeld" an einer Stelle.
-  groups = sanitizeGroups(g);
-  syncGroupsToRace();          // Stand haengt am Rennen, nicht am Server
+  const sauber = sanitizeGroups(g);
+  if (!rid || rid === activeRaceId) {
+    groups = sauber;
+    syncGroupsToRace();        // Stand haengt am Rennen, nicht am Server
+  } else {
+    races[rid].groups = sauber;
+  }
   saveRacesToDisk();
   pushAutoDisplays();          // Automatik-Tracker sofort nachziehen
-  persistGroups();             // Stand + Abstandsverlauf sichern
+  persistGroups(rid);          // Stand + Abstandsverlauf sichern
   res.json({ ok: true });
 });
 
+// Loeschen ist die einzige Stelle ohne Rueckweg. Solange mehr als ein
+// Rennen laeuft, ist der race-Parameter deshalb PFLICHT: ein Aufrufer,
+// der ihn vergisst, wuerde sonst die Taktik des Leitrennens loeschen,
+// waehrend der Nutzer ein anderes Rennen vor sich hat.
 app.delete('/groups', requireSpolei, (req, res) => {
-  groups = [];
-  syncGroupsToRace();
+  const wunsch = req.query && req.query.race ? String(req.query.race) : null;
+  if (!wunsch && activeRaceIds.size > 1) {
+    return res.status(400).json({ error: 'race-Parameter erforderlich, solange mehrere Rennen laufen' });
+  }
+  if (wunsch && !races[wunsch]) return res.status(404).json({ error: 'Rennen nicht gefunden' });
+  const rid = wunsch || activeRaceId;
+  if (!rid || rid === activeRaceId) {
+    groups = [];
+    syncGroupsToRace();
+  } else {
+    races[rid].groups = [];
+  }
   saveRacesToDisk();
   pushAutoDisplays();
-  persistGroups();
-  console.log('🧹 Gruppen gelöscht');
+  persistGroups(rid);
+  console.log(`🧹 Gruppen gelöscht${rid ? ' (' + rid + ')' : ''}`);
   res.json({ ok: true });
+});
+
+// =======================
+// ZEITMESSUNG
+// =======================
+// Alles unter /timing. Lesend fuer angemeldete Nutzer, schreibend nur
+// fuer den SpoLei - wie ueberall sonst.
+
+function timingHealthText() {
+  if (timingLauf.abgeschaltet) return `abgeschaltet (${timingLauf.letzterFehler || 'Fehler'})`;
+  const n = timingRennen().length;
+  if (!n) return 'keine Zuordnung aktiv';
+  const alt = timingLauf.letzter ? Math.round((Date.now() - timingLauf.letzter) / 1000) : null;
+  return `${n} Rennen` + (alt === null ? ', noch kein Abruf' : `, letzter Abruf vor ${alt}s`)
+       + (timingLauf.fehler ? `, ${timingLauf.fehler} Fehlversuche` : '');
+}
+
+// Link pruefen und Aufbau melden. Bewusst kein Speichern: der Anwender
+// soll erst sehen, was gefunden wurde.
+app.post('/timing/probe', requireSpolei, async (req, res) => {
+  const { link, event } = req.body || {};
+  const evId = event && events[event] ? event : null;
+  const d = await rr.erkunde(link);
+  if (d.fehler) return res.status(400).json({ error: d.fehler });
+
+  // Vorbelegung: Kategorie auf Rennen. Vorschlag, keine Zuordnung.
+  const kandidaten = evId
+    ? Object.values(races).filter(r => r.eventId === evId)
+        .map(r => ({ id: r.id, name: r.name, category: r.category }))
+    : [];
+  const kategorien = Object.entries(d.contests).map(([contest, name]) => {
+    const erg   = rr.waehleListe(d.reiter, contest);
+    const start = rr.waehleStartliste(d.reiter, contest);
+    return {
+      contest, name,
+      fahrer:      start ? start.zeilen : 0,
+      hatErgebnis: !!erg,
+      hatStart:    !!start,
+      vorschlag:   rr.passtZu(name, kandidaten)
+    };
+  });
+  if (evId) timingErkundung[evId] = { ts: Date.now(), daten: d };
+  res.json({ eventId: d.eventId, eventname: d.eventname, host: d.host, kategorien });
+});
+
+// Zuordnung lesen.
+app.get('/timing', requireAuth, (req, res) => {
+  const stand = {};
+  for (const [rid, st] of Object.entries(timingStand)) {
+    stand[rid] = { ts: st.ts, modus: st.modus || null, liste: st.liste || null,
+                   live: !!st.live, fahrer: st.fahrer || 0, hinweis: st.hinweis || null,
+                   gruppen: Array.isArray(st.gruppen) ? st.gruppen.length : 0,
+                   leer: st.leer || null };
+  }
+  res.set('Cache-Control', 'no-store');
+  res.json({ ev: timing.ev, rc: timing.rc, stand, lauf: {
+    aktiv: timingLauf.aktiv, abgeschaltet: timingLauf.abgeschaltet,
+    letzter: timingLauf.letzter, fehler: timingLauf.fehler,
+    letzterFehler: timingLauf.letzterFehler
+  } });
+});
+
+// Zuordnung schreiben. eventId am Veranstaltungsobjekt, contest je
+// Rennen - so ist es bei race|result auch geschnitten.
+app.post('/timing', requireSpolei, (req, res) => {
+  const { event, eventId, host, zuordnung } = req.body || {};
+  if (event) {
+    if (!events[event]) return res.status(404).json({ error: 'Veranstaltung nicht gefunden' });
+    if (eventId === null || eventId === '') delete timing.ev[event];
+    else timing.ev[event] = { eventId: String(eventId), host: host ? String(host) : null };
+  }
+  if (zuordnung && typeof zuordnung === 'object') {
+    for (const [rid, wert] of Object.entries(zuordnung)) {
+      if (!races[rid]) continue;
+      if (wert === null || wert === '' || wert === false) { delete timing.rc[rid]; continue; }
+      const c = (typeof wert === 'object') ? wert : { contest: wert };
+      timing.rc[rid] = {
+        contest:  String(c.contest),
+        an:       c.an !== false,
+        schwelle: (typeof c.schwelle === 'number' && c.schwelle > 0 && c.schwelle <= 120)
+                    ? Math.round(c.schwelle) : 3
+      };
+    }
+  }
+  persistTiming();
+  timingLauf.abgeschaltet = false;   // neue Zuordnung ist ein Neustart
+  timingLauf.fehler = 0;
+  timingNeuBewerten();
+  res.json({ ok: true, ev: timing.ev, rc: timing.rc });
+});
+
+// Startliste einer Kategorie holen. Ohne race: nur liefern, damit die
+// Oberflaeche sie zeigen kann. Mit race: gleich eintragen.
+app.post('/timing/startlist', requireSpolei, async (req, res) => {
+  const { event, contest, race } = req.body || {};
+  if (!events[event])      return res.status(404).json({ error: 'Veranstaltung nicht gefunden' });
+  if (contest === undefined) return res.status(400).json({ error: 'contest erforderlich' });
+  const ev = timing.ev[event];
+  if (!ev) return res.status(400).json({ error: 'Fuer diese Veranstaltung ist kein Link hinterlegt' });
+
+  const aufbau = await timingAufbau(event, true);
+  if (!aufbau) return res.status(502).json({ error: 'Zeitmessung nicht erreichbar' });
+  const wahl = rr.waehleStartliste(aufbau.reiter, contest);
+  if (!wahl) return res.status(404).json({ error: 'Keine Startliste fuer diese Kategorie' });
+
+  const cfg = await rr.holeConfig(ev.eventId, wahl.tab, ev.host);
+  if (cfg.fehler) return res.status(502).json({ error: cfg.fehler });
+  const list = await rr.holeListe(ev.eventId, wahl.tab, cfg.key, wahl.name, contest, ev.host);
+  if (list.fehler) return res.status(502).json({ error: list.fehler });
+
+  const fahrer = rr.alsFahrer(list);
+  if (fahrer.length === 0) return res.status(404).json({ error: 'Liste enthaelt keine Fahrer' });
+
+  if (race) {
+    const r = races[race];
+    if (!r) return res.status(404).json({ error: 'Rennen nicht gefunden' });
+    // Favoriten ueber den Import retten - dieselbe Regel wie in
+    // PUT /races/:id/riders.
+    const prevFav = new Set(r.riders.filter(x => x && x.fav).map(x => Number(x.nr)));
+    r.riders = fahrer.map(x => prevFav.has(Number(x.nr)) ? { ...x, fav: true } : x);
+    saveRacesToDisk();
+    if (db.enabled) db.updateRaceRiders(r.id, r.riders).catch(dbFail('updateRaceRiders timing'));
+    if (r.id === activeRaceId) pushAutoDisplays();
+    console.log(`\u23F1 Startliste uebernommen: "${r.name}" (${r.riders.length} Fahrer)`);
+  }
+  res.json({ ok: true, liste: wahl.name, riders: fahrer });
+});
+
+// Vorschlag uebernehmen. Ohne group: alle Gruppen des Rennens.
+// Ab 2.5.0 auch fuer Betreuer: das Uebernehmen schreibt Gruppen des in
+// race genannten Rennens - inhaltlich dieselbe Arbeit wie POST /groups
+// und ebenso rennbezogen. Das Einrichten der Zeitmessung (POST /timing,
+// /timing/probe, /timing/startlist) bleibt beim SpoLei.
+app.post('/timing/apply', requireAuth, (req, res) => {
+  const { race, group } = req.body || {};
+  if (!races[race]) return res.status(404).json({ error: 'Rennen nicht gefunden' });
+  const neu = applyVorschlag(race, group || null);
+  if (!neu) return res.status(409).json({ error: 'Kein Vorschlag vorhanden' });
+  res.json({ ok: true, groups: neu });
+});
+
+// Vorschlag verwerfen. Verworfen wird ein Stand, nicht die Verbindung.
+// Bis 2.9.x wurde timingStand geloescht - der naechste Abruf legte
+// denselben Vorschlag 15 Sekunden spaeter identisch wieder hin, das
+// Verwerfen hielt also nie. Jetzt wird die Signatur vermerkt: der Balken
+// kommt erst zurueck, wenn sich der Inhalt tatsaechlich aendert.
+app.post('/timing/dismiss', requireAuth, (req, res) => {
+  const { race } = req.body || {};
+  if (race && timingStand[race]) timingErledigt[race] = timingStand[race].sig || null;
+  res.json({ ok: true });
+});
+
+// Vollstaendiger Vorschlag eines Rennens, mit Fahrerdaten angereichert.
+app.get('/timing/proposal', requireAuth, (req, res) => {
+  const rid = String(req.query.race || '') || activeRaceId;
+  const st  = rid ? timingStand[rid] : null;
+  res.set('Cache-Control', 'no-store');
+  if (!st) return res.json({ vorhanden: false });
+  // Von Hand verworfen oder bereits uebernommen: erst wieder melden,
+  // wenn sich der Inhalt aendert.
+  if (st.sig && timingErledigt[rid] === st.sig) return res.json({ vorhanden: false });
+  const map = Object.create(null);
+  if (races[rid]) for (const r of races[rid].riders) map[Number(r.nr)] = r;
+  res.json({
+    vorhanden: true, race: rid, ts: st.ts, modus: st.modus || null,
+    liste: st.liste || null, live: !!st.live, hinweis: st.hinweis || null,
+    leer: st.leer || null,
+    verworfen:   Array.isArray(st.verworfen)   ? st.verworfen   : [],
+    ausgelassen: Array.isArray(st.ausgelassen) ? st.ausgelassen : [],
+    gruppen: (st.gruppen || []).map(g => ({
+      gap: g.gap,
+      riders: g.riders.map(nr => ({ nr, name: (map[nr] || {}).name || null,
+                                        team: (map[nr] || {}).team || null }))
+    }))
+  });
 });
 
 // =======================
