@@ -19,6 +19,7 @@ Beim Erhöhen der Version immer beides ändern:
 
 | Version | Datum | Inhalt |
 |---|---|---|
+| [1.6.0](1.6.0.md) | 10.09.2026 | Mannschaftsverfolgung von Hand nachtragbar (mehrere Fahrer je Lauf); Führung je Runde mit Verlaufsbalken und Bilanz; Rundenzeiten aus CSV oder Zwischenablage übernehmen |
 | [1.5.0](1.5.0.md) | 26.08.2026 | Abfotografierte Kommuniqués werden über ihren Kopfbereich zugeordnet; Zuordnung von Hand änderbar; ausgeschriebene Altersklassen in Dateinamen |
 | [1.4.1](1.4.1.md) | 26.08.2026 | Vollständiger Nextcloud-Share-Link wird wieder als WebDAV-Quelle erkannt statt als Webseite |
 | [1.4.0](1.4.0.md) | 26.08.2026 | Eigene Kommuniqué-Ablage über einen freigegebenen Google-Drive-Ordner; Fotos (nicht nur PDF) als Kommuniqué |

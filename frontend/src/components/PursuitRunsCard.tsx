@@ -15,13 +15,24 @@
 //  - Ein von Hand nachgetragener Lauf hat keinen Plan (plan* = null), also
 //    keine Δ-Spalte und kein Streckendiagramm — auch dann nicht, wenn später
 //    Rundenzeiten ergänzt werden.
+//  - Ab 1.6.0 lassen sich mehrere Fahrer eintragen (Mannschaftsverfolgung).
+//    Der Lauf erscheint dann im Profil ALLER beteiligten Fahrer — die
+//    Filterung übernimmt das Backend über athleteIds. Es entsteht also nur
+//    EIN Lauf, keine Kopie je Fahrer.
+//  - Die Führung (wer wann vorn war) liegt IM laps-JSON (leadId/leadId2), nicht
+//    in einer eigenen Spalte. leadId2 löst zur Rundenmitte ab und deckt damit
+//    1½er-Ablösungen ab. Der Viertelrunden-Versatz aus dem Führungsplan
+//    (Wechsel liegen in den Kurven) wird bewusst NICHT nachgebildet: für einen
+//    nachträglich erfassten Lauf ist diese Genauigkeit nicht rekonstruierbar.
 //  - Die Bahn ist frei getippter Text. Die Vorschlagsliste kommt aus den
 //    bereits eingetragenen Bahnen ALLER Läufe (GET /api/pursuit-runs/tracks),
 //    nicht aus einer gepflegten Bahnliste: eine gepflegte Liste veraltet und
 //    schiebt falsche Längen unter. Passt der getippte Name auf eine bekannte
 //    Bahn, wird der Untergrund vorbelegt — überschreibbar.
 import { useEffect, useMemo, useState } from 'react';
+import PursuitLapImport, { type ImportResult } from './PursuitLapImport';
 import {
+  athletesApi,
   pursuitRunsApi,
   type Athlete,
   type PursuitRun,
@@ -66,6 +77,38 @@ const KIND_LABEL: Record<PursuitRunKind, string> = {
  *  mehr von einer echten Angabe zu unterscheiden. */
 function effectiveKind(run: PursuitRun): PursuitRunKind {
   return run.runKind ?? (run.raceId ? 'WETTKAMPF' : 'TRAINING');
+}
+
+/** Farben der Führung. Gleiche Reihenfolge wie im Führungsplan der
+ *  Verfolgungsplanung — derselbe Fahrer bekommt dort und hier dieselbe Farbe,
+ *  solange die Reihenfolge stimmt. */
+const LEAD_COLORS = ['#1d4ed8', '#16a34a', '#d97706', '#7c3aed', '#db2777', '#0891b2'];
+
+function leadColor(athleteIds: string[], id: string | null | undefined): string {
+  if (!id) return 'var(--c-border)';
+  const i = athleteIds.indexOf(id);
+  return i < 0 ? '#9ca3af' : LEAD_COLORS[i % LEAD_COLORS.length];
+}
+
+function fullName(a: Athlete): string {
+  return `${a.vorname} ${a.nachname}`.trim();
+}
+
+/** Vorname, sofern eindeutig — trackside liest sich „Jonas" schneller als
+ *  „Jonas Kettler". Bei gleichem Vornamen wird der Nachname ergänzt. */
+function shortName(a: Athlete, all: Athlete[]): string {
+  const same = all.filter(x => x.vorname === a.vorname).length;
+  return same > 1 ? `${a.vorname} ${a.nachname.slice(0, 1)}.` : a.vorname;
+}
+
+/** Runden als 4 / 4½ — halbe Runden entstehen durch eine Ablösung zur
+ *  Rundenmitte. */
+function fmtLaps(n: number): string {
+  const r = Math.round(n * 2) / 2;
+  const whole = Math.floor(r + 1e-9);
+  const half = Math.abs(r - whole - 0.5) < 0.01;
+  if (!half) return String(whole);
+  return whole > 0 ? `${whole}½` : '½';
 }
 
 const SOURCE_LABEL: Record<PursuitTimeSource, string> = {
@@ -222,11 +265,101 @@ function CourseChart({ run }: { run: PursuitRun }) {
   );
 }
 
+// ── Führung im Rennverlauf ──────────────────────────────────────────────────
+// Nur bei Mannschaftsläufen und nur, wenn überhaupt eine Führung eingetragen
+// ist. Der Balken zeigt den Verlauf über die Runden, die Tabelle darunter die
+// Bilanz je Fahrer. Eine Runde mit Ablösung zur Mitte zählt für beide je eine
+// halbe Runde; die Zeit wird über die Halbrundenzeit aufgeteilt, wenn es sie
+// gibt, sonst hälftig.
+
+interface LeadShare { laps: number; ms: number; }
+
+function leadShares(run: PursuitRun): Record<string, LeadShare> {
+  const acc: Record<string, LeadShare> = {};
+  const bump = (id: string, laps: number, ms: number) => {
+    if (!acc[id]) acc[id] = { laps: 0, ms: 0 };
+    acc[id].laps += laps;
+    acc[id].ms += ms;
+  };
+  run.laps.forEach(lap => {
+    const a = lap.leadId ?? null;
+    if (!a) return;
+    const b = lap.leadId2 ?? null;
+    if (!b) { bump(a, 1, lap.lapMs); return; }
+    const first = lap.halfMs != null ? lap.halfMs : lap.lapMs / 2;
+    bump(a, 0.5, first);
+    bump(b, 0.5, lap.lapMs - first);
+  });
+  return acc;
+}
+
+function LeadSummary({ run, nameById }: { run: PursuitRun; nameById: Record<string, string> }) {
+  const hasLead = run.laps.some(l => l.leadId);
+  if (run.athleteIds.length < 2 || !hasLead) return null;
+
+  const shares = leadShares(run);
+  const segs: { id: string | null; w: number }[] = [];
+  run.laps.forEach(lap => {
+    if (!lap.leadId) { segs.push({ id: null, w: 1 }); return; }
+    if (!lap.leadId2) { segs.push({ id: lap.leadId, w: 1 }); return; }
+    segs.push({ id: lap.leadId, w: 0.5 });
+    segs.push({ id: lap.leadId2, w: 0.5 });
+  });
+  const total = segs.reduce((a, x) => a + x.w, 0) || 1;
+
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ display: 'flex', height: 16, borderRadius: 4, overflow: 'hidden', border: '1px solid var(--c-border)' }}>
+        {segs.map((x, i) => (
+          <div key={i} style={{
+            width: `${(x.w / total * 100).toFixed(3)}%`,
+            background: x.id ? leadColor(run.athleteIds, x.id) : 'var(--c-bg)',
+          }} />
+        ))}
+      </div>
+      <div className="flex-between text-xs text-muted" style={{ marginTop: 2 }}>
+        <span>Start</span><span>Ziel</span>
+      </div>
+      <table className="table" style={{ fontSize: 13, marginTop: 6 }}>
+        <thead>
+          <tr>
+            <th>Führung</th>
+            <th style={{ textAlign: 'right' }}>Runden</th>
+            <th style={{ textAlign: 'right' }}>Zeit vorn</th>
+            <th style={{ textAlign: 'right' }}>Anteil</th>
+          </tr>
+        </thead>
+        <tbody>
+          {run.athleteIds.filter(id => shares[id]).map(id => (
+            <tr key={id}>
+              <td>
+                <span style={{
+                  display: 'inline-block', width: 9, height: 9, borderRadius: '50%',
+                  background: leadColor(run.athleteIds, id), marginRight: 6,
+                }} />
+                {nameById[id] ?? 'unbekannt'}
+              </td>
+              <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtLaps(shares[id].laps)}</td>
+              <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtMs(Math.round(shares[id].ms))}</td>
+              <td className="text-muted" style={{ textAlign: 'right' }}>
+                {run.laps.length > 0 ? `${Math.round(shares[id].laps / run.laps.length * 100)} %` : '—'}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 // ── Rundentabelle ───────────────────────────────────────────────────────────
 
-function LapTable({ run }: { run: PursuitRun }) {
+function LapTable({ run, nameById }: { run: PursuitRun; nameById: Record<string, string> }) {
   const hasPlan = run.planAnfahrtSec != null && run.planLapSec != null;
   const kb = run.kb, rz = run.rz;
+  // Führungsspalte nur, wenn der Lauf eine Mannschaft ist UND mindestens eine
+  // Runde eine Führung trägt — sonst eine Spalte voller Striche.
+  const showLead = run.athleteIds.length > 1 && run.laps.some(l => l.leadId);
   let actCum = 0;
 
   if (run.laps.length === 0) {
@@ -244,6 +377,7 @@ function LapTable({ run }: { run: PursuitRun }) {
           <tr>
             <th>Rd</th>
             <th style={{ textAlign: 'right' }}>Zeit</th>
+            {showLead && <th>Führung</th>}
             {hasPlan && <th style={{ textAlign: 'right' }}>Δ kum.</th>}
             <th style={{ textAlign: 'right' }}>Kum.</th>
             {kb && rz ? <th style={{ textAlign: 'right' }}>TF</th> : null}
@@ -273,6 +407,29 @@ function LapTable({ run }: { run: PursuitRun }) {
                     </div>
                   )}
                 </td>
+                {showLead && (
+                  <td className="text-xs">
+                    {lap.leadId ? (
+                      <>
+                        <span style={{
+                          display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
+                          background: leadColor(run.athleteIds, lap.leadId), marginRight: 5,
+                        }} />
+                        {nameById[lap.leadId] ?? '?'}
+                        {lap.leadId2 && (
+                          <>
+                            {' / '}
+                            <span style={{
+                              display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
+                              background: leadColor(run.athleteIds, lap.leadId2), marginRight: 5,
+                            }} />
+                            {nameById[lap.leadId2] ?? '?'}
+                          </>
+                        )}
+                      </>
+                    ) : <span className="text-muted">—</span>}
+                  </td>
+                )}
                 {hasPlan && (
                   <td style={{ textAlign: 'right', color: deltaColor(dlt), fontVariantNumeric: 'tabular-nums' }}>
                     {dlt !== null ? fmtDelta(dlt) : '—'}
@@ -311,6 +468,14 @@ interface FormState {
   notes: string;
   lapStrs: string[];
   halfStrs: string[];
+  /** Alle Fahrer des Laufs. Bei einem Eintrag Einzel-, ab zwei
+   *  Mannschaftsverfolgung. Der erste Eintrag ist der Sportler, aus dessen
+   *  Profil heraus angelegt wurde — er lässt sich nicht entfernen. */
+  athleteIds: string[];
+  /** Führung ab Rundenbeginn, je Runde. */
+  leadIds: (string | null)[];
+  /** Ablösung zur Rundenmitte, je Runde. null = kein Wechsel in der Runde. */
+  leadIds2: (string | null)[];
 }
 
 function emptyForm(athlete: Athlete): FormState {
@@ -332,6 +497,9 @@ function emptyForm(athlete: Athlete): FormState {
     notes: '',
     lapStrs: [],
     halfStrs: [],
+    athleteIds: [athlete.id],
+    leadIds: [],
+    leadIds2: [],
   };
 }
 
@@ -354,13 +522,19 @@ function formFromRun(run: PursuitRun): FormState {
       run.laps[i] ? fmtMs(run.laps[i].lapMs) : ''),
     halfStrs: Array.from({ length: run.numRounds }, (_, i) =>
       run.laps[i]?.halfMs != null ? fmtMs(run.laps[i].halfMs!) : ''),
+    athleteIds: [...run.athleteIds],
+    leadIds: Array.from({ length: run.numRounds }, (_, i) => run.laps[i]?.leadId ?? null),
+    leadIds2: Array.from({ length: run.numRounds }, (_, i) => run.laps[i]?.leadId2 ?? null),
   };
 }
 
-function RunForm({ form, setForm, athlete, tracks, onSave, onCancel, saving, isNew }: {
+function RunForm({ form, setForm, athlete, allAthletes, tracks, onSave, onCancel, saving, isNew }: {
   form: FormState;
   setForm: (f: FormState) => void;
   athlete: Athlete;
+  /** Gesamte Kartei — Auswahlliste für weitere Fahrer des Laufs. Leer, solange
+   *  der Abruf läuft oder fehlgeschlagen ist; dann bleibt es ein Einzellauf. */
+  allAthletes: Athlete[];
   /** Bereits verwendete Bahnen aller Sportler. */
   tracks: PursuitTrackSuggestion[];
   onSave: () => void;
@@ -369,6 +543,9 @@ function RunForm({ form, setForm, athlete, tracks, onSave, onCancel, saving, isN
   isNew: boolean;
 }) {
   const [showLaps, setShowLaps] = useState(!isNew);
+  const [showPicker, setShowPicker] = useState(false);
+  const [showImport, setShowImport] = useState(false);
+  const [pullLen, setPullLen] = useState('2');
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) => setForm({ ...form, [k]: v });
 
   /** Bahnname ändern. Trifft der Name eine bekannte Bahn, wird deren
@@ -387,7 +564,85 @@ function RunForm({ form, setForm, athlete, tracks, onSave, onCancel, saving, isN
   function setRounds(n: number) {
     const grow = <T,>(arr: T[], fill: T) =>
       Array.from({ length: n }, (_, i) => (i < arr.length ? arr[i] : fill));
-    setForm({ ...form, numRounds: n, lapStrs: grow(form.lapStrs, ''), halfStrs: grow(form.halfStrs, '') });
+    setForm({
+      ...form,
+      numRounds: n,
+      lapStrs: grow(form.lapStrs, ''),
+      halfStrs: grow(form.halfStrs, ''),
+      leadIds: grow<string | null>(form.leadIds, null),
+      leadIds2: grow<string | null>(form.leadIds2, null),
+    });
+  }
+
+  const riders = form.athleteIds
+    .map(id => (id === athlete.id ? athlete : allAthletes.find(a => a.id === id)))
+    .filter((a): a is Athlete => !!a);
+  const isTeam = form.athleteIds.length > 1;
+  const pool = allAthletes.filter(a => a.id !== athlete.id);
+
+  function toggleRider(id: string, on: boolean) {
+    const ids = on
+      ? [...form.athleteIds, id]
+      : form.athleteIds.filter(x => x !== id);
+    // Wird ein Fahrer entfernt, verlieren seine Führungsrunden ihren Bezug.
+    const clean = (arr: (string | null)[]) => arr.map(v => (v && ids.includes(v) ? v : null));
+    setForm({ ...form, athleteIds: ids, leadIds: clean(form.leadIds), leadIds2: clean(form.leadIds2) });
+  }
+
+  /** Führung reihum verteilen. Bei 1½ Runden je Ablösung wird zur Rundenmitte
+   *  gewechselt — dafür ist leadIds2 da. */
+  function fillRotation() {
+    const pull = parseFloat(pullLen);
+    const ids = form.athleteIds;
+    if (ids.length < 2) return;
+    const a: (string | null)[] = [];
+    const b: (string | null)[] = [];
+    if (pull === 1.5) {
+      for (let i = 0; i < form.numRounds; i++) {
+        const x = Math.floor(i / 1.5) % ids.length;
+        const y = Math.floor((i + 0.5) / 1.5) % ids.length;
+        a.push(ids[x]);
+        b.push(y !== x ? ids[y] : null);
+      }
+    } else {
+      let idx = 0, used = 0;
+      for (let i = 0; i < form.numRounds; i++) {
+        a.push(ids[idx % ids.length]);
+        b.push(null);
+        used += 1;
+        if (used >= pull) { used = 0; idx++; }
+      }
+    }
+    setForm({ ...form, leadIds: a, leadIds2: b });
+  }
+
+  function clearRotation() {
+    setForm({
+      ...form,
+      leadIds: Array.from({ length: form.numRounds }, () => null),
+      leadIds2: Array.from({ length: form.numRounds }, () => null),
+    });
+  }
+
+  /** Übernahme aus dem Import-Dialog. Geschrieben wird ausschließlich ins
+   *  Formular — gespeichert wird weiterhin erst über „Speichern". */
+  function applyImport(res: ImportResult) {
+    const n = res.adoptRounds && res.laps.length > 0 ? res.laps.length : form.numRounds;
+    const at = <T,>(i: number, v: T, fill: T) => (i < res.laps.length ? v : fill);
+    setForm({
+      ...form,
+      numRounds: n,
+      lapStrs: Array.from({ length: n }, (_, i) => at(i, fmtMs(res.laps[i]?.lapMs ?? 0), '')),
+      halfStrs: Array.from({ length: n }, (_, i) =>
+        at(i, res.laps[i]?.halfMs != null ? fmtMs(res.laps[i]!.halfMs!) : '', '')),
+      leadIds: Array.from({ length: n }, (_, i) => at<string | null>(i, res.laps[i]?.leadId ?? null, null)),
+      leadIds2: Array.from({ length: n }, (_, i) => at<string | null>(i, res.laps[i]?.leadId2 ?? null, null)),
+      // Die Zielzeit aus der Datei überschreibt eine bereits getippte —
+      // ausdrücklich so festgelegt: die Datei ist die belastbarere Quelle.
+      totalStr: res.zielzeitMs != null ? fmtMs(res.zielzeitMs) : form.totalStr,
+    });
+    setShowImport(false);
+    setShowLaps(true);
   }
 
   const kbOpts = Array.from(new Set([...athlete.kettenblaetter])).sort((a, b) => a - b);
@@ -396,6 +651,55 @@ function RunForm({ form, setForm, athlete, tracks, onSave, onCancel, saving, isN
 
   return (
     <div style={{ borderTop: '1px solid var(--c-border)', paddingTop: 12, marginTop: 10 }}>
+      <div style={{ marginBottom: 10 }}>
+        <div className="flex-between" style={{ marginBottom: 4 }}>
+          <label className="form-label text-xs" style={{ margin: 0 }}>Fahrer</label>
+          {isTeam && <span className="badge badge-blue">Mannschaft · {form.athleteIds.length}</span>}
+        </div>
+        <div style={{ marginBottom: 6 }}>
+          {riders.map((r, i) => (
+            <span key={r.id} className="badge badge-gray"
+              style={{ marginRight: 6, display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 8px' }}>
+              <span style={{
+                display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
+                background: LEAD_COLORS[i % LEAD_COLORS.length],
+              }} />
+              {fullName(r)}
+              {r.id !== athlete.id && (
+                <button type="button" className="btn btn-ghost"
+                  style={{ padding: 0, lineHeight: 1, fontSize: 14 }}
+                  title="Fahrer entfernen"
+                  onClick={() => toggleRider(r.id, false)}>×</button>
+              )}
+            </span>
+          ))}
+        </div>
+        <button type="button" className="btn btn-secondary btn-sm"
+          onClick={() => setShowPicker(v => !v)} disabled={pool.length === 0}>
+          {showPicker ? '▾' : '▸'} Weitere Fahrer
+        </button>
+        {showPicker && (
+          <div style={{
+            border: '1px solid var(--c-border)', borderRadius: 6, padding: 8,
+            marginTop: 6, maxHeight: 200, overflowY: 'auto',
+          }}>
+            {pool.map(a => (
+              <label key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 2px' }}>
+                <input type="checkbox" checked={form.athleteIds.includes(a.id)}
+                  onChange={e => toggleRider(a.id, e.target.checked)} />
+                <span className="text-sm">{fullName(a)}</span>
+                {a.ak && <span className="badge badge-gray" style={{ marginLeft: 'auto' }}>{a.ak}</span>}
+              </label>
+            ))}
+          </div>
+        )}
+        <p className="form-hint text-xs" style={{ marginTop: 4 }}>
+          {isTeam
+            ? `Wird als Mannschaftslauf gespeichert und erscheint im Profil aller ${form.athleteIds.length} Fahrer.`
+            : 'Ein Fahrer: Einzelverfolgung. Ab zwei Fahrern wird der Lauf als Mannschaft gespeichert und erscheint im Profil aller Beteiligten.'}
+        </p>
+      </div>
+
       <div style={{ marginBottom: 10 }}>
         <label className="form-label text-xs">Art</label>
         <div style={{ display: 'flex', gap: 6 }}>
@@ -494,9 +798,23 @@ function RunForm({ form, setForm, athlete, tracks, onSave, onCancel, saving, isN
           onChange={e => set('notes', e.target.value)} />
       </div>
 
-      <button className="btn btn-ghost btn-sm" style={{ marginBottom: 8 }} onClick={() => setShowLaps(v => !v)}>
-        {showLaps ? '▾' : '▸'} Rundenzeiten {showLaps ? 'ausblenden' : 'nachtragen'}
-      </button>
+      <div className="flex-between" style={{ marginBottom: 8, gap: 6, flexWrap: 'wrap' }}>
+        <button className="btn btn-ghost btn-sm" onClick={() => setShowLaps(v => !v)}>
+          {showLaps ? '▾' : '▸'} Rundenzeiten {showLaps ? 'ausblenden' : 'nachtragen'}
+        </button>
+        <button className="btn btn-secondary btn-sm" onClick={() => setShowImport(true)}>
+          📂 Import
+        </button>
+      </div>
+
+      {showImport && (
+        <PursuitLapImport
+          numRounds={form.numRounds}
+          riders={riders.map(r => ({ id: r.id, name: fullName(r) }))}
+          onApply={applyImport}
+          onClose={() => setShowImport(false)}
+        />
+      )}
 
       {showLaps && (
         <div style={{ marginBottom: 10 }}>
@@ -504,19 +822,72 @@ function RunForm({ form, setForm, athlete, tracks, onSave, onCancel, saving, isN
             Leer lassen ist erlaubt. Die Halbrunde ist die erste Hälfte ab Rundenbeginn —
             die zweite ergibt sich immer als Rundenzeit minus erste Hälfte.
           </p>
+
+          {isTeam && (
+            <div style={{
+              display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap',
+              background: 'var(--c-bg)', border: '1px solid var(--c-border)',
+              borderRadius: 6, padding: '6px 8px', marginBottom: 8,
+            }}>
+              <span className="text-xs text-muted">Führung reihum:</span>
+              <select className="form-select" style={{ width: 'auto', padding: '3px 6px', fontSize: 13 }}
+                value={pullLen} onChange={e => setPullLen(e.target.value)}>
+                <option value="1">1 Runde</option>
+                <option value="1.5">1½ Runden</option>
+                <option value="2">2 Runden</option>
+              </select>
+              <button className="btn btn-secondary btn-sm" onClick={fillRotation}>Ausfüllen</button>
+              <button className="btn btn-ghost btn-sm" onClick={clearRotation}>Leeren</button>
+              <span className="text-xs text-muted" style={{ marginLeft: 'auto' }}>
+                Reihenfolge wie oben
+              </span>
+            </div>
+          )}
+
           {Array.from({ length: form.numRounds }, (_, i) => (
-            <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4 }}>
-              <span className="text-sm text-muted" style={{ width: 28 }}>{i + 1}.</span>
-              <input className="form-input" style={{ flex: 1 }} placeholder="Rundenzeit"
-                value={form.lapStrs[i] ?? ''}
-                onChange={e => {
-                  const next = [...form.lapStrs]; next[i] = e.target.value; set('lapStrs', next);
-                }} />
-              <input className="form-input" style={{ flex: 1 }} placeholder="½ (optional)"
-                value={form.halfStrs[i] ?? ''}
-                onChange={e => {
-                  const next = [...form.halfStrs]; next[i] = e.target.value; set('halfStrs', next);
-                }} />
+            <div key={i} style={{ marginBottom: isTeam ? 8 : 4 }}>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <span className="text-sm text-muted" style={{ width: 28 }}>{i + 1}.</span>
+                <input className="form-input" style={{ flex: 1 }} placeholder="Rundenzeit"
+                  value={form.lapStrs[i] ?? ''}
+                  onChange={e => {
+                    const next = [...form.lapStrs]; next[i] = e.target.value; set('lapStrs', next);
+                  }} />
+                <input className="form-input" style={{ flex: 1 }} placeholder="½ (optional)"
+                  value={form.halfStrs[i] ?? ''}
+                  onChange={e => {
+                    const next = [...form.halfStrs]; next[i] = e.target.value; set('halfStrs', next);
+                  }} />
+              </div>
+              {isTeam && (
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 3, paddingLeft: 34 }}>
+                  <span style={{
+                    display: 'inline-block', width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+                    background: leadColor(form.athleteIds, form.leadIds[i] ?? null),
+                  }} />
+                  <select className="form-select" style={{ flex: 1, padding: '3px 6px', fontSize: 13 }}
+                    value={form.leadIds[i] ?? ''}
+                    onChange={e => {
+                      const next = [...form.leadIds]; next[i] = e.target.value || null; set('leadIds', next);
+                    }}>
+                    <option value="">— Führung —</option>
+                    {riders.map(r => (
+                      <option key={r.id} value={r.id}>{shortName(r, riders)}</option>
+                    ))}
+                  </select>
+                  <select className="form-select" style={{ flex: 1, padding: '3px 6px', fontSize: 13 }}
+                    value={form.leadIds2[i] ?? ''}
+                    disabled={!form.leadIds[i]}
+                    onChange={e => {
+                      const next = [...form.leadIds2]; next[i] = e.target.value || null; set('leadIds2', next);
+                    }}>
+                    <option value="">— kein Wechsel —</option>
+                    {riders.map(r => (
+                      <option key={r.id} value={r.id}>ab Mitte: {shortName(r, riders)}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -538,12 +909,19 @@ function RunForm({ form, setForm, athlete, tracks, onSave, onCancel, saving, isN
  *  kumulierten Zeiten nicht mehr. */
 function lapsFromForm(form: FormState): PursuitRunLap[] {
   const out: PursuitRunLap[] = [];
+  const isTeam = form.athleteIds.length > 1;
   for (let i = 0; i < form.numRounds; i++) {
     const lapMs = parseTimeToMs(form.lapStrs[i] ?? '');
     if (lapMs === null) break;
     const halfRaw = parseTimeToMs(form.halfStrs[i] ?? '');
     const halfMs = halfRaw !== null && halfRaw < lapMs ? halfRaw : null;
-    out.push({ lapMs, halfMs });
+    // Führung nur bei Mannschaftsläufen und nur für Fahrer, die noch am Lauf
+    // hängen — sonst bliebe nach dem Entfernen eines Fahrers eine tote ID.
+    const keep = (id: string | null) =>
+      isTeam && id && form.athleteIds.includes(id) ? id : null;
+    const leadId = keep(form.leadIds[i] ?? null);
+    const leadId2 = leadId ? keep(form.leadIds2[i] ?? null) : null;
+    out.push({ lapMs, halfMs, leadId, leadId2: leadId2 === leadId ? null : leadId2 });
   }
   return out;
 }
@@ -558,6 +936,7 @@ export default function PursuitRunsCard({ athleteId, athlete, runs, isAdmin, onC
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [tracks, setTracks] = useState<PursuitTrackSuggestion[]>([]);
+  const [allAthletes, setAllAthletes] = useState<Athlete[]>([]);
 
   // Bahnvorschläge über alle Sportler hinweg. Nach jedem Speichern lädt das
   // Profil neu und `runs` wechselt die Referenz — dann wird auch die Liste neu
@@ -571,6 +950,26 @@ export default function PursuitRunsCard({ athleteId, athlete, runs, isAdmin, onC
       .catch(() => { /* Vorschläge sind Komfort, kein Muss */ });
     return () => { alive = false; };
   }, [runs]);
+
+  // Gesamte Kartei für die Fahrerauswahl bei Mannschaftsläufen und für die
+  // Namen in der Führungsanzeige. Einmal je Profil — die Kartei ändert sich
+  // nicht durch das Speichern eines Laufs. Schlägt der Abruf fehl, bleibt die
+  // Karte voll benutzbar, nur ohne weitere Fahrer.
+  useEffect(() => {
+    let alive = true;
+    athletesApi.list()
+      .then(a => { if (alive) setAllAthletes(a); })
+      .catch(() => { /* ohne Kartei bleibt es ein Einzellauf */ });
+    return () => { alive = false; };
+  }, []);
+
+  // Namen für die Führungsanzeige. Der Sportler des Profils ist immer dabei,
+  // auch wenn die Kartei noch lädt.
+  const nameById = useMemo(() => {
+    const m: Record<string, string> = { [athlete.id]: fullName(athlete) };
+    allAthletes.forEach(a => { m[a.id] = fullName(a); });
+    return m;
+  }, [allAthletes, athlete]);
 
   function toggle(id: string) {
     setExpanded(prev => {
@@ -599,7 +998,9 @@ export default function PursuitRunsCard({ athleteId, athlete, runs, isAdmin, onC
       const laps = lapsFromForm(form);
       const total = parseTimeToMs(form.totalStr);
       await pursuitRunsApi.create({
-        athleteIds: [athleteId],
+        // Ab 1.6.0 können das mehrere sein. athleteId ist immer dabei, weil er
+        // im Formular nicht entfernbar ist.
+        athleteIds: form.athleteIds.length > 0 ? form.athleteIds : [athleteId],
         label: form.label.trim(),
         eventName: form.eventName.trim() || null,
         trackM: form.trackM,
@@ -632,6 +1033,7 @@ export default function PursuitRunsCard({ athleteId, athlete, runs, isAdmin, onC
       // totalMs die real getippte Summe und die Abweichung sichtbar.
       const isTimerSource = form.timeSource === 'TIMER';
       await pursuitRunsApi.update(run.id, {
+        athleteIds: form.athleteIds.length > 0 ? form.athleteIds : run.athleteIds,
         label: form.label.trim(),
         eventName: form.eventName.trim() || null,
         trackM: form.trackM,
@@ -674,7 +1076,8 @@ export default function PursuitRunsCard({ athleteId, athlete, runs, isAdmin, onC
       {error && <div className="alert alert-error mb-3">{error}</div>}
 
       {adding && (
-        <RunForm form={form} setForm={setForm} athlete={athlete} tracks={tracks} isNew
+        <RunForm form={form} setForm={setForm} athlete={athlete} allAthletes={allAthletes}
+          tracks={tracks} isNew
           saving={saving} onSave={saveNew} onCancel={() => setAdding(false)} />
       )}
 
@@ -707,7 +1110,11 @@ export default function PursuitRunsCard({ athleteId, athlete, runs, isAdmin, onC
                     <span className="badge badge-gray" style={{ marginLeft: 6 }}>Training</span>
                   )}
                   {!run.complete && <span className="badge badge-orange" style={{ marginLeft: 6 }}>unvollständig</span>}
-                  {run.athleteIds.length > 1 && <span className="badge badge-blue" style={{ marginLeft: 6 }}>Mannschaft</span>}
+                  {run.athleteIds.length > 1 && (
+                    <span className="badge badge-blue" style={{ marginLeft: 6 }}>
+                      Mannschaft · {run.athleteIds.length}
+                    </span>
+                  )}
                 </div>
                 <div className="text-xs text-muted">
                   {fmtDate(run.ridenAt)}
@@ -764,12 +1171,14 @@ export default function PursuitRunsCard({ athleteId, athlete, runs, isAdmin, onC
             {open && !editing && (
               <div style={{ marginTop: 10 }}>
                 <CourseChart run={run} />
-                <LapTable run={run} />
+                <LeadSummary run={run} nameById={nameById} />
+                <LapTable run={run} nameById={nameById} />
               </div>
             )}
 
             {editing && (
-              <RunForm form={form} setForm={setForm} athlete={athlete} tracks={tracks} isNew={false}
+              <RunForm form={form} setForm={setForm} athlete={athlete} allAthletes={allAthletes}
+                tracks={tracks} isNew={false}
                 saving={saving} onSave={() => saveEdit(run)} onCancel={() => setEditingId(null)} />
             )}
           </div>

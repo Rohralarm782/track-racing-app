@@ -87,6 +87,11 @@ export interface AthleteDetail extends Athlete {
 export interface PursuitRunLap {
   lapMs: number;
   halfMs?: number | null;
+  /** Führung in der Mannschaftsverfolgung (ab 1.6.0), Sportler-ID.
+   *  `leadId` führt ab Rundenbeginn, `leadId2` löst zur Rundenmitte ab.
+   *  Beide fehlen bei Läufen von vor 1.6.0 und bei Einzelverfolgungen. */
+  leadId?: string | null;
+  leadId2?: string | null;
 }
 
 export type PursuitTimeSource = 'TIMER' | 'KORRIGIERT' | 'OFFIZIELL' | 'MANUELL';
@@ -597,6 +602,9 @@ export const pursuitRunsApi = {
   /** Bereits eingetragene Bahnen aller Sportler, für die Vorschlagsliste. */
   tracks: () => api.get<PursuitTrackSuggestion[]>('/api/pursuit-runs/tracks'),
   update: (id: string, data: Partial<{
+    /** Ab 1.6.0 änderbar: Fahrer eines Laufs lassen sich nachträglich
+     *  ergänzen oder entfernen. Nie leer schicken — das Backend lehnt ab. */
+    athleteIds: string[];
     label: string;
     eventName: string | null;
     trackM: number;

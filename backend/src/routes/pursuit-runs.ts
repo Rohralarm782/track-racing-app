@@ -28,6 +28,17 @@ const RUN_KINDS = ['TRAINING', 'WETTKAMPF'] as const;
 const LapSchema = z.object({
   lapMs: z.number().int().nonnegative(),
   halfMs: z.number().int().nonnegative().nullable().optional(),
+  // Führung der Mannschaftsverfolgung (ab 1.6.0). Bewusst IM laps-JSON und
+  // nicht als eigene Spalte: eine Führung ist ohne ihre Runde bedeutungslos,
+  // und so bleibt das Datenmodell unangetastet (kein prisma db push).
+  //   leadId  — führt ab Rundenbeginn
+  //   leadId2 — löst zur Rundenmitte ab (1½er-Ablösung); null = kein Wechsel
+  // Läufe von vor 1.6.0 haben beide Felder nicht, deshalb optional. Die IDs
+  // werden NICHT gegen athleteIds geprüft: das Frontend bietet nur die Fahrer
+  // des Laufs an, und eine Prüfung hier würde ein nachträgliches Entfernen
+  // eines Fahrers zum harten Fehler machen statt zu einer leeren Zelle.
+  leadId: z.string().nullable().optional(),
+  leadId2: z.string().nullable().optional(),
 });
 
 const GearSchema = z.object({ kb: z.number().int().positive(), rz: z.number().int().positive() });
@@ -65,9 +76,14 @@ const RunSchema = z.object({
 });
 
 // Beim Bearbeiten sind nur die Felder erlaubt, die im Bearbeiten-Modus der
-// Karte auch wirklich änderbar sind. raceId/athleteIds bleiben bewusst außen
-// vor — ein Lauf wechselt nicht nachträglich den Fahrer.
+// Karte auch wirklich änderbar sind. raceId bleibt bewusst außen vor.
+// athleteIds ist seit 1.6.0 erlaubt: Fahrer ERGÄNZEN ist etwas anderes als
+// Fahrer tauschen. Ein von Hand nachgetragener Mannschaftslauf wird oft erst
+// unvollständig erfasst und später vervollständigt; das war bis 1.5.0 gar
+// nicht möglich. Ein leeres Array wird abgelehnt — ein Lauf ohne Fahrer wäre
+// in keinem Profil mehr auffindbar.
 const RunPatchSchema = z.object({
+  athleteIds: z.array(z.string()).min(1).optional(),
   label: z.string().min(1).optional(),
   eventName: z.string().nullable().optional(),
   trackM: z.number().positive().optional(),
@@ -203,6 +219,9 @@ router.patch('/:id', requireAdmin, async (req, res, next) => {
     }
     if (d.trackName !== undefined) data.trackName = d.trackName?.trim() || null;
     if (d.laps    !== undefined) data.laps  = d.laps;
+    // Fahrerliste des Laufs. Wird nur gesetzt, wenn sie mitgeschickt wurde —
+    // eine Teiländerung ohne athleteIds lässt sie unangetastet.
+    if (d.athleteIds !== undefined) data.athleteIds = d.athleteIds;
     // gears: null bedeutet hier "nicht anfassen", nicht "leeren" — ein
     // Mannschaftslauf verliert seine Gänge nicht durch eine Teiländerung.
     if (d.gears   !== undefined) data.gears = d.gears === null ? undefined : d.gears;
