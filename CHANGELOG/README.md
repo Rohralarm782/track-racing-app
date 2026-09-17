@@ -19,6 +19,7 @@ Beim Erhöhen der Version immer beides ändern:
 
 | Version | Datum | Inhalt |
 |---|---|---|
+| [2.0.1](2.0.1.md) | 17.09.2026 | „Ablaufplan“ im Dateinamen wird als Zeitplan erkannt und automatisch importiert (bisher nur „Zeitplan“) |
 | [2.0.0](2.0.0.md) | 15.09.2026 | Führungsplan der Mannschaftsverfolgung neu: Besetzung folgt der Reihenfolge, Führungen summieren immer auf die Renndistanz, Ausstieg an der Führung markiert, Zeitverlust je Wechsel in der Zielzeit. Auswertung eines gefahrenen Laufes: halbe und ganze Runden als Diagramm und Tabelle, Mittelwerte mit und ohne Start, Kilometer-Teilzeiten; Führungsbilanz und Plandiagramm in einer Ansicht |
 | [1.6.0](1.6.0.md) | 10.09.2026 | Mannschaftsverfolgung von Hand nachtragbar (mehrere Fahrer je Lauf); Führung je Runde mit Verlaufsbalken und Bilanz; Rundenzeiten aus CSV oder Zwischenablage übernehmen |
 | [1.5.0](1.5.0.md) | 26.08.2026 | Abfotografierte Kommuniqués werden über ihren Kopfbereich zugeordnet; Zuordnung von Hand änderbar; ausgeschriebene Altersklassen in Dateinamen |

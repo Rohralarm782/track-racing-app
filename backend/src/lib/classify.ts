@@ -26,6 +26,12 @@ export function detectDocType(fileName: string): DocType {
   // das Startlisten-Wort stammt dann aus dem Namen des Programmpunkts.
   if (ergebnis) return 'ERGEBNIS';
   if (startliste) return 'STARTLISTE';
+  // "Ablaufplan" ist bei manchen Veranstaltern der Name des Zeitplans (RSVO
+  // Öschelbronn: "04_Kommunique-3-Ablaufplan.pdf"). Bewusst NACH Ergebnis und
+  // Startliste geprüft, anders als "zeitplan" oben: so wird nur umgedeutet, was
+  // bisher unter SONSTIGES fiel. Eine Datei, die neben "Ablaufplan" auch ein
+  // Ergebnis- oder Startlisten-Wort trägt, bleibt, was sie war.
+  if (/ablauf.?plan/.test(lower)) return 'ZEITPLAN';
   return 'SONSTIGES';
 }
 
