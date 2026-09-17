@@ -73,6 +73,7 @@ model Event {
   name       String
   date       DateTime?
   location   String?
+  trackM     Float?     // Bahnlänge in m (z.B. 200, 250, 333.33) — null = 250; skaliert die Massenstart-Zeitschätzung
   categories Category[]
   races      Race[]     // neu: Rennen, die direkt an der Veranstaltung hängen (ohne Kategorie)
   createdAt  DateTime   @default(now())

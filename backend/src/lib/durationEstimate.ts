@@ -45,6 +45,21 @@ function typicalRaceMinutes(
 }
 
 /**
+ * Bahnlänge der Veranstaltung (Event.trackM) als Faktor gegenüber 250 m.
+ * Die Einstellungswerte „Pro Runde" (Massenstart, Ausscheidungsfahren) und die
+ * Rückfall-Rundenzahlen gelten für eine 250-m-Bahn. Auf 200 m ist eine Runde
+ * 0,8× so lang, auf 333⅓ m 1,33×. Fehlt die Angabe oder ist sie unplausibel,
+ * gilt 250 m (Faktor 1) — Veranstaltungen ohne Bahnlänge rechnen exakt wie
+ * bisher. Die Kalibrierung (DurationEstimate) bleibt dadurch bahnneutral: sie
+ * lernt nur noch Abweichungen vom Tempo, nicht den Unterschied der Bahnlänge.
+ */
+const REFERENCE_TRACK_M = 250;
+function trackFactor(trackM: number | null | undefined): number {
+  if (trackM == null || !Number.isFinite(trackM) || trackM <= 0) return 1;
+  return trackM / REFERENCE_TRACK_M;
+}
+
+/**
  * Reine Formel-Schätzung (noch ohne Kalibrierung) für ein Rennen, gegeben die
  * Runden-/Laufzahl (ggf. schon mit Rückfallwert aufgefüllt, siehe
  * unitCountFor) und die aktuellen Einstellungen (siehe settings.ts). Gibt nur
@@ -55,6 +70,7 @@ export function baseFormulaMinutes(
   entry: { ak: string; disciplineLabel: string; massStart: boolean; type: string },
   unitCount: number,
   settings: AppSettings,
+  trackM?: number | null,
 ): number | null {
   // Einzel-/Basiswert einer Siegerehrung. Die blockweise Verrechnung mehrerer
   // aufeinanderfolgender Ehrungen (Basis + Zuschlag je weiterer) passiert in
@@ -65,7 +81,8 @@ export function baseFormulaMinutes(
 
   const code = inferCodeForEntry(entry.disciplineLabel);
 
-  if (code === 'AF') return settings.afSetupMin + settings.afPerRoundMin * unitCount + settings.afClearMin;
+  const f = trackFactor(trackM);
+  if (code === 'AF') return settings.afSetupMin + settings.afPerRoundMin * f * unitCount + settings.afClearMin;
   if (code === 'SP') return settings.sprintPerHeatMin * unitCount;
   if (code === 'TS') return settings.teamsprintPerHeatMin * unitCount;
   if (code === 'KE') return settings.keirinPerHeatMin * unitCount;
@@ -76,13 +93,14 @@ export function baseFormulaMinutes(
   }
   // Massenstart-Sammelkategorie: Punktefahren, Madison, Scratch, Temporunden,
   // Omnium (grobe Annahme, im Detail noch nicht besprochen)
-  return settings.massStartSetupMin + settings.massStartPerRoundMin * unitCount + settings.massStartClearMin;
+  return settings.massStartSetupMin + settings.massStartPerRoundMin * f * unitCount + settings.massStartClearMin;
 }
 
 function unitCountFor(
   entry: { disciplineLabel: string; massStart: boolean; phase: string | null; manualUnitCount?: number | null },
   linkedDoc: { roundCount: number | null; heatCount: number | null } | null | undefined,
   settings: AppSettings,
+  trackM?: number | null,
 ): number {
   // Manuelle Eingabe (siehe ScheduleEntry.manualUnitCount) hat immer Vorrang —
   // sowohl vor der aus der Startliste extrahierten Zahl als auch vor jeder
@@ -97,10 +115,13 @@ function unitCountFor(
     if (isPursuit && entry.phase && /finale/i.test(entry.phase)) return settings.pursuitFinalHeatCount;
     return settings.fallbackHeatCount;
   }
+  // Rückfall-Rundenzahlen gelten für 250 m; auf kürzeren Bahnen sind es bei
+  // gleicher Distanz entsprechend mehr Runden (200 m: 50 → 63).
   const code = inferCodeForEntry(entry.disciplineLabel);
-  if (code === 'PR') return settings.fallbackRoundCountPr;
-  if (code === 'TR') return settings.fallbackRoundCountTr;
-  return settings.fallbackRoundCountDefault;
+  const f = trackFactor(trackM);
+  if (code === 'PR') return Math.round(settings.fallbackRoundCountPr / f);
+  if (code === 'TR') return Math.round(settings.fallbackRoundCountTr / f);
+  return Math.round(settings.fallbackRoundCountDefault / f);
 }
 
 /**
@@ -132,16 +153,17 @@ function baseDurationMinutes(
   entry: { ak: string; disciplineLabel: string; massStart: boolean; type: string; phase: string | null; manualUnitCount?: number | null; plannedDurationMin?: number | null },
   linkedDoc: { roundCount: number | null; heatCount: number | null } | null | undefined,
   settings: AppSettings,
+  trackM?: number | null,
 ): number | null {
   if (entry.type === 'INFO') return null;
 
   if (hasRealUnitCount(entry, linkedDoc)) {
-    return baseFormulaMinutes(entry, unitCountFor(entry, linkedDoc, settings), settings);
+    return baseFormulaMinutes(entry, unitCountFor(entry, linkedDoc, settings, trackM), settings, trackM);
   }
   if (entry.plannedDurationMin != null && entry.plannedDurationMin > 0) {
     return entry.plannedDurationMin;
   }
-  return baseFormulaMinutes(entry, unitCountFor(entry, linkedDoc, settings), settings);
+  return baseFormulaMinutes(entry, unitCountFor(entry, linkedDoc, settings, trackM), settings, trackM);
 }
 
 /**
@@ -218,8 +240,9 @@ export async function estimateMinutes(
   entry: { ak: string; disciplineLabel: string; massStart: boolean; type: string; phase: string | null; manualUnitCount?: number | null; plannedDurationMin?: number | null },
   linkedDoc: { roundCount: number | null; heatCount: number | null } | null | undefined,
   settings: AppSettings,
+  trackM?: number | null,
 ): Promise<number | null> {
-  const base = baseDurationMinutes(entry, linkedDoc, settings);
+  const base = baseDurationMinutes(entry, linkedDoc, settings, trackM);
   if (base == null) return null;
 
   const cal = await prisma.durationEstimate.findUnique({
@@ -287,11 +310,12 @@ export async function recalibrateFromStatusUpdate(
   if (between.length === 0) return;
 
   const settings = await getSettings();
+  const event = await prisma.event.findUnique({ where: { id: eventId }, select: { trackM: true } });
 
   let predictedTotal = 0;
   const withEstimate: Array<{ ak: string; disciplineLabel: string; massStart: boolean }> = [];
   for (const e of between) {
-    const est = await estimateMinutes(e, e.linkedDocument, settings);
+    const est = await estimateMinutes(e, e.linkedDocument, settings, event?.trackM);
     if (est != null) {
       predictedTotal += est;
       withEstimate.push({ ak: e.ak, disciplineLabel: e.disciplineLabel, massStart: e.massStart });

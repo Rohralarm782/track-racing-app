@@ -47,6 +47,14 @@ function formatDateShort(iso?: string | null): string {
   return isNaN(d.getTime()) ? '' : d.toLocaleDateString('de-DE');
 }
 
+// Bahnlänge der Veranstaltung — steuert die Zeitschätzung der Massenstart-
+// Rennen im Zeitplan (Einstellungswerte gelten für 250 m und werden umgerechnet).
+const EVENT_TRACK_OPTIONS = [200, 250, 285.714, 333.33, 400];
+
+function trackLabel(m: number): string {
+  return `${m.toLocaleString('de-DE', { maximumFractionDigits: 2 })} m`;
+}
+
 type LocalTab = 'uebersicht' | 'einstellungen';
 
 export default function EventDetail() {
@@ -77,6 +85,7 @@ export default function EventDetail() {
   const [stammName, setStammName]     = useState('');
   const [stammDate, setStammDate]     = useState('');
   const [stammLoc, setStammLoc]       = useState('');
+  const [stammTrack, setStammTrack]   = useState(250);
   const [stammErr, setStammErr]       = useState('');
 
   function load() {
@@ -92,6 +101,7 @@ export default function EventDetail() {
     setStammName(event.name);
     setStammDate(toDateInput(event.date));
     setStammLoc(event.location ?? '');
+    setStammTrack(event.trackM ?? 250);
     setStammErr('');
     setEditStamm(true);
   }
@@ -108,10 +118,11 @@ export default function EventDetail() {
         name,
         date: stammDate ? new Date(`${stammDate}T12:00:00`).toISOString() : null,
         location: stammLoc.trim() || null,
+        trackM: stammTrack,
       });
       // Der PATCH liefert nur die Event-Grunddaten zurück (ohne Kategorien),
       // deshalb gezielt zusammenführen statt komplett ersetzen.
-      setEvent(prev => prev ? { ...prev, name: updated.name, date: updated.date, location: updated.location } : prev);
+      setEvent(prev => prev ? { ...prev, name: updated.name, date: updated.date, location: updated.location, trackM: updated.trackM } : prev);
       setEditStamm(false);
     } catch (e: any) {
       setStammErr(e?.message ?? 'Speichern fehlgeschlagen');
@@ -321,6 +332,7 @@ export default function EventDetail() {
                       <div style={{ fontWeight: 600, fontSize: 14.5 }}>{event.name}</div>
                       <div className="text-xs text-muted" style={{ marginTop: 2 }}>
                         {[formatDateShort(event.date), event.location ?? ''].filter(Boolean).join(' · ') || 'Kein Datum, kein Ort'}
+                        {' · '}Bahn {trackLabel(event.trackM ?? 250)}
                       </div>
                     </div>
                     <button className="btn btn-ghost btn-sm" title="Veranstaltung bearbeiten" onClick={startEditStamm}>
@@ -358,6 +370,14 @@ export default function EventDetail() {
                         onChange={e => setStammLoc(e.target.value)}
                         onKeyDown={e => { if (e.key === 'Enter') saveStamm(); if (e.key === 'Escape') setEditStamm(false); }}
                       />
+                    </div>
+                  </div>
+                  <div className="grid-2" style={{ marginTop: 10 }}>
+                    <div className="form-group" style={{ margin: 0 }}>
+                      <label className="form-label">Bahnlänge</label>
+                      <select className="form-select" value={stammTrack} onChange={e => setStammTrack(+e.target.value)}>
+                        {EVENT_TRACK_OPTIONS.map(v => <option key={v} value={v}>{trackLabel(v)}</option>)}
+                      </select>
                     </div>
                   </div>
                   <div className="flex-between mt-3">

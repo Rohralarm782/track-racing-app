@@ -103,11 +103,13 @@ interface Props {
 
 // ── Konstanten ─────────────────────────────────────────────────────────────────
 const TRACK_OPTIONS = [
+  { label: '200m', value: 200 },
   { label: '250m', value: 250 },
   { label: '333m', value: 333.33 },
   { label: '400m', value: 400 },
 ];
-const ROUND_OPTIONS = [6, 8, 10, 12, 14, 16];
+// 4–24: deckt 200 m (3000 m = 15, 4000 m = 20) und 333⅓ m (3000 m = 9) mit ab.
+const ROUND_OPTIONS = Array.from({ length: 21 }, (_, i) => i + 4);
 const KB_OPTIONS = [50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60];
 const RZ_OPTIONS = [13, 14, 15, 16, 17, 18];
 const DEFAULT_CIRC_MM = 2100;

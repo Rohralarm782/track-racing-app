@@ -152,7 +152,7 @@ export default function TimeEstimateSettings() {
         <p className="text-sm" style={{ fontWeight: 600, marginBottom: 10 }}>Massenstart (Punktefahren, Madison, Scratch, Temporunden, Omnium)</p>
         <div className="grid-3" style={{ gap: 10 }}>
           <NumField label="Startaufstellung" value={settings.massStartSetupMin} suffix="Min." onChange={v => patch({ massStartSetupMin: v })} />
-          <NumField label="Pro Runde" value={Math.round(settings.massStartPerRoundMin * 60)} step={1} suffix="Sek." onChange={v => patch({ massStartPerRoundMin: v / 60 })} />
+          <NumField label="Pro Runde (250 m)" value={Math.round(settings.massStartPerRoundMin * 60)} step={1} suffix="Sek." onChange={v => patch({ massStartPerRoundMin: v / 60 })} />
           <NumField label="Abräumen" value={settings.massStartClearMin} suffix="Min." onChange={v => patch({ massStartClearMin: v })} />
         </div>
       </div>
@@ -161,7 +161,7 @@ export default function TimeEstimateSettings() {
         <p className="text-sm" style={{ fontWeight: 600, marginBottom: 10 }}>Ausscheidungsfahren</p>
         <div className="grid-3" style={{ gap: 10 }}>
           <NumField label="Startaufstellung" value={settings.afSetupMin} suffix="Min." onChange={v => patch({ afSetupMin: v })} />
-          <NumField label="Pro Runde" value={Math.round(settings.afPerRoundMin * 60)} step={1} suffix="Sek." onChange={v => patch({ afPerRoundMin: v / 60 })} />
+          <NumField label="Pro Runde (250 m)" value={Math.round(settings.afPerRoundMin * 60)} step={1} suffix="Sek." onChange={v => patch({ afPerRoundMin: v / 60 })} />
           <NumField label="Abräumen" value={settings.afClearMin} suffix="Min." onChange={v => patch({ afClearMin: v })} />
         </div>
       </div>
@@ -224,7 +224,7 @@ export default function TimeEstimateSettings() {
 
       <div className="card mb-3">
         <p className="text-sm" style={{ fontWeight: 600, marginBottom: 4 }}>Rückfallgrößen</p>
-        <p className="text-xs text-muted" style={{ marginBottom: 10 }}>Werden verwendet, wenn die Startliste keine Runden-/Laufzahl hergibt.</p>
+        <p className="text-xs text-muted" style={{ marginBottom: 10 }}>Werden verwendet, wenn die Startliste keine Runden-/Laufzahl hergibt. Rundenzahlen für 250 m — bei anderer Bahnlänge der Veranstaltung wird umgerechnet.</p>
         <div className="grid-2" style={{ gap: 10, marginBottom: 10 }}>
           <NumField label="Punktefahren (Runden)" value={settings.fallbackRoundCountPr} step={1} onChange={v => patch({ fallbackRoundCountPr: v })} />
           <NumField label="Temporunden (Runden)" value={settings.fallbackRoundCountTr} step={1} onChange={v => patch({ fallbackRoundCountTr: v })} />

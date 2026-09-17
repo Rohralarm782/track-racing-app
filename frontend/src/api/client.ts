@@ -222,6 +222,7 @@ export interface Event {
   name: string;
   date?: string | null;
   location?: string | null;
+  trackM?: number | null; // Bahnlänge in m; null/fehlt = 250
   categories: Array<Category & { _count: { teams: number }; races: Race[] }>;
   races: Race[]; // neue, direkt am Event hängende Rennen ohne Kategorie
 }

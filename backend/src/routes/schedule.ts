@@ -57,7 +57,7 @@ router.post('/events/:id/schedule', requireAdmin, async (req, res, next) => {
 // da nicht jeder Aufrufer (z.B. autoMatch) das braucht. Lädt die Einstellungen
 // (Formel-Werte) EINMAL für die ganze Liste statt pro Eintrag neu.
 async function withEstimates<T extends {
-  id: string; day: number;
+  id: string; eventId: string; day: number;
   ak: string; disciplineLabel: string; massStart: boolean; type: string; phase: string | null;
   manualUnitCount: number | null;
   plannedDurationMin: number | null;
@@ -66,12 +66,17 @@ async function withEstimates<T extends {
   entries: T[],
 ): Promise<Array<T & { estimatedMinutes: number | null; estimateIsFallback: boolean }>> {
   const settings = await getSettings();
+  // Bahnlänge der Veranstaltung EINMAL laden (alle Einträge gehören zu derselben
+  // Veranstaltung, siehe loadScheduleWithLinks). null = 250 m.
+  const trackM = entries.length > 0
+    ? (await prisma.event.findUnique({ where: { id: entries[0].eventId }, select: { trackM: true } }))?.trackM ?? null
+    : null;
   // Siegerehrungen blockweise vorab verrechnen (mehrere aufeinanderfolgende
   // Ehrungen teilen sich die Rüstzeit). Setzt voraus, dass entries nach order
   // sortiert sind — liefert loadScheduleWithLinks (orderBy: order asc).
   const ceremonyMin = ceremonyBlockMinutes(entries, settings);
   return Promise.all(entries.map(async e => {
-    const base = await estimateMinutes(e, e.linkedDocument, settings);
+    const base = await estimateMinutes(e, e.linkedDocument, settings, trackM);
     return {
       ...e,
       estimatedMinutes: ceremonyMin.has(e.id) ? ceremonyMin.get(e.id)! : base,

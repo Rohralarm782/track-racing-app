@@ -78,6 +78,8 @@ const UpdateEventSchema = z.object({
   name: z.string().min(1, 'Name ist erforderlich').optional(),
   date: z.string().datetime().nullable().optional(),
   location: z.string().nullable().optional(),
+  // Bahnlänge in m; null = 250. Grenzen nur gegen Tippfehler.
+  trackM: z.number().min(100).max(500).nullable().optional(),
 });
 
 router.patch('/:id', requireAdmin, async (req, res, next) => {
@@ -88,6 +90,7 @@ router.patch('/:id', requireAdmin, async (req, res, next) => {
     if (parsed.data.name !== undefined) data.name = parsed.data.name.trim();
     if (parsed.data.date !== undefined) data.date = parsed.data.date ? new Date(parsed.data.date) : null;
     if (parsed.data.location !== undefined) data.location = parsed.data.location?.trim() || null;
+    if (parsed.data.trackM !== undefined) data.trackM = parsed.data.trackM;
     const event = await prisma.event.update({ where: { id: req.params.id }, data: data as any });
     res.json(event);
   } catch (e) { next(e); }
