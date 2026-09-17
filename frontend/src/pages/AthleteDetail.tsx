@@ -3,6 +3,9 @@
 //  - Name-Feld in Vorname/Nachname aufgeteilt (siehe schema.prisma)
 //  - Die alte Karte "Verfolgungszeiten" (RaceAthlete.timeMs, wurde nirgends
 //    geschrieben und war deshalb immer leer) ist durch PursuitRunsCard ersetzt.
+//  - 2.3.0: Zwei Reiter. "Übersicht" zeigt die neue Karte "Verfügbare Gänge"
+//    (Matrix Kettenblätter × Ritzel) und die gefahrenen Zeiten; die Pflege der
+//    Kettenblätter und Ritzel steckt im Reiter "Sportler Einstellungen".
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { athletesApi, athleteFullName, type AthleteDetail as AthleteDetailType } from '../api/client';
@@ -16,6 +19,157 @@ const GEAR_CHIP: React.CSSProperties = {
 };
 
 type GearKind = 'kettenblaetter' | 'ritzel';
+type GearUnit = 'zoll' | 'meter' | 'beides';
+
+/** Radumfang in mm für die Abrolllänge. Fester Wert wie in der
+ *  Verfolgungsplanung. Ein je Sportler gemessener Umfang wäre für die
+ *  Übersetzungskontrolle genauer, braucht aber ein Feld am Sportler
+ *  (Schema) — bewusst ein späterer Ausbauschritt. */
+const CIRC_MM = 2100;
+
+/** Zoll-Angabe der gängigen Bahn-Übersetzungskarten: Zähne Kettenblatt durch
+ *  Zähne Ritzel, mal 27 (nominelles 27"-Rad). Bewusst NICHT über den
+ *  Radumfang gerechnet, sonst stehen hier andere Zahlen als auf der Karte,
+ *  die trackside am Rad liegt. */
+function gearInches(kb: number, rz: number): number {
+  return (kb / rz) * 27;
+}
+/** Abrolllänge je Kurbelumdrehung in Metern — die Größe, die bei der
+ *  Übersetzungskontrolle zählt. */
+function rolloutM(kb: number, rz: number): number {
+  return (kb / rz) * (CIRC_MM / 1000);
+}
+const fmtZoll  = (n: number) => n.toFixed(1).replace('.', ',');
+const fmtMeter = (n: number) => n.toFixed(2).replace('.', ',');
+
+/** Hintergrund der Matrixzelle: je größer der Gang, desto kräftiger das Blau.
+ *  Nur zur Orientierung, die Zahl bleibt die Information. */
+function cellShade(z: number, min: number, max: number): string {
+  if (max <= min) return 'rgb(224,236,254)';
+  const t = (z - min) / (max - min);
+  const from = [241, 245, 249], to = [147, 197, 253];
+  return `rgb(${from.map((v, i) => Math.round(v + (to[i] - v) * t)).join(',')})`;
+}
+
+const TAB_BAR: React.CSSProperties = {
+  display: 'flex', gap: 2, background: '#f3f4f6', borderRadius: 9, padding: 3, marginBottom: 16,
+};
+const UNIT_BAR: React.CSSProperties = {
+  display: 'flex', gap: 2, background: '#f3f4f6', borderRadius: 8, padding: 2,
+};
+
+/** Karte "Verfügbare Gänge": alle Kombinationen aus den hinterlegten
+ *  Kettenblättern und Ritzeln als Matrix, umschaltbar zwischen Zoll,
+ *  Abrolllänge in Metern und beidem. */
+function GearOverviewCard({ kettenblaetter, ritzel, canEdit, onGoSettings }: {
+  kettenblaetter: number[];
+  ritzel: number[];
+  canEdit: boolean;
+  onGoSettings: () => void;
+}) {
+  const [unit, setUnit] = useState<GearUnit>('zoll');
+
+  const kbs = [...kettenblaetter].sort((a, b) => a - b);
+  const rzs = [...ritzel].sort((a, b) => a - b);
+
+  if (kbs.length === 0 || rzs.length === 0) {
+    const missing = kbs.length === 0 && rzs.length === 0
+      ? 'Kettenblätter und Ritzel'
+      : kbs.length === 0 ? 'Kettenblätter' : 'Ritzel';
+    return (
+      <div className="card mb-3">
+        <h3 style={{ marginBottom: 10 }}>Verfügbare Gänge</h3>
+        <p className="text-sm text-muted" style={{ marginTop: 0, marginBottom: canEdit ? 10 : 0 }}>
+          Es sind noch keine {missing} hinterlegt, daher lassen sich keine Gänge berechnen.
+        </p>
+        {canEdit && (
+          <button className="btn btn-secondary btn-sm" onClick={onGoSettings}>
+            {missing} in Sportler Einstellungen eintragen
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  const values = kbs.flatMap(kb => rzs.map(rz => gearInches(kb, rz)));
+  const min = Math.min(...values), max = Math.max(...values);
+  const showMeter = unit === 'meter' || unit === 'beides';
+
+  const unitBtn = (v: GearUnit, label: string) => (
+    <button key={v} onClick={() => setUnit(v)}
+      style={{
+        border: 'none', borderRadius: 6, padding: '5px 11px', fontSize: 12.5, fontWeight: 600,
+        cursor: 'pointer', fontFamily: 'inherit',
+        background: unit === v ? 'var(--c-white)' : 'transparent',
+        color: unit === v ? 'var(--c-text)' : 'var(--c-text-muted)',
+        boxShadow: unit === v ? '0 1px 2px rgba(0,0,0,0.08)' : 'none',
+      }}>
+      {label}
+    </button>
+  );
+
+  return (
+    <div className="card mb-3">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
+        <h3>Verfügbare Gänge</h3>
+        <div style={UNIT_BAR}>
+          {unitBtn('zoll', 'Zoll')}
+          {unitBtn('meter', 'Meter')}
+          {unitBtn('beides', 'beides')}
+        </div>
+      </div>
+
+      <div style={{ overflowX: 'auto', margin: '0 -4px', padding: '0 4px' }}>
+        <table style={{ borderCollapse: 'separate', borderSpacing: 4, fontVariantNumeric: 'tabular-nums' }}>
+          <thead>
+            <tr>
+              <th style={{ textAlign: 'left', fontSize: 10.5, lineHeight: 1.2, fontWeight: 600, color: 'var(--c-text-muted)', paddingRight: 10 }}>
+                KB ↓<br />R →
+              </th>
+              {rzs.map(rz => (
+                <th key={rz} scope="col" style={{ fontSize: 13, fontWeight: 700, padding: '0 4px 4px' }}>{rz}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {kbs.map(kb => (
+              <tr key={kb}>
+                <th scope="row" style={{ position: 'sticky', left: 0, background: 'var(--c-white)', textAlign: 'left', fontSize: 13, fontWeight: 700, paddingRight: 12 }}>
+                  {kb}
+                </th>
+                {rzs.map(rz => {
+                  const z = gearInches(kb, rz), m = rolloutM(kb, rz);
+                  return (
+                    <td key={rz} style={{
+                      minWidth: 62, height: 44, borderRadius: 7, textAlign: 'center',
+                      background: cellShade(z, min, max),
+                    }}
+                      title={`${kb}/${rz} — ${fmtZoll(z)}″ · ${fmtMeter(m)} m`}>
+                      <span style={{ display: 'block', fontSize: 15, fontWeight: 600 }}>
+                        {unit === 'meter' ? `${fmtMeter(m)} m` : `${fmtZoll(z)}″`}
+                      </span>
+                      {unit === 'beides' && (
+                        <span style={{ display: 'block', fontSize: 11, color: 'var(--c-text-muted)', marginTop: 1 }}>
+                          {fmtMeter(m)} m
+                        </span>
+                      )}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <p className="text-xs text-muted" style={{ marginTop: 10, marginBottom: 0 }}>
+        Zoll = Kettenblatt / Ritzel × 27
+        {showMeter && ` · Meter = Abrolllänge je Kurbelumdrehung bei ${CIRC_MM} mm Radumfang`}
+        {' · '}{kbs.length} Kettenblätter × {rzs.length} Ritzel
+      </p>
+    </div>
+  );
+}
 
 export default function AthleteDetail() {
   const { id } = useParams<{ id: string }>();
@@ -35,6 +189,11 @@ export default function AthleteDetail() {
   // ── Gear-Eingabe ─────────────────────────────────────────────────────────
   const [newKb, setNewKb] = useState('');
   const [newRz, setNewRz] = useState('');
+
+  // ── Reiter ───────────────────────────────────────────────────────────────
+  // Bewusst nur lokaler Zustand, keine Route und kein Query-Parameter: nach
+  // einem Neuladen steht das Profil wieder auf "Übersicht".
+  const [tab, setTab] = useState<'uebersicht' | 'einstellungen'>('uebersicht');
 
   function load() {
     if (!id) return;
@@ -135,6 +294,31 @@ export default function AthleteDetail() {
         )}
       </div>
 
+      <div style={TAB_BAR}>
+        {([['uebersicht', 'Übersicht'], ['einstellungen', '⚙️ Sportler Einstellungen']] as const).map(([key, label]) => (
+          <button key={key} onClick={() => setTab(key)}
+            style={{
+              flex: 1, padding: '7px', border: 'none', borderRadius: 7,
+              background: tab === key ? 'var(--c-white)' : 'transparent',
+              color: tab === key ? 'var(--c-text)' : 'var(--c-text-muted)',
+              boxShadow: tab === key ? '0 1px 2px rgba(0,0,0,0.08)' : 'none',
+              fontSize: 12.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+            }}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'uebersicht' && (
+        <GearOverviewCard
+          kettenblaetter={athlete.kettenblaetter}
+          ritzel={athlete.ritzel}
+          canEdit={isAdmin}
+          onGoSettings={() => setTab('einstellungen')}
+        />
+      )}
+
+      {tab === 'einstellungen' && (
       <div className="card mb-3">
         <h3 style={{ marginBottom: 14 }}>Verfügbare Ausstattung</h3>
 
@@ -196,14 +380,17 @@ export default function AthleteDetail() {
           Frei kombinierbar — kein fester Satz, sondern was am Rad verfügbar ist.
         </p>
       </div>
+      )}
 
-      <PursuitRunsCard
-        athleteId={athlete.id}
-        athlete={athlete}
-        runs={athlete.runs ?? []}
-        isAdmin={isAdmin}
-        onChanged={load}
-      />
+      {tab === 'uebersicht' && (
+        <PursuitRunsCard
+          athleteId={athlete.id}
+          athlete={athlete}
+          runs={athlete.runs ?? []}
+          isAdmin={isAdmin}
+          onChanged={load}
+        />
+      )}
     </div>
   );
 }
