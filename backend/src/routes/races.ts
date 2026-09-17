@@ -123,13 +123,17 @@ router.put('/:id/athletes', requireAdmin, async (req, res, next) => {
 // ── PATCH /:id/fuehrungsplan — Führungsplan Mannschaftsverfolgung speichern ──
 // Rein für Planung/Visualisierung (kein Bezug zum Renntimer). Body wird 1:1 als
 // JSON übernommen; Struktur wird im Frontend (VerfolgungsplanungView) definiert:
-// { riderOrder: string[], riderModes: Record<string, 'back'|'dropout'>,
-//   dropoutRound: number, segments: { athleteId: string; laps: number }[] }
+// { riderOrder: string[], segments: { athleteId: string; laps: number }[],
+//   dropAfter: number | null, riderGears?: ... }
+// riderModes/dropoutRound stammen aus Plänen vor 2.0.0 und bleiben zugelassen,
+// damit ältere Clients weiter speichern können; z.object() würde unbekannte
+// Felder sonst stillschweigend verwerfen.
 const FuehrungsplanSchema = z.object({
   riderOrder: z.array(z.string()),
-  riderModes: z.record(z.enum(['back', 'dropout'])),
-  dropoutRound: z.number(),
   segments: z.array(z.object({ athleteId: z.string(), laps: z.number() })),
+  dropAfter: z.number().nullable().optional(),
+  riderModes: z.record(z.enum(['back', 'dropout'])).optional(),
+  dropoutRound: z.number().optional(),
   riderGears: z.record(z.object({ kb: z.number(), rz: z.number() }).nullable()).optional(),
 });
 

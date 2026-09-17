@@ -31,6 +31,8 @@
 //    Bahn, wird der Untergrund vorbelegt — überschreibbar.
 import { useEffect, useMemo, useState } from 'react';
 import PursuitLapImport, { type ImportResult } from './PursuitLapImport';
+import PursuitRunAnalysis from './PursuitRunAnalysis';
+import { cadence, deltaColor, fmtDelta, fmtMs, leadColor, LEAD_COLORS } from './pursuitAnalysis';
 import {
   athletesApi,
   pursuitRunsApi,
@@ -79,17 +81,6 @@ function effectiveKind(run: PursuitRun): PursuitRunKind {
   return run.runKind ?? (run.raceId ? 'WETTKAMPF' : 'TRAINING');
 }
 
-/** Farben der Führung. Gleiche Reihenfolge wie im Führungsplan der
- *  Verfolgungsplanung — derselbe Fahrer bekommt dort und hier dieselbe Farbe,
- *  solange die Reihenfolge stimmt. */
-const LEAD_COLORS = ['#1d4ed8', '#16a34a', '#d97706', '#7c3aed', '#db2777', '#0891b2'];
-
-function leadColor(athleteIds: string[], id: string | null | undefined): string {
-  if (!id) return 'var(--c-border)';
-  const i = athleteIds.indexOf(id);
-  return i < 0 ? '#9ca3af' : LEAD_COLORS[i % LEAD_COLORS.length];
-}
-
 function fullName(a: Athlete): string {
   return `${a.vorname} ${a.nachname}`.trim();
 }
@@ -103,14 +94,6 @@ function shortName(a: Athlete, all: Athlete[]): string {
 
 /** Runden als 4 / 4½ — halbe Runden entstehen durch eine Ablösung zur
  *  Rundenmitte. */
-function fmtLaps(n: number): string {
-  const r = Math.round(n * 2) / 2;
-  const whole = Math.floor(r + 1e-9);
-  const half = Math.abs(r - whole - 0.5) < 0.01;
-  if (!half) return String(whole);
-  return whole > 0 ? `${whole}½` : '½';
-}
-
 const SOURCE_LABEL: Record<PursuitTimeSource, string> = {
   TIMER: 'Renntimer',
   KORRIGIERT: 'korrigiert',
@@ -119,24 +102,6 @@ const SOURCE_LABEL: Record<PursuitTimeSource, string> = {
 };
 
 // ── Formatierung ────────────────────────────────────────────────────────────
-
-/** m:ss,hh bzw. ss,hh — Hundertstel durchgängig, Trainingszeiten sind auf
- *  ganze Sekunden gerundet wertlos. */
-function fmtMs(ms: number): string {
-  const neg = ms < 0;
-  const cs = Math.round(Math.abs(ms) / 10);
-  const m = Math.floor(cs / 6000);
-  const s = Math.floor((cs % 6000) / 100);
-  const h = cs % 100;
-  const body = m > 0
-    ? `${m}:${String(s).padStart(2, '0')},${String(h).padStart(2, '0')}`
-    : `${s},${String(h).padStart(2, '0')}`;
-  return `${neg ? '−' : ''}${body}`;
-}
-
-function fmtDelta(ms: number): string {
-  return `${ms > 0 ? '+' : ms < 0 ? '−' : '±'}${fmtMs(Math.abs(ms)).replace('−', '')}`;
-}
 
 /** Akzeptiert "3:24,56", "3:24.5", "204,56", "204". null bei Unsinn. */
 function parseTimeToMs(str: string): number | null {
@@ -163,25 +128,6 @@ function toDateInput(iso: string): string {
 
 // ── Rechnen ─────────────────────────────────────────────────────────────────
 
-function rolloutM(kb: number, rz: number, circMm: number): number {
-  return (circMm / 1000) * (kb / rz);
-}
-
-/** Trittfrequenz in U/min für eine Teilstrecke. */
-function cadence(distM: number, ms: number, kb: number, rz: number, circMm: number): number | null {
-  if (ms <= 0) return null;
-  const roll = rolloutM(kb, rz, circMm);
-  if (roll <= 0) return null;
-  return (distM / (ms / 1000) / roll) * 60;
-}
-
-function deltaColor(ms: number | null): string {
-  if (ms === null) return 'var(--c-text)';
-  if (ms > 200) return 'var(--c-success)';
-  if (ms < -200) return 'var(--c-danger)';
-  return 'var(--c-primary)';
-}
-
 /** Anzeigezeit: die offizielle Zeit ersetzt nur die Zielzeit. */
 function shownTotal(run: PursuitRun): number | null {
   return run.officialTotalMs ?? run.totalMs ?? null;
@@ -189,265 +135,6 @@ function shownTotal(run: PursuitRun): number | null {
 
 function lapSum(laps: PursuitRunLap[]): number {
   return laps.reduce((a, l) => a + l.lapMs, 0);
-}
-
-/** Plan-Kumulierte nach Runde i (1-basiert). */
-function planCum(run: PursuitRun, i: number): number | null {
-  if (run.planAnfahrtSec == null || run.planLapSec == null) return null;
-  return Math.round((run.planAnfahrtSec + run.planLapSec * (i - 1)) * 1000);
-}
-
-// ── Streckendiagramm ────────────────────────────────────────────────────────
-// Kumulierte Abweichung gegen den Plan über die Runden. Positiv = vor dem Plan.
-// Halbrunden erscheinen als Zwischenpunkte, wenn sie getippt wurden.
-
-function CourseChart({ run }: { run: PursuitRun }) {
-  const pts = useMemo(() => {
-    if (run.planAnfahrtSec == null || run.planLapSec == null) return [];
-    const out: { x: number; y: number; half: boolean }[] = [];
-    let actCum = 0;
-    let plCum = 0;
-    run.laps.forEach((lap, idx) => {
-      const i = idx + 1;
-      const planLap = (i === 1 ? run.planAnfahrtSec! : run.planLapSec!) * 1000;
-      if (lap.halfMs != null) {
-        out.push({
-          x: i - 0.5,
-          y: (plCum + planLap / 2) - (actCum + lap.halfMs),
-          half: true,
-        });
-      }
-      actCum += lap.lapMs;
-      plCum += planLap;
-      out.push({ x: i, y: plCum - actCum, half: false });
-    });
-    return out;
-  }, [run]);
-
-  if (pts.length < 2) return null;
-
-  const W = 320, H = 120, PL = 30, PR = 8, PT = 10, PB = 18;
-  const maxX = run.numRounds;
-  const maxAbs = Math.max(500, ...pts.map(p => Math.abs(p.y)));
-  const sx = (x: number) => PL + (x / maxX) * (W - PL - PR);
-  const sy = (y: number) => PT + (1 - (y + maxAbs) / (2 * maxAbs)) * (H - PT - PB);
-
-  const d = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${sx(p.x).toFixed(1)},${sy(p.y).toFixed(1)}`).join(' ');
-  const last = pts[pts.length - 1];
-
-  return (
-    <div style={{ marginBottom: 10 }}>
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={130} style={{ display: 'block' }}>
-        {/* Nulllinie = Plan */}
-        <line x1={PL} y1={sy(0)} x2={W - PR} y2={sy(0)} stroke="var(--c-border)" strokeWidth="1" strokeDasharray="3 3" />
-        <text x={PL - 4} y={sy(0) + 3} textAnchor="end" fontSize="8" fill="var(--c-text-muted, #888)">Plan</text>
-        <text x={PL - 4} y={sy(maxAbs) + 7} textAnchor="end" fontSize="8" fill="var(--c-text-muted, #888)">
-          +{(maxAbs / 1000).toFixed(1)}s
-        </text>
-        <text x={PL - 4} y={sy(-maxAbs)} textAnchor="end" fontSize="8" fill="var(--c-text-muted, #888)">
-          −{(maxAbs / 1000).toFixed(1)}s
-        </text>
-        <path d={d} fill="none" stroke={deltaColor(last.y)} strokeWidth="2" strokeLinejoin="round" />
-        {pts.map((p, i) => (
-          <circle key={i} cx={sx(p.x)} cy={sy(p.y)} r={p.half ? 1.6 : 2.8}
-            fill={p.half ? 'white' : deltaColor(last.y)}
-            stroke={deltaColor(last.y)} strokeWidth={p.half ? 1.2 : 0} />
-        ))}
-        <text x={PL} y={H - 5} fontSize="8" fill="var(--c-text-muted, #888)">Rd 1</text>
-        <text x={W - PR} y={H - 5} textAnchor="end" fontSize="8" fill="var(--c-text-muted, #888)">
-          Rd {run.numRounds}
-        </text>
-      </svg>
-      <p className="text-xs text-muted" style={{ margin: 0 }}>
-        Kumulierte Abweichung gegen den Plan · offene Punkte = Halbrunden
-      </p>
-    </div>
-  );
-}
-
-// ── Führung im Rennverlauf ──────────────────────────────────────────────────
-// Nur bei Mannschaftsläufen und nur, wenn überhaupt eine Führung eingetragen
-// ist. Der Balken zeigt den Verlauf über die Runden, die Tabelle darunter die
-// Bilanz je Fahrer. Eine Runde mit Ablösung zur Mitte zählt für beide je eine
-// halbe Runde; die Zeit wird über die Halbrundenzeit aufgeteilt, wenn es sie
-// gibt, sonst hälftig.
-
-interface LeadShare { laps: number; ms: number; }
-
-function leadShares(run: PursuitRun): Record<string, LeadShare> {
-  const acc: Record<string, LeadShare> = {};
-  const bump = (id: string, laps: number, ms: number) => {
-    if (!acc[id]) acc[id] = { laps: 0, ms: 0 };
-    acc[id].laps += laps;
-    acc[id].ms += ms;
-  };
-  run.laps.forEach(lap => {
-    const a = lap.leadId ?? null;
-    if (!a) return;
-    const b = lap.leadId2 ?? null;
-    if (!b) { bump(a, 1, lap.lapMs); return; }
-    const first = lap.halfMs != null ? lap.halfMs : lap.lapMs / 2;
-    bump(a, 0.5, first);
-    bump(b, 0.5, lap.lapMs - first);
-  });
-  return acc;
-}
-
-function LeadSummary({ run, nameById }: { run: PursuitRun; nameById: Record<string, string> }) {
-  const hasLead = run.laps.some(l => l.leadId);
-  if (run.athleteIds.length < 2 || !hasLead) return null;
-
-  const shares = leadShares(run);
-  const segs: { id: string | null; w: number }[] = [];
-  run.laps.forEach(lap => {
-    if (!lap.leadId) { segs.push({ id: null, w: 1 }); return; }
-    if (!lap.leadId2) { segs.push({ id: lap.leadId, w: 1 }); return; }
-    segs.push({ id: lap.leadId, w: 0.5 });
-    segs.push({ id: lap.leadId2, w: 0.5 });
-  });
-  const total = segs.reduce((a, x) => a + x.w, 0) || 1;
-
-  return (
-    <div style={{ marginBottom: 10 }}>
-      <div style={{ display: 'flex', height: 16, borderRadius: 4, overflow: 'hidden', border: '1px solid var(--c-border)' }}>
-        {segs.map((x, i) => (
-          <div key={i} style={{
-            width: `${(x.w / total * 100).toFixed(3)}%`,
-            background: x.id ? leadColor(run.athleteIds, x.id) : 'var(--c-bg)',
-          }} />
-        ))}
-      </div>
-      <div className="flex-between text-xs text-muted" style={{ marginTop: 2 }}>
-        <span>Start</span><span>Ziel</span>
-      </div>
-      <table className="table" style={{ fontSize: 13, marginTop: 6 }}>
-        <thead>
-          <tr>
-            <th>Führung</th>
-            <th style={{ textAlign: 'right' }}>Runden</th>
-            <th style={{ textAlign: 'right' }}>Zeit vorn</th>
-            <th style={{ textAlign: 'right' }}>Anteil</th>
-          </tr>
-        </thead>
-        <tbody>
-          {run.athleteIds.filter(id => shares[id]).map(id => (
-            <tr key={id}>
-              <td>
-                <span style={{
-                  display: 'inline-block', width: 9, height: 9, borderRadius: '50%',
-                  background: leadColor(run.athleteIds, id), marginRight: 6,
-                }} />
-                {nameById[id] ?? 'unbekannt'}
-              </td>
-              <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtLaps(shares[id].laps)}</td>
-              <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtMs(Math.round(shares[id].ms))}</td>
-              <td className="text-muted" style={{ textAlign: 'right' }}>
-                {run.laps.length > 0 ? `${Math.round(shares[id].laps / run.laps.length * 100)} %` : '—'}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-// ── Rundentabelle ───────────────────────────────────────────────────────────
-
-function LapTable({ run, nameById }: { run: PursuitRun; nameById: Record<string, string> }) {
-  const hasPlan = run.planAnfahrtSec != null && run.planLapSec != null;
-  const kb = run.kb, rz = run.rz;
-  // Führungsspalte nur, wenn der Lauf eine Mannschaft ist UND mindestens eine
-  // Runde eine Führung trägt — sonst eine Spalte voller Striche.
-  const showLead = run.athleteIds.length > 1 && run.laps.some(l => l.leadId);
-  let actCum = 0;
-
-  if (run.laps.length === 0) {
-    return (
-      <p className="text-sm text-muted" style={{ margin: '0 0 10px' }}>
-        Keine Rundenzeiten hinterlegt — über „Bearbeiten" jederzeit nachtragbar.
-      </p>
-    );
-  }
-
-  return (
-    <div className="table-wrap" style={{ marginBottom: 10 }}>
-      <table className="table" style={{ fontSize: 13 }}>
-        <thead>
-          <tr>
-            <th>Rd</th>
-            <th style={{ textAlign: 'right' }}>Zeit</th>
-            {showLead && <th>Führung</th>}
-            {hasPlan && <th style={{ textAlign: 'right' }}>Δ kum.</th>}
-            <th style={{ textAlign: 'right' }}>Kum.</th>
-            {kb && rz ? <th style={{ textAlign: 'right' }}>TF</th> : null}
-          </tr>
-        </thead>
-        <tbody>
-          {run.laps.map((lap, idx) => {
-            const i = idx + 1;
-            actCum += lap.lapMs;
-            const pc = planCum(run, i);
-            const dlt = pc !== null ? pc - actCum : null;
-            const tf = kb && rz ? cadence(run.trackM, lap.lapMs, kb, rz, run.circMm) : null;
-            const h1 = lap.halfMs ?? null;
-            const h2 = h1 !== null ? lap.lapMs - h1 : null;
-            return (
-              <tr key={i}>
-                <td style={{ verticalAlign: 'top' }}>{i}</td>
-                <td style={{ textAlign: 'right', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
-                  {fmtMs(lap.lapMs)}
-                  {h1 !== null && h2 !== null && (
-                    <div className="text-xs text-muted" style={{ fontWeight: 400 }}>
-                      ½ {fmtMs(h1)} | {fmtMs(h2)}
-                      {kb && rz && (
-                        <> · {cadence(run.trackM / 2, h1, kb, rz, run.circMm)?.toFixed(0)}/
-                          {cadence(run.trackM / 2, h2, kb, rz, run.circMm)?.toFixed(0)}</>
-                      )}
-                    </div>
-                  )}
-                </td>
-                {showLead && (
-                  <td className="text-xs">
-                    {lap.leadId ? (
-                      <>
-                        <span style={{
-                          display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
-                          background: leadColor(run.athleteIds, lap.leadId), marginRight: 5,
-                        }} />
-                        {nameById[lap.leadId] ?? '?'}
-                        {lap.leadId2 && (
-                          <>
-                            {' / '}
-                            <span style={{
-                              display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
-                              background: leadColor(run.athleteIds, lap.leadId2), marginRight: 5,
-                            }} />
-                            {nameById[lap.leadId2] ?? '?'}
-                          </>
-                        )}
-                      </>
-                    ) : <span className="text-muted">—</span>}
-                  </td>
-                )}
-                {hasPlan && (
-                  <td style={{ textAlign: 'right', color: deltaColor(dlt), fontVariantNumeric: 'tabular-nums' }}>
-                    {dlt !== null ? fmtDelta(dlt) : '—'}
-                  </td>
-                )}
-                <td className="text-muted" style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                  {fmtMs(actCum)}
-                </td>
-                {kb && rz ? (
-                  <td className="text-muted" style={{ textAlign: 'right' }}>{tf ? tf.toFixed(0) : '—'}</td>
-                ) : null}
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
 }
 
 // ── Bearbeiten-Formular (auch für Neuanlage von Hand) ───────────────────────
@@ -1157,7 +844,7 @@ export default function PursuitRunsCard({ athleteId, athlete, runs, isAdmin, onC
 
             <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
               <button className="btn btn-ghost btn-sm" onClick={() => toggle(run.id)}>
-                {open ? '▾ weniger' : '▸ Runden & Verlauf'}
+                {open ? '▾ weniger' : '▸ Auswertung'}
               </button>
               {isAdmin && !editing && (
                 <>
@@ -1170,9 +857,7 @@ export default function PursuitRunsCard({ athleteId, athlete, runs, isAdmin, onC
 
             {open && !editing && (
               <div style={{ marginTop: 10 }}>
-                <CourseChart run={run} />
-                <LeadSummary run={run} nameById={nameById} />
-                <LapTable run={run} nameById={nameById} />
+                <PursuitRunAnalysis run={run} nameById={nameById} />
               </div>
             )}
 

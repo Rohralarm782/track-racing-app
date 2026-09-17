@@ -191,9 +191,13 @@ export interface RaceAthleteLink {
 
 export interface FuehrungsplanData {
   riderOrder: string[];
-  riderModes: Record<string, 'back' | 'dropout'>;
-  dropoutRound: number;
   segments: { athleteId: string; laps: number }[];
+  /** Index der Führung, nach der ein Sportler aussteigt (ab 2.0.0). */
+  dropAfter?: number | null;
+  /** Nur noch in Plänen vor 2.0.0 enthalten — wird gelesen, nicht mehr geschrieben. */
+  riderModes?: Record<string, 'back' | 'dropout'>;
+  /** Nur noch in Plänen vor 2.0.0 enthalten — wird gelesen, nicht mehr geschrieben. */
+  dropoutRound?: number;
   /** Gang pro Sportler (Mannschaftsverfolgung) — optional, alte gespeicherte
    *  Pläne haben das Feld noch nicht. */
   riderGears?: Record<string, { kb: number; rz: number } | null>;

@@ -343,7 +343,10 @@ export default function PursuitPage() {
                               return (
                                 <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderBottom: i < fp.segments.length - 1 ? '1px solid var(--c-border)' : 'none' }}>
                                   <div style={{ width: 17, height: 17, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, fontWeight: 700, color: 'white', flexShrink: 0, background: riderColorFor(seg.athleteId) }}>{i + 1}</div>
-                                  <span style={{ fontSize: 12.5, fontWeight: 500, flex: 1 }}>{rider ? athleteShortName(rider) : '–'}</span>
+                                  <span style={{ fontSize: 12.5, fontWeight: 500, flex: 1 }}>
+                                    {rider ? athleteShortName(rider) : '–'}
+                                    {fp.dropAfter === i && <span style={{ color: 'var(--c-danger)', fontWeight: 700, marginLeft: 4 }}>→</span>}
+                                  </span>
                                   <span style={{ fontSize: 10.5, color: 'var(--c-text-muted)' }}>Rd. {fmtLaps(start)}–{fmtLaps(cum)}</span>
                                   <span style={{ fontSize: 12.5, fontWeight: 600, minWidth: 30, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtLaps(seg.laps)}</span>
                                 </div>
@@ -353,7 +356,7 @@ export default function PursuitPage() {
                         </div>
 
                         <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px dashed var(--c-border)' }}>
-                          {planAthletes.filter(a => fp.riderModes[a.id] !== 'back').map(a => {
+                          {planAthletes.filter(a => fp.riderModes?.[a.id] !== 'back').map(a => {
                             const lapSum = fp.segments.filter(s => s.athleteId === a.id).reduce((s, x) => s + x.laps, 0);
                             const segCount = fp.segments.filter(s => s.athleteId === a.id).length;
                             const gear = fp.riderGears?.[a.id] ?? null;

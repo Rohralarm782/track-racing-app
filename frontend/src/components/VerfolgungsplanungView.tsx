@@ -115,19 +115,16 @@ const DEFAULT_CIRC_MM = 2100;
 // ── Führungsplan (Mannschaftsverfolgung) ────────────────────────────────────────
 // Reihenfolge/Modi/Wechsel sind unabhängig von der Team-Mitgliedschaft
 // (selectedAthletes/onAthletesChange bleiben unverändert für Hinzufügen/Entfernen).
-// "normal" wird nie gespeichert (fehlender Eintrag = normal), daher ist der
-// gespeicherte Typ StoredRiderMode enger als das Anzeige-/Auswahl-RiderMode.
-type StoredRiderMode = 'back' | 'dropout';
-type RiderMode = 'normal' | StoredRiderMode;
 interface FuehrungSegment { athleteId: string; laps: number; }
 
-const FUEHRUNG_PULL_LEN = 2;        // Start-Rundenzahl je Wechsel (kein UI-Regler mehr, nur Startwert für Neuberechnung)
+const FUEHRUNG_STD_LEN = 2;         // Standardlänge einer neu angehängten Führung
 const FUEHRUNG_EDGE_CORRECTION = 0.25; // Gewechselt wird in den Kurven, Start/Ziel liegt auf der Geraden dazwischen →
                                        // erste Führung endet erst in der Kurve (+¼), letzte Führung fährt ab Kurve
                                        // noch ¼ Runde ins Ziel (+¼). Die Summe bleibt exakt numRounds.
 const FUEHRUNG_STEP = 0.5;          // Schrittweite der +/− Knöpfe je Wechsel
 const FUEHRUNG_MIN_LAPS = 0.5;      // kürzeste erlaubte Führung
 const FUEHRUNG_MAX_ITER = 200;
+const WECHSEL_VERLUST_SEC = 0.1;    // Zeitverlust je Führungswechsel — fester Wert, kein Eingabefeld
 const FUEHRUNG_SAVE_DEBOUNCE_MS = 600;
 const FUEHRUNG_COLORS = ['#1d4ed8', '#16a34a', '#d97706', '#7c3aed', '#db2777', '#0891b2'];
 
@@ -143,47 +140,62 @@ function fmtLaps(n: number): string {
   return whole > 0 ? `${whole}${fracStr}` : fracStr;
 }
 
-/** Erzeugt die Wechselfolge: rotiert reihum durch alle Sportler außer "bleibt
- * hinten", der als "steigt aus" markierte Sportler fällt nach dropoutRound
- * kumulierten Runden aus der Rotation. Die Rotation füllt nur numRounds − ½
- * Runden; die beiden fehlenden Viertel kommen als Kurven-Versatz auf die erste
- * und die letzte Führung → Gesamtsumme exakt numRounds. */
-function generateFuehrungSegments(
-  riderIds: string[],
-  modes: Record<string, StoredRiderMode>,
-  dropoutRound: number,
-  numRounds: number,
-): FuehrungSegment[] {
-  let active = riderIds.filter(id => modes[id] !== 'back');
-  const dropoutId = riderIds.find(id => modes[id] === 'dropout') ?? null;
-  // Basis = Renndistanz minus die beiden Kurven-Viertel, die unten wieder
-  // aufgeschlagen werden. So bleibt die Summe am Ende exakt numRounds.
-  const base = Math.max(FUEHRUNG_MIN_LAPS, numRounds - 2 * FUEHRUNG_EDGE_CORRECTION);
-  let idx = 0, roundsUsed = 0, dropoutSoFar = 0, iter = 0;
-  const out: FuehrungSegment[] = [];
-  while (roundsUsed < base - 1e-9 && active.length > 0 && iter++ < FUEHRUNG_MAX_ITER) {
-    const athleteId = active[idx % active.length];
-    let len = Math.min(FUEHRUNG_PULL_LEN, base - roundsUsed);
-    if (dropoutId !== null && athleteId === dropoutId) {
-      const remaining = dropoutRound - dropoutSoFar;
-      if (remaining <= 1e-9) { active = active.filter(id => id !== dropoutId); continue; }
-      len = Math.min(len, remaining);
+const isHalfLap = (x: number) => Math.abs(x * 2 - Math.round(x * 2)) < 1e-9;
+const q = (x: number) => Math.round(x * 4) / 4;
+
+/** Verteilt die Führungslängen bis zur Renndistanz. Die erste Führung trägt den
+ *  Kurvenversatz (+¼), angehängt wird in Schritten von FUEHRUNG_STD_LEN, die
+ *  letzte Führung schließt mit dem Rest ab. Eine bestehende Schlussführung ist
+ *  kein ½-Vielfaches; wird hinten weitergebaut, wird sie vorher darauf
+ *  abgerundet, damit der verbleibende Rest wieder eine gültige Schlussführung
+ *  ergibt (¾ + m·½). */
+function fillFuehrung(lapsIn: number[], numRounds: number): number[] {
+  const out = lapsIn.map(q);
+  let guard = 0;
+  while (guard++ < FUEHRUNG_MAX_ITER) {
+    const sum = q(out.reduce((a, b) => a + b, 0));
+    const restLaps = q(numRounds - sum);
+    if (restLaps <= 1e-9) break;
+    const L = out.length - 1;
+    if (L >= 1 && !isHalfLap(out[L])) {
+      const down = Math.max(FUEHRUNG_MIN_LAPS, q(Math.floor(out[L] * 2) / 2));
+      if (down >= out[L] - 1e-9) break;
+      out[L] = down;
+      continue;
     }
-    len = Math.round(len * 2) / 2;
-    if (len <= 0) { idx++; continue; }
-    out.push({ athleteId, laps: len });
-    roundsUsed += len;
-    if (dropoutId !== null && athleteId === dropoutId) {
-      dropoutSoFar += len;
-      if (dropoutSoFar >= dropoutRound - 1e-9) { active = active.filter(id => id !== dropoutId); continue; }
+    if (restLaps < FUEHRUNG_MIN_LAPS - 1e-9) {
+      if (L < 0) break;
+      out[L] = q(out[L] + restLaps);
+      break;
     }
-    idx++;
-  }
-  if (out.length > 0) {
-    out[0].laps += FUEHRUNG_EDGE_CORRECTION;
-    out[out.length - 1].laps += FUEHRUNG_EDGE_CORRECTION;
+    const len = out.length === 0
+      ? Math.min(FUEHRUNG_STD_LEN + FUEHRUNG_EDGE_CORRECTION, numRounds)
+      : (restLaps <= FUEHRUNG_STD_LEN + 0.5 + 1e-9 ? restLaps : FUEHRUNG_STD_LEN);
+    if (len < FUEHRUNG_MIN_LAPS - 1e-9) break;
+    out.push(q(len));
   }
   return out;
+}
+
+/** Besetzt die Führungen aus der festgelegten Reihenfolge. Nach der Führung mit
+ *  Index dropAfter verlässt der Sportler, der dort geführt hat, die Rotation;
+ *  alle weiteren Führungen rücken auf. */
+function assignRiders(laps: number[], riderIds: string[], dropAfter: number | null): FuehrungSegment[] {
+  if (riderIds.length === 0) return laps.map(l => ({ athleteId: '', laps: l }));
+  let pool = [...riderIds];
+  let last = -1;
+  return laps.map((l, i) => {
+    let j = last, guard = 0;
+    do { j = (j + 1) % riderIds.length; } while (!pool.includes(riderIds[j]) && guard++ < FUEHRUNG_MAX_ITER);
+    const athleteId = riderIds[j];
+    last = j;
+    if (dropAfter === i && pool.length > 2) pool = pool.filter(x => x !== athleteId);
+    return { athleteId, laps: l };
+  });
+}
+
+function buildFuehrungSegments(riderIds: string[], numRounds: number, dropAfter: number | null): FuehrungSegment[] {
+  return assignRiders(fillFuehrung([], numRounds), riderIds, dropAfter);
 }
 
 // ── Hilfsfunktionen ────────────────────────────────────────────────────────────
@@ -269,8 +281,7 @@ export default function VerfolgungsplanungView({
   // onFuehrungsplanChange nach oben gemeldet; ohne diese Prop (z.B. /pursuit)
   // bleibt alles rein lokal wie zuvor.
   const [riderOrder, setRiderOrder] = useState<string[]>(() => fuehrungsplan?.riderOrder ?? []);
-  const [riderModes, setRiderModes] = useState<Record<string, StoredRiderMode>>(() => fuehrungsplan?.riderModes ?? {});
-  const [dropoutRound, setDropoutRound] = useState(() => fuehrungsplan?.dropoutRound ?? 3);
+  const [dropAfter, setDropAfter] = useState<number | null>(() => fuehrungsplan?.dropAfter ?? null);
   const [fuehrungSegments, setFuehrungSegments] = useState<FuehrungSegment[]>(() => fuehrungsplan?.segments ?? []);
   const [riderGears, setRiderGears] = useState<Record<string, { kb: number; rz: number } | null>>(() => fuehrungsplan?.riderGears ?? {});
   const [openGearRiderId, setOpenGearRiderId] = useState<string | null>(null);
@@ -298,9 +309,17 @@ export default function VerfolgungsplanungView({
 
   useEffect(() => {
     if (athleteMode !== 'mannschaft') return;
-    setFuehrungSegments(generateFuehrungSegments(riderOrder, riderModes, dropoutRound, numRounds));
+    setFuehrungSegments(prev => {
+      // Reihenfolge oder Ausstieg geändert -> nur neu besetzen, Längen bleiben.
+      // Rundenzahl geändert -> Längen passen nicht mehr, Plan neu aufbauen.
+      const sum = q(prev.reduce((a, b) => a + b.laps, 0));
+      const laps = prev.length > 0 && Math.abs(sum - numRounds) < 1e-9
+        ? prev.map(x => x.laps)
+        : fillFuehrung([], numRounds);
+      return assignRiders(laps, riderOrder, dropAfter);
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [athleteMode, riderOrder.join(','), JSON.stringify(riderModes), dropoutRound, numRounds]);
+  }, [athleteMode, riderOrder.join(','), dropAfter, numRounds]);
 
   // Speichert Führungsplan-Änderungen mit Debounce (überspringt den ersten
   // Durchlauf nach dem Mounten, sonst würde beim Öffnen der Seite sofort ein
@@ -312,11 +331,11 @@ export default function VerfolgungsplanungView({
     if (fuehrungFirstRun.current) { fuehrungFirstRun.current = false; return; }
     if (fuehrungSaveTimer.current) clearTimeout(fuehrungSaveTimer.current);
     fuehrungSaveTimer.current = setTimeout(() => {
-      onFuehrungsplanChange({ riderOrder, riderModes, dropoutRound, segments: fuehrungSegments, riderGears });
+      onFuehrungsplanChange({ riderOrder, segments: fuehrungSegments, riderGears, dropAfter });
     }, FUEHRUNG_SAVE_DEBOUNCE_MS);
     return () => { if (fuehrungSaveTimer.current) clearTimeout(fuehrungSaveTimer.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [riderOrder, riderModes, dropoutRound, fuehrungSegments, riderGears]);
+  }, [riderOrder, dropAfter, fuehrungSegments, riderGears]);
 
   // Gang pro Sportler (nur Mannschaftsverfolgung) — gleiche Formel/Zielbereich
   // (100–130 rpm) wie bei Einzelverfolgung, da das ganze Team im selben Tempo
@@ -350,71 +369,41 @@ export default function VerfolgungsplanungView({
       return next;
     });
   }
-  function setRiderMode(athleteId: string, newMode: RiderMode) {
-    setRiderModes(prev => {
-      const next = { ...prev };
-      if (newMode === 'dropout') {
-        for (const k of Object.keys(next)) if (next[k] === 'dropout') delete next[k];
-      }
-      if (newMode === 'normal') delete next[athleteId]; else next[athleteId] = newMode;
-      return next;
-    });
-  }
-  // Verändert NUR diesen Wechsel — die Nachbarn bleiben unangetastet. Die
-  // Gesamtsumme verschiebt sich dadurch bewusst; die Soll/Ist-Anzeige über der
-  // Liste zeigt, ob man auf die geplante Renndistanz kommt.
+  // Ändert die Länge einer Führung. Die Differenz wandert ans Ende des Plans:
+  // Verkürzen hängt hinten eine neue Führung an, Verlängern nimmt hinten
+  // zurück. Die Summe bleibt dadurch immer genau die Renndistanz.
   function adjustFuehrungSeg(i: number, delta: 1 | -1) {
     setFuehrungSegments(prev => {
-      const segs = prev.map(s => ({ ...s }));
-      const seg = segs[i];
+      const seg = prev[i];
       if (!seg) return prev;
-      const next = Math.round((seg.laps + delta * FUEHRUNG_STEP) * 4) / 4;
+      if (delta > 0 && i === prev.length - 1) return prev;
+      const next = q(seg.laps + delta * FUEHRUNG_STEP);
       if (next < FUEHRUNG_MIN_LAPS - 1e-9) return prev;
-      segs[i] = { ...seg, laps: next };
-      return segs;
+      const laps = prev.map(x => x.laps);
+      laps[i] = next;
+      let guard = 0;
+      while (guard++ < FUEHRUNG_MAX_ITER) {
+        const sum = q(laps.reduce((a, b) => a + b, 0));
+        if (sum <= numRounds + 1e-9) break;
+        const L = laps.length - 1;
+        if (L === i) break;
+        const need = q(numRounds - q(sum - laps[L]));
+        if (need >= FUEHRUNG_MIN_LAPS - 1e-9) laps[L] = need; else laps.pop();
+      }
+      return assignRiders(fillFuehrung(laps, numRounds), riderOrder, dropAfter);
     });
   }
-  // Nächster Sportler in der Rotation nach riderId (überspringt "bleibt hinten") —
-  // Vorschlag für den Sportler eines neu eingefügten Wechsels.
-  function nextRiderAfter(riderId: string): string {
-    const activeIds = ridersOrdered.filter(r => (riderModes[r.id] ?? 'normal') !== 'back').map(r => r.id);
-    if (activeIds.length === 0) return riderId;
-    const idx = activeIds.indexOf(riderId);
-    return activeIds[(idx + 1) % activeIds.length] ?? riderId;
+  // Ausstieg: nur der Sportler, der gerade aus der Führung gegangen ist, und
+  // nur einer im ganzen Plan.
+  function toggleFuehrungDrop(i: number) {
+    setDropAfter(prev => (prev === i ? null : i));
   }
-  // Teilt Wechsel i in zwei auf — die zweite Hälfte bekommt automatisch den
-  // nächsten Sportler aus der Rotation zugewiesen. Start-/Zielversatz bleibt
-  // korrekt an der jeweils äußeren Position (siehe FUEHRUNG_EDGE_CORRECTION).
-  function splitFuehrungSeg(i: number) {
-    setFuehrungSegments(prev => {
-      const segs = prev.map(s => ({ ...s }));
-      const seg = segs[i];
-      if (!seg) return prev;
-      const isFirst = i === 0;
-      const isLast = i === segs.length - 1;
-      const correction = (isFirst ? FUEHRUNG_EDGE_CORRECTION : 0) + (isLast ? FUEHRUNG_EDGE_CORRECTION : 0);
-      const base = seg.laps - correction;
-      if (base < 1) return prev; // braucht mind. ½ + ½ Basis-Runden zum Teilen
-      let half = Math.round((base / 2) * 2) / 2;
-      let rest = base - half;
-      if (half < 0.5) { half = 0.5; rest = base - 0.5; }
-      if (rest < 0.5) { rest = 0.5; half = base - 0.5; }
-      const newRiderId = nextRiderAfter(seg.athleteId);
-      segs[i] = { ...seg, laps: half + (isFirst ? FUEHRUNG_EDGE_CORRECTION : 0) };
-      segs.splice(i + 1, 0, { athleteId: newRiderId, laps: rest + (isLast ? FUEHRUNG_EDGE_CORRECTION : 0) });
-      return segs;
-    });
-  }
-  // Entfernt Wechsel i — die Runden werden NICHT auf die Nachbarn verteilt,
-  // die Gesamtsumme sinkt entsprechend (siehe Soll/Ist-Anzeige).
-  function removeFuehrungSeg(i: number) {
-    setFuehrungSegments(prev => {
-      if (prev.length <= 1) return prev;
-      const segs = prev.map(s => ({ ...s }));
-      segs.splice(i, 1);
-      return segs;
-    });
-  }
+  // Jeder Führungswechsel kostet Zeit (WECHSEL_VERLUST_SEC). Bei vorgegebener
+  // Zielzeit muss die reine Rundenzeit entsprechend schneller sein, bei
+  // vorgegebener Rundenzeit steigt die Zielzeit. Nur Mannschaftsverfolgung.
+  const wechselCount = athleteMode === 'mannschaft' ? Math.max(0, fuehrungSegments.length - 1) : 0;
+  const wechselVerlustSec = wechselCount * WECHSEL_VERLUST_SEC;
+
   const calc = useMemo(() => {
     const anfahrt = parseFloat(anfahrtStr.replace(',', '.'));
     if (isNaN(anfahrt) || anfahrt <= 0) return null;
@@ -422,15 +411,15 @@ export default function VerfolgungsplanungView({
     if (mode === 'zielzeit') {
       const total = parseTime(zielzeitStr);
       if (!total || numRounds < 2) return null;
-      totalSec = total; lapSec = (total - anfahrt) / (numRounds - 1);
+      totalSec = total; lapSec = (total - anfahrt - wechselVerlustSec) / (numRounds - 1);
     } else {
       const lap = parseTime(rdzeitStr);
       if (!lap) return null;
-      lapSec = lap; totalSec = anfahrt + (numRounds - 1) * lap;
+      lapSec = lap; totalSec = anfahrt + (numRounds - 1) * lap + wechselVerlustSec;
     }
     if (lapSec <= 0) return null;
-    return { anfahrt, lapSec, totalSec, distM: trackM * numRounds };
-  }, [mode, anfahrtStr, zielzeitStr, rdzeitStr, numRounds, trackM]);
+    return { anfahrt, lapSec, totalSec, distM: trackM * numRounds, wechselCount, wechselVerlustSec };
+  }, [mode, anfahrtStr, zielzeitStr, rdzeitStr, numRounds, trackM, wechselVerlustSec, wechselCount]);
 
   const gearRows = useMemo(() => {
     if (!calc || selKB.size === 0 || selRZ.size === 0) return [];
@@ -504,7 +493,7 @@ export default function VerfolgungsplanungView({
         athleteMode: athleteMode ?? null,
         athleteIds: saveAthleteIds,
         fuehrungsplan: athleteMode === 'mannschaft'
-          ? { riderOrder, riderModes, dropoutRound, segments: fuehrungSegments, riderGears }
+          ? { riderOrder, segments: fuehrungSegments, riderGears, dropAfter }
           : null,
       });
       setPlanName('');
@@ -537,6 +526,16 @@ export default function VerfolgungsplanungView({
 
     // athleteMode === 'mannschaft'
     const totalSum = fuehrungSegments.reduce((s, x) => s + x.laps, 0);
+    // Ausstieg gilt nur an einer Führung, die es noch gibt und die nicht die
+    // letzte ist — sonst wäre niemand mehr da, der weiterführt.
+    const dropIdx = dropAfter !== null && dropAfter >= 0 && dropAfter < fuehrungSegments.length - 1 ? dropAfter : null;
+    const dropRiderId = dropIdx !== null ? (fuehrungSegments[dropIdx]?.athleteId ?? null) : null;
+    // Planzeit, zu der eine Führung beginnt — inkl. der bis dahin gefahrenen Wechsel.
+    const fuehrungStartSec = (startLap: number, idx: number): number | null => {
+      if (!calc) return null;
+      const roll = startLap <= 1 ? calc.anfahrt * startLap : calc.anfahrt + (startLap - 1) * calc.lapSec;
+      return roll + idx * WECHSEL_VERLUST_SEC;
+    };
     return (
       <div style={{ marginBottom: 18 }}>
         <label className="form-label" style={{ textTransform: 'lowercase' }}>sportler im team</label>
@@ -544,8 +543,8 @@ export default function VerfolgungsplanungView({
         {ridersOrdered.map((a, i) => {
           const segCount = fuehrungSegments.filter(s => s.athleteId === a.id).length;
           const lapSum = fuehrungSegments.filter(s => s.athleteId === a.id).reduce((s, x) => s + x.laps, 0);
-          const rMode: RiderMode = riderModes[a.id] ?? 'normal';
-          const statsText = rMode === 'back' ? 'bleibt hinten' : `${segCount}× · ${fmtLaps(lapSum)} Rd.`;
+          const statsText = segCount === 0 ? 'führt nicht' : `${segCount}× · ${fmtLaps(lapSum)} Rd.`;
+          const isDropRider = dropRiderId === a.id;
           return (
             <div key={a.id} style={{ padding: '9px 0', borderBottom: i < ridersOrdered.length - 1 ? '1px solid var(--c-border)' : 'none' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -561,8 +560,11 @@ export default function VerfolgungsplanungView({
                     >▼</button>
                   </div>
                 )}
-                <span style={{ width: 14, height: 14, borderRadius: '50%', flexShrink: 0, background: rMode === 'back' ? '#d1d5db' : riderColor(a.id) }} />
-                <span style={{ flex: 1, fontSize: 14, fontWeight: 500, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={athleteFullName(a)}>{athleteShortName(a)}</span>
+                <span style={{ width: 14, height: 14, borderRadius: '50%', flexShrink: 0, background: riderColor(a.id) }} />
+                <span style={{ flex: 1, fontSize: 14, fontWeight: 500, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={athleteFullName(a)}>
+                  {athleteShortName(a)}
+                  {isDropRider && <span style={{ color: 'var(--c-danger)', fontSize: 13, fontWeight: 700, marginLeft: 5 }}>→</span>}
+                </span>
                 <span style={{ fontSize: 11, color: 'var(--c-text-muted)', whiteSpace: 'nowrap' }}>{statsText}</span>
                 {isAdmin && (
                   <button
@@ -571,42 +573,6 @@ export default function VerfolgungsplanungView({
                   >×</button>
                 )}
               </div>
-              {isAdmin && (
-                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '8px 0 0 58px' }}>
-                  {([
-                    ['normal', 'normal', 'var(--c-primary)', '#eff6ff'],
-                    ['back', 'bleibt hinten', '#6b7280', '#f3f4f6'],
-                    ['dropout', 'steigt aus', 'var(--c-danger)', '#fee2e2'],
-                  ] as const).map(([m, label, color, bg]) => (
-                    <button
-                      key={m}
-                      onClick={() => setRiderMode(a.id, m)}
-                      style={{
-                        padding: '6px 11px', borderRadius: 14, fontSize: 12, fontWeight: rMode === m ? 600 : 500,
-                        cursor: 'pointer', fontFamily: 'inherit',
-                        border: `1px solid ${rMode === m ? color : 'var(--c-border)'}`,
-                        background: rMode === m ? bg : 'var(--c-white)',
-                        color: rMode === m ? color : 'var(--c-text-muted)',
-                      }}
-                    >{label}</button>
-                  ))}
-                </div>
-              )}
-              {isAdmin && rMode === 'dropout' && (
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0 0 58px' }}>
-                  <span style={{ fontSize: 12.5, color: 'var(--c-text-muted)' }}>
-                    steigt aus nach Runde
-                    <span style={{ display: 'block', fontSize: 11.5, marginTop: 1 }}>danach fahren nur noch die übrigen weiter</span>
-                  </span>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                    <button onClick={() => setDropoutRound(r => Math.max(0.5, r - 0.5))}
-                      style={{ width: 30, height: 30, borderRadius: 7, border: '1px solid var(--c-border)', background: 'var(--c-white)', fontSize: 16, cursor: 'pointer' }}>−</button>
-                    <span style={{ minWidth: 26, textAlign: 'center', fontWeight: 600, fontSize: 13.5, fontVariantNumeric: 'tabular-nums' }}>{fmtLaps(dropoutRound)}</span>
-                    <button onClick={() => setDropoutRound(r => Math.min(numRounds - 0.5, r + 0.5))}
-                      style={{ width: 30, height: 30, borderRadius: 7, border: '1px solid var(--c-border)', background: 'var(--c-white)', fontSize: 16, cursor: 'pointer' }}>+</button>
-                  </div>
-                </div>
-              )}
             </div>
           );
         })}
@@ -649,103 +615,76 @@ export default function VerfolgungsplanungView({
             </div>
 
             {(() => {
-              const soll = numRounds;
-              const diff = Math.round((totalSum - soll) * 4) / 4;
+              const diff = Math.round((totalSum - numRounds) * 4) / 4;
               const ok = Math.abs(diff) < 0.01;
-              const accent = ok ? '#047857' : '#c2410c';
               return (
                 <div style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
-                  marginTop: 10, padding: '9px 11px', borderRadius: 8,
-                  background: ok ? '#ecfdf5' : '#fff7ed',
-                  border: `1px solid ${ok ? '#a7f3d0' : '#fed7aa'}`,
+                  marginTop: 10, padding: '8px 11px', borderRadius: 8,
+                  background: ok ? '#f9fafb' : '#fff7ed',
+                  border: `1px solid ${ok ? 'var(--c-border)' : '#fed7aa'}`,
                 }}>
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 12.5, fontWeight: 600, color: accent }}>
-                      {ok
-                        ? '✓ Führungen ergeben genau die Renndistanz'
-                        : diff > 0
-                          ? `${fmtLaps(diff)} Rd. zu viel`
-                          : `${fmtLaps(-diff)} Rd. zu wenig`}
-                    </div>
-                    <div style={{ fontSize: 11, color: 'var(--c-text-muted)', marginTop: 1 }}>
-                      Soll: {fmtLaps(soll)} Runden · Wechsel in der Kurve (erste/letzte Führung mit ¼-Versatz)
-                    </div>
+                  <div style={{ fontSize: 12.5, fontWeight: 600, color: ok ? 'var(--c-text)' : '#c2410c' }}>
+                    {ok ? `${fmtLaps(totalSum)} Rd.` : `${fmtLaps(totalSum)} statt ${fmtLaps(numRounds)} Rd.`}
                   </div>
-                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                    <div style={{ fontSize: 17, fontWeight: 700, color: accent, fontVariantNumeric: 'tabular-nums', lineHeight: 1.1 }}>
-                      {fmtLaps(totalSum)}
-                    </div>
-                    <div style={{ fontSize: 10.5, color: 'var(--c-text-muted)' }}>Summe Rd.</div>
+                  <div style={{ fontSize: 12, color: 'var(--c-text-muted)', fontVariantNumeric: 'tabular-nums' }}>
+                    {wechselCount} Wechsel · {wechselVerlustSec.toFixed(2)}s
                   </div>
                 </div>
               );
             })()}
 
-            <label className="form-label" style={{ textTransform: 'lowercase', marginTop: 14 }}>
-              wechsel im detail{isAdmin ? ' — jede führung einzeln (½-runden-schritte)' : ''}
-            </label>
+            <label className="form-label" style={{ textTransform: 'lowercase', marginTop: 14 }}>führungen</label>
             {(() => {
               let cum = 0;
               return fuehrungSegments.map((seg, i) => {
                 const rider = ridersOrdered.find(a => a.id === seg.athleteId);
                 const startR = cum;
                 cum += seg.laps;
-                const isEdge = i === 0 || i === fuehrungSegments.length - 1;
-                const correction = (i === 0 ? FUEHRUNG_EDGE_CORRECTION : 0) + (i === fuehrungSegments.length - 1 ? FUEHRUNG_EDGE_CORRECTION : 0);
-                const canSplit = (seg.laps - correction) >= 1;
-                const canRemove = fuehrungSegments.length > 1;
+                const isLast = i === fuehrungSegments.length - 1;
+                const startSec = fuehrungStartSec(startR, i);
+                const showFlag = isAdmin && !isLast && (dropIdx === null || dropIdx === i);
                 return (
-                  <div key={i} style={{ padding: '10px 0', borderBottom: i < fuehrungSegments.length - 1 ? '1px solid var(--c-border)' : 'none' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div key={i} style={{ padding: '9px 0', borderBottom: isLast ? 'none' : '1px solid var(--c-border)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
                       <div style={{
-                        width: 24, height: 24, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontSize: 11, fontWeight: 700, color: 'white', flexShrink: 0, background: riderColor(seg.athleteId),
+                        width: 23, height: 23, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: 10.5, fontWeight: 700, color: 'white', flexShrink: 0, background: riderColor(seg.athleteId),
                       }}>{i + 1}</div>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 13.5, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={rider ? athleteFullName(rider) : undefined}>
                           {rider ? athleteShortName(rider) : '–'}
-                          {isEdge && (
-                            <span style={{ display: 'inline-block', background: '#fef3c7', color: '#92400e', borderRadius: 5, padding: '1px 5px', fontSize: 10, fontWeight: 600, marginLeft: 5 }}>
-                              {i === 0 ? 'Start' : 'Ziel'}
-                            </span>
-                          )}
+                          {dropIdx === i && <span style={{ color: 'var(--c-danger)', fontSize: 13, fontWeight: 700, marginLeft: 5 }}>→</span>}
                         </div>
-                        <div style={{ fontSize: 11, color: 'var(--c-text-muted)', marginTop: 1 }}>Runde {fmtLaps(startR)} – {fmtLaps(cum)}</div>
+                        <div style={{ fontSize: 11, color: 'var(--c-text-muted)', marginTop: 1, fontVariantNumeric: 'tabular-nums' }}>
+                          {fmtLaps(startR)} – {fmtLaps(cum)}{startSec !== null ? ` · ${fmtTime(startSec)}` : ''}
+                        </div>
                       </div>
+                      {showFlag && (
+                        <button
+                          onClick={() => toggleFuehrungDrop(i)}
+                          title="steigt hier aus"
+                          style={{
+                            width: 27, height: 27, borderRadius: 7, flexShrink: 0, cursor: 'pointer', padding: 0,
+                            fontSize: 14, lineHeight: 1, fontFamily: 'inherit',
+                            border: `1px solid ${dropIdx === i ? 'var(--c-danger)' : 'var(--c-border)'}`,
+                            background: dropIdx === i ? '#fee2e2' : 'var(--c-white)',
+                            color: dropIdx === i ? 'var(--c-danger)' : '#c7cbd1',
+                          }}
+                        >→</button>
+                      )}
                       {isAdmin ? (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                          <button onClick={() => adjustFuehrungSeg(i, -1)}
-                            style={{ width: 30, height: 30, borderRadius: 7, border: '1px solid var(--c-border)', background: 'var(--c-white)', fontSize: 16, cursor: 'pointer' }}>−</button>
-                          <span style={{ minWidth: 24, textAlign: 'center', fontWeight: 600, fontSize: 13.5, fontVariantNumeric: 'tabular-nums' }}>{fmtLaps(seg.laps)}</span>
-                          <button onClick={() => adjustFuehrungSeg(i, 1)}
-                            style={{ width: 30, height: 30, borderRadius: 7, border: '1px solid var(--c-border)', background: 'var(--c-white)', fontSize: 16, cursor: 'pointer' }}>+</button>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                          <button onClick={() => adjustFuehrungSeg(i, -1)} disabled={seg.laps - FUEHRUNG_STEP < FUEHRUNG_MIN_LAPS - 1e-9}
+                            style={{ width: 28, height: 28, borderRadius: 7, border: '1px solid var(--c-border)', background: 'var(--c-white)', fontSize: 15, cursor: 'pointer', opacity: seg.laps - FUEHRUNG_STEP < FUEHRUNG_MIN_LAPS - 1e-9 ? 0.3 : 1 }}>−</button>
+                          <span style={{ minWidth: 25, textAlign: 'center', fontWeight: 600, fontSize: 13.5, fontVariantNumeric: 'tabular-nums' }}>{fmtLaps(seg.laps)}</span>
+                          <button onClick={() => adjustFuehrungSeg(i, 1)} disabled={isLast}
+                            style={{ width: 28, height: 28, borderRadius: 7, border: '1px solid var(--c-border)', background: 'var(--c-white)', fontSize: 15, cursor: 'pointer', opacity: isLast ? 0.3 : 1 }}>+</button>
                         </div>
                       ) : (
                         <span style={{ fontWeight: 600, fontSize: 13.5, fontVariantNumeric: 'tabular-nums' }}>{fmtLaps(seg.laps)}</span>
                       )}
                     </div>
-                    {isAdmin && (
-                      <div style={{ display: 'flex', gap: 6, padding: '6px 0 0 34px' }}>
-                        <button onClick={() => splitFuehrungSeg(i)} disabled={!canSplit}
-                          style={{
-                            padding: '4px 10px', borderRadius: 12, fontSize: 11.5, fontWeight: 500, fontFamily: 'inherit',
-                            border: '1px solid var(--c-border)', background: 'var(--c-white)', color: canSplit ? 'var(--c-text-muted)' : '#d1d5db',
-                            cursor: canSplit ? 'pointer' : 'not-allowed',
-                          }}>
-                          ✂ Wechsel teilen
-                        </button>
-                        {canRemove && (
-                          <button onClick={() => removeFuehrungSeg(i)}
-                            style={{
-                              padding: '4px 10px', borderRadius: 12, fontSize: 11.5, fontWeight: 500, fontFamily: 'inherit',
-                              border: '1px solid var(--c-border)', background: 'var(--c-white)', color: 'var(--c-danger)', cursor: 'pointer',
-                            }}>
-                            ✕ entfernen
-                          </button>
-                        )}
-                      </div>
-                    )}
                   </div>
                 );
               });
@@ -753,7 +692,7 @@ export default function VerfolgungsplanungView({
 
             <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px dashed var(--c-border)' }}>
               <label className="form-label" style={{ textTransform: 'lowercase' }}>sportler — führung &amp; gang</label>
-              {ridersOrdered.filter(a => riderModes[a.id] !== 'back').map(a => {
+              {ridersOrdered.map(a => {
                 const lapSum = fuehrungSegments.filter(s => s.athleteId === a.id).reduce((s, x) => s + x.laps, 0);
                 const segCount = fuehrungSegments.filter(s => s.athleteId === a.id).length;
                 const gear = riderGears[a.id] ?? null;
