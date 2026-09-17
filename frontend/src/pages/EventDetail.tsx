@@ -49,7 +49,7 @@ function formatDateShort(iso?: string | null): string {
 
 // Bahnlänge der Veranstaltung — steuert die Zeitschätzung der Massenstart-
 // Rennen im Zeitplan (Einstellungswerte gelten für 250 m und werden umgerechnet).
-const EVENT_TRACK_OPTIONS = [200, 250, 285.714, 333.33, 400];
+const EVENT_TRACK_OPTIONS = [200, 250, 333.33];
 
 function trackLabel(m: number): string {
   return `${m.toLocaleString('de-DE', { maximumFractionDigits: 2 })} m`;

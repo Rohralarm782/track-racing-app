@@ -106,7 +106,6 @@ const TRACK_OPTIONS = [
   { label: '200m', value: 200 },
   { label: '250m', value: 250 },
   { label: '333m', value: 333.33 },
-  { label: '400m', value: 400 },
 ];
 // 4–24: deckt 200 m (3000 m = 15, 4000 m = 20) und 333⅓ m (3000 m = 9) mit ab.
 const ROUND_OPTIONS = Array.from({ length: 21 }, (_, i) => i + 4);

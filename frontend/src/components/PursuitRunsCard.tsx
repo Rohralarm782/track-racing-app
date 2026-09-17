@@ -57,9 +57,7 @@ interface Props {
 const TRACK_OPTIONS = [
   { v: 200, l: '200 m' },
   { v: 250, l: '250 m' },
-  { v: 285.714, l: '285,71 m' },
   { v: 333.33, l: '333,33 m' },
-  { v: 400, l: '400 m' },
 ];
 
 const SURFACE_LABEL: Record<PursuitTrackSurface, string> = {

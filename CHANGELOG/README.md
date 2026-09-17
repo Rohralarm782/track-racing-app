@@ -19,6 +19,7 @@ Beim Erhöhen der Version immer beides ändern:
 
 | Version | Datum | Inhalt |
 |---|---|---|
+| [2.1.1](2.1.1.md) | 17.09.2026 | Bahnlängen-Auswahl überall auf 200 / 250 / 333,33 m reduziert (285,71 m und 400 m entfernt) |
 | [2.1.0](2.1.0.md) | 17.09.2026 | Bahnlänge je Veranstaltung: Zeitschätzung der Massenstart-Rennen und Rückfall-Rundenzahlen werden auf 200/333 m umgerechnet, Kalibrierung bleibt bahnneutral; Verfolgungsplanung mit 200 m und 4–24 Runden. **Schema: `prisma db push`** |
 | [2.0.1](2.0.1.md) | 17.09.2026 | „Ablaufplan“ im Dateinamen wird als Zeitplan erkannt und automatisch importiert (bisher nur „Zeitplan“) |
 | [2.0.0](2.0.0.md) | 15.09.2026 | Führungsplan der Mannschaftsverfolgung neu: Besetzung folgt der Reihenfolge, Führungen summieren immer auf die Renndistanz, Ausstieg an der Führung markiert, Zeitverlust je Wechsel in der Zielzeit. Auswertung eines gefahrenen Laufes: halbe und ganze Runden als Diagramm und Tabelle, Mittelwerte mit und ohne Start, Kilometer-Teilzeiten; Führungsbilanz und Plandiagramm in einer Ansicht |
