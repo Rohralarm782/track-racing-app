@@ -3,6 +3,9 @@
 //  - Sportlerauswahl/Führungsplan werden jetzt mitgespeichert (athleteMode/
 //    athleteIds/fuehrungsplan, siehe schema.prisma)
 //  - neue Route PATCH /:id zum Bearbeiten eines bestehenden Plans (Admin)
+//  - 2.2.0: neue Route PATCH /:id/completed — markiert einen Plan als gefahren
+//    bzw. nimmt das zurück. Bewusst NICHT Teil von buildPlanData, damit
+//    „Bearbeiten“ das Merkmal nicht versehentlich zurücksetzt.
 import { Router } from 'express';
 import prisma from '../prisma';
 import { requireAdmin } from '../middleware/auth';
@@ -60,6 +63,22 @@ router.patch('/:id', requireAdmin, async (req, res) => {
     const plan = await prisma.pursuitPlan.update({
       where: { id: req.params.id },
       data: buildPlanData(req.body),
+    });
+    res.json(plan);
+  } catch (e: any) {
+    if (e.code === 'P2025') res.status(404).json({ error: 'Nicht gefunden' });
+    else res.status(500).json({ error: String(e) });
+  }
+});
+
+// ── PATCH /api/pursuit-plans/:id/completed — gefahren markieren, nur Admin ───
+// Body: { completed: boolean }. Admin wie beim Speichern eines Laufs, der diesen
+// Aufruf auslöst.
+router.patch('/:id/completed', requireAdmin, async (req, res) => {
+  try {
+    const plan = await prisma.pursuitPlan.update({
+      where: { id: req.params.id },
+      data: { completedAt: req.body?.completed === false ? null : new Date() },
     });
     res.json(plan);
   } catch (e: any) {

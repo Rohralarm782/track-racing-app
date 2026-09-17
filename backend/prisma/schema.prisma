@@ -253,6 +253,10 @@ model PursuitPlan {
   athleteMode    String?      // "einzel" | "mannschaft", falls Sportler zugeordnet wurden
   athleteIds     String[]     @default([]) // Athlete-IDs (Reihenfolge irrelevant, siehe fuehrungsplan.riderOrder)
   fuehrungsplan  Json?        // nur bei "mannschaft": Reihenfolge/Modi/Wechsel (wie bei Race)
+  // Gesetzt, sobald mit diesem Plan im Renntimer ein Lauf gespeichert wurde.
+  // Gefahrene Pläne stehen auf /pursuit nur noch im eingeklappten Bereich.
+  // Kein Bezug zu PursuitRun: Löschen des Plans lässt die Läufe unberührt.
+  completedAt    DateTime?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 }

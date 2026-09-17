@@ -9,6 +9,11 @@
 //    Speicher-Kontext (raceId = null, der Lauf hängt allein am Sportler).
 //  - fmtSec/diffStyle/TOLERANCE/DISPLAY_SEC/TEvent liegen jetzt in
 //    components/pursuitFormat.ts; die lokalen Duplikate sind weg.
+//
+// Änderungen in 2.2.0:
+//  - Wird im Timer ein Lauf zu einem Plan gespeichert, gilt der Plan als
+//    gefahren (completedAt). Die Planliste zeigt nur noch offene Pläne;
+//    gefahrene stehen kompakt im eingeklappten Bereich darunter.
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, athletesApi, athleteShortName, type Athlete, type FuehrungsplanData } from '../api/client';
@@ -25,6 +30,7 @@ interface SavedPlan {
   athleteMode: 'einzel' | 'mannschaft' | null;
   athleteIds: string[];
   fuehrungsplan: FuehrungsplanData | null;
+  completedAt: string | null;
   createdAt: string;
 }
 
@@ -113,6 +119,24 @@ export default function PursuitPage() {
     if (editingPlan?.id === id) cancelEdit();
   }
 
+  // ── Gefahrene Pläne ───────────────────────────────────────────────────────
+  const [showCompleted, setShowCompleted] = useState(false);
+  const openPlans = plans.filter(p => !p.completedAt);
+  const completedPlans = plans
+    .filter(p => !!p.completedAt)
+    .sort((a, b) => (b.completedAt! < a.completedAt! ? -1 : b.completedAt! > a.completedAt! ? 1 : 0));
+
+  /** Schlägt das Markieren fehl, bleibt der Plan einfach sichtbar — der Lauf
+   *  selbst ist zu diesem Zeitpunkt schon gespeichert. */
+  async function setPlanCompleted(id: string, completed: boolean) {
+    try {
+      const p = await api.patch<SavedPlan>(`/api/pursuit-plans/${id}/completed`, { completed });
+      setPlans(prev => prev.map(x => x.id === p.id ? p : x));
+    } catch (e: any) {
+      if (!completed) setError(e.message);
+    }
+  }
+
   function startEdit(plan: SavedPlan) {
     setEditingPlan(plan);
     setPursuitMode(plan.athleteMode ?? 'einzel');
@@ -194,6 +218,7 @@ export default function PursuitPage() {
             Object.entries(riderGears).filter(([, g]) => !!g) as [string, { kb: number; rz: number }][]
           )
         : null,
+      onSaved: () => { void setPlanCompleted(plan.id, true); },
     };
   }
 
@@ -247,9 +272,9 @@ export default function PursuitPage() {
       {/* Gespeicherte Pläne */}
       {loadingP ? (
         <div className="loading"><span className="spinner" /> Lädt…</div>
-      ) : plans.length > 0 ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 24 }}>
-          {plans.map(plan => {
+      ) : openPlans.length > 0 ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: completedPlans.length > 0 ? 12 : 24 }}>
+          {openPlans.map(plan => {
             const hasGear = plan.selectedKb !== null && plan.selectedRz !== null;
             const ro  = hasGear ? rollout(plan.selectedKb!, plan.selectedRz!) : null;
             const cad = hasGear ? cadenceFromPlan(plan) : null;
@@ -383,9 +408,49 @@ export default function PursuitPage() {
             );
           })}
         </div>
-      ) : !loadingP && (
+      ) : completedPlans.length === 0 && (
         <div className="alert alert-info mb-4" style={{ fontSize: 13 }}>
           Noch kein Plan gespeichert – Rechner unten verwenden und Plan speichern.
+        </div>
+      )}
+
+      {/* Gefahrene Pläne — eingeklappt, kompakt */}
+      {!loadingP && completedPlans.length > 0 && (
+        <div style={{ marginBottom: 24 }}>
+          <button className="btn btn-ghost btn-sm" style={{ padding: '4px 2px', color: 'var(--c-text-muted)' }}
+            onClick={() => setShowCompleted(v => !v)}>
+            {showCompleted ? '▾' : '▸'} Gefahrene Pläne ({completedPlans.length})
+          </button>
+          {showCompleted && (
+            <div className="card" style={{ padding: '4px 14px', marginTop: 6 }}>
+              {completedPlans.map((plan, i) => (
+                <div key={plan.id} style={{
+                  display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '8px 0',
+                  borderBottom: i < completedPlans.length - 1 ? '1px solid var(--c-border)' : 'none',
+                }}>
+                  <div style={{ flex: 1, minWidth: 160 }}>
+                    <div style={{ fontWeight: 600, fontSize: 13.5 }}>{planName(plan)}</div>
+                    <div className="text-xs text-muted">
+                      {plan.numRounds} Runden · {fmtTime(plan.totalSec)} · gefahren {formatDate(plan.completedAt!)}
+                    </div>
+                  </div>
+                  <button className="btn btn-secondary btn-sm" onClick={() => startWith(plan)}>
+                    ⏱ Timer
+                  </button>
+                  {isAdmin && (
+                    <>
+                      <button className="btn btn-secondary btn-sm" onClick={() => setPlanCompleted(plan.id, false)}>
+                        ↩ Wieder einblenden
+                      </button>
+                      <button className="btn btn-ghost btn-sm" style={{ color: 'var(--c-danger)' }} onClick={() => deletePlan(plan.id)}>
+                        🗑
+                      </button>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
