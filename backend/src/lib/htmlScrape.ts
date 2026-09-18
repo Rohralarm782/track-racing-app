@@ -25,6 +25,16 @@ import type { RemoteFile } from './webdav';
  * jeder PDF-Link dem Block zugeordnet, in dem er steht; die Quelle kann dann auf
  * einen oder mehrere Blöcke eingeschränkt werden (CommuniqueSource.htmlSections).
  *
+ * ── Verzeichnisindex ────────────────────────────────────────────────────────
+ * Manche Ausrichter legen die PDFs schlicht in einen offenen Ordner
+ * (rsvo.de/live-timing-folder/dm2026/). Der Server liefert dann eine erzeugte
+ * Indexseite, auf der KEIN einziges PDF steht, sondern nur die Unterordner
+ * ("Dokumente/", "Ergebnisse/", "Laufansetzungen/"). Ohne Abstieg findet der
+ * Poller dort null Dateien — und zwar ohne Fehlermeldung, also genau die Falle,
+ * die HTML-Quellen schon zweimal gestellt haben. Deshalb steigt fetchPageTree()
+ * in die Unterordner ab; der Ordnername wird dabei zum Abschnitt, sodass sich
+ * "Dokumente"/"Ergebnisse"/"Laufansetzungen" einzeln auswählen lassen.
+ *
  * Bewusst über die Überschriften und NICHT über den URL-Pfad: die Ordner sind
  * pro Dokumenttyp verschieden (/2026/Zeitplan/, /2026/Startliste/Sichtung April/,
  * …) und für eine noch nicht gelaufene Veranstaltung existieren sie schlicht
@@ -59,6 +69,42 @@ const BROWSER_HEADERS: Record<string, string> = {
   'Accept-Language': 'de-DE,de;q=0.9,en;q=0.8',
 };
 
+// ─── Verzeichnisindex (Apache/nginx autoindex) ───────────────────────────────
+// Erkennung bewusst eng: nur Seiten, deren Titel bzw. erste Überschrift wörtlich
+// "Index of …" lautet — die Ausgabe, die Apache, nginx und lighttpd für einen
+// offenen Ordner erzeugen. Eine gewöhnliche Vereinsseite erfüllt das nie, also
+// wird aus dem Poller auch nie ein Crawler.
+const DIR_INDEX_TITLE_RE = /<title[^>]*>\s*Index of\s[^<]*<\/title>/i;
+const DIR_INDEX_HEADING_RE = /<h1[^>]*>\s*Index of\s[^<]*<\/h1\s*>/i;
+
+// href="…/" — Links auf Unterordner (mit Schrägstrich am Ende).
+const DIR_LINK_RE = /href\s*=\s*["']([^"']+?\/)["']/gi;
+
+// Harte Grenzen für den Abstieg. Zwei Ebenen decken die Praxis ab
+// (Veranstaltungsordner → Dokumente/Ergebnisse/Laufansetzungen → ggf. Tag 1/2);
+// die Seitenzahl ist die Reißleine, falls ein Server doch etwas anderes ausliefert.
+const MAX_DIR_DEPTH = 2;
+const MAX_DIR_PAGES = 30;
+
+/** True, wenn die Seite ein vom Server erzeugter Verzeichnisindex ist. */
+export function isDirectoryIndex(html: string): boolean {
+  return DIR_INDEX_TITLE_RE.test(html) || DIR_INDEX_HEADING_RE.test(html);
+}
+
+/**
+ * decodeURIComponent, das bei kaputten Prozent-Folgen nicht wirft.
+ *
+ * Die Indexseiten mancher Server sind Latin-1 kodiert; ein Dateiname mit Umlaut
+ * kommt dann als Byte-Folge an, die keine gültige UTF-8-Prozentkodierung ist.
+ * Ohne diese Absicherung landet ein solcher Link im Fehlerzweig und die Datei
+ * verschwindet lautlos aus der Quelle — ausgerechnet Ergebnis-PDFs
+ * ("…Männer.pdf") wären betroffen. Im Zweifel bleibt die Rohform stehen: ein
+ * unschön geschriebener Dateiname ist allemal besser als ein fehlender.
+ */
+function decodeSafe(s: string): string {
+  try { return decodeURIComponent(s); } catch { return s; }
+}
+
 async function fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Response> {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
@@ -73,7 +119,7 @@ async function fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Re
 function fileNameFromUrl(url: string): string {
   try {
     const pathname = new URL(url).pathname;
-    return decodeURIComponent(pathname.split('/').filter(Boolean).pop() ?? '');
+    return decodeSafe(pathname.split('/').filter(Boolean).pop() ?? '');
   } catch {
     return '';
   }
@@ -182,7 +228,11 @@ function hasVisibleTextBetween(html: string, from: number, to: number): boolean 
  * Gibt es keine solche Ebene (typische Ein-Veranstaltungs-Seite), bekommen alle
  * Links das leere Label: kein Abschnitt, kein Filter, Verhalten wie bisher.
  */
-function collectLinks(html: string, pageUrl: string): { links: ScrapedLink[]; blocks: string[] } {
+function collectLinks(
+  html: string,
+  pageUrl: string,
+  forcedLabel: string | null = null,
+): { links: ScrapedLink[]; blocks: string[] } {
   const headings = [...html.matchAll(HEADING_RE)].map(m => ({
     kind: 'heading' as const,
     index: m.index ?? 0,
@@ -250,17 +300,155 @@ function collectLinks(html: string, pageUrl: string): { links: ScrapedLink[]; bl
     const fileName = fileNameFromUrl(abs);
     if (!fileName) continue;
 
-    out.push({ url: abs, fileName, sectionLabel: splitLevel === null ? '' : label });
+    // Bei einem Verzeichnisindex gibt der ORDNER den Abschnitt vor; die
+    // Überschriften-Aufteilung greift dort nicht (jede Indexseite hat genau
+    // eine Überschrift, nämlich ihren eigenen Pfad).
+    out.push({
+      url: abs,
+      fileName,
+      sectionLabel: forcedLabel !== null ? forcedLabel : (splitLevel === null ? '' : label),
+    });
   }
 
+  if (forcedLabel !== null) {
+    return { links: out, blocks: forcedLabel ? [forcedLabel] : [] };
+  }
   return { links: out, blocks: splitLevel === null ? [] : blocks };
+}
+
+/**
+ * Zeichensatz einer Seite laut Content-Type bzw. <meta charset>. res.text()
+ * dekodiert IMMER als UTF-8; eine Latin-1-Seite kommt dabei mit zerstörten
+ * Umlauten an ("Öschelbronn"). Das trifft ausgerechnet die offenen Ordner:
+ * rsvo.de liefert seine Indexseiten als ISO-8859-1 aus. Betroffen wären
+ * Abschnitts-Namen und Dateinamen mit Umlaut.
+ */
+function charsetOf(header: string | null, head: string): string {
+  const fromHeader = header?.match(/charset\s*=\s*"?([\w-]+)/i)?.[1];
+  const fromMeta = head.match(/<meta[^>]+charset\s*=\s*"?([\w-]+)/i)?.[1];
+  const raw = (fromHeader ?? fromMeta ?? 'utf-8').toLowerCase();
+  // Latin-1 wird im Web praktisch immer als Windows-1252 ausgeliefert
+  // (Anführungszeichen, Gedankenstrich); der Decoder ist eine Obermenge.
+  if (raw === 'iso-8859-1' || raw === 'latin1' || raw === 'iso8859-1') return 'windows-1252';
+  return raw;
 }
 
 /** Lädt eine Seite und gibt ihren HTML-Text zurück (wirft bei Fehlern). */
 async function fetchPage(pageUrl: string): Promise<string> {
   const res = await fetchWithTimeout(pageUrl, { headers: BROWSER_HEADERS });
   if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`.trim());
-  return res.text();
+  const bytes = Buffer.from(await res.arrayBuffer());
+  // Für <meta charset> genügt der Kopf der Seite; als ASCII gelesen, weil dort
+  // definitionsgemäß nur ASCII steht.
+  const charset = charsetOf(res.headers.get('content-type'), bytes.subarray(0, 2048).toString('latin1'));
+  try {
+    return new TextDecoder(charset).decode(bytes);
+  } catch {
+    // Unbekannter Zeichensatz — wie bisher als UTF-8 lesen.
+    return bytes.toString('utf-8');
+  }
+}
+
+/** Eine tatsächlich gelesene Seite: die eingetragene selbst oder ein Unterordner. */
+interface ResolvedPage {
+  url: string;
+  html: string;
+  /** Ordnername als Abschnitt (Verzeichnisindex) bzw. null bei gewöhnlichen Seiten. */
+  dirLabel: string | null;
+}
+
+/** Pfad-Präfix der eingetragenen Adresse, immer mit Schrägstrich am Ende. */
+function basePathOf(u: URL): string {
+  return u.pathname.endsWith('/') ? u.pathname : u.pathname.replace(/[^/]*$/, '');
+}
+
+/**
+ * Abschnitts-Label eines Ordners: sein Pfad relativ zur eingetragenen Adresse
+ * ("Dokumente", "Ergebnisse/Tag 1"). Für die eingetragene Adresse selbst ihr
+ * eigener Ordnername ("dm2026") — sonst wären dort direkt liegende Dateien bei
+ * gesetztem Abschnitts-Filter unsichtbar, ohne dass man sie auswählen könnte.
+ */
+function dirLabelFor(pathname: string, basePath: string): string {
+  const rel = pathname.startsWith(basePath) ? pathname.slice(basePath.length) : '';
+  const trimmed = decodeSafe(rel).replace(/\/+$/, '');
+  if (trimmed) return trimmed;
+  return decodeSafe(basePath).split('/').filter(Boolean).pop() ?? '';
+}
+
+/** Unterordner-Links einer Indexseite (relative und http(s)-Adressen). */
+function subdirHrefs(html: string): string[] {
+  return [...html.matchAll(DIR_LINK_RE)]
+    .map(m => m[1])
+    .filter(href => !/^[a-z][a-z0-9+.-]*:/i.test(href) || /^https?:/i.test(href));
+}
+
+/**
+ * Löst eine eingetragene Adresse in die Seiten auf, die tatsächlich gelesen
+ * werden. Gewöhnliche Seite: sie selbst, unverändertes Verhalten. Verzeichnis-
+ * index: zusätzlich seine Unterordner.
+ *
+ * Grenzen des Abstiegs (alle vier gleichzeitig):
+ *   • nur von einer als Verzeichnisindex erkannten Seite aus,
+ *   • nur derselbe Host,
+ *   • nur Pfade UNTERHALB der eingetragenen Adresse — damit fällt der Link
+ *     "Parent Directory" von selbst heraus, und das Archiv oberhalb (auf
+ *     rsvo.de eine Seite mit Hunderten Links) bleibt unangetastet,
+ *   • höchstens MAX_DIR_DEPTH Ebenen und MAX_DIR_PAGES Seiten.
+ *
+ * Ein Fehler der EINGETRAGENEN Seite wird geworfen (der Aufrufer behandelt ihn
+ * wie bisher); Fehler einzelner Unterordner werden gesammelt zurückgegeben und
+ * führen dort zu complete=false.
+ */
+async function fetchPageTree(pageUrl: string): Promise<{ pages: ResolvedPage[]; errors: string[] }> {
+  const html = await fetchPage(pageUrl);
+  if (!isDirectoryIndex(html)) return { pages: [{ url: pageUrl, html, dirLabel: null }], errors: [] };
+
+  let base: URL;
+  try {
+    base = new URL(pageUrl);
+  } catch {
+    return { pages: [{ url: pageUrl, html, dirLabel: null }], errors: [] };
+  }
+
+  const basePath = basePathOf(base);
+  const pages: ResolvedPage[] = [{ url: pageUrl, html, dirLabel: dirLabelFor(base.pathname, basePath) }];
+  const errors: string[] = [];
+  const visited = new Set<string>([base.origin + base.pathname]);
+  const queue: Array<{ url: URL; depth: number; html: string }> = [{ url: base, depth: 0, html }];
+
+  while (queue.length > 0 && pages.length < MAX_DIR_PAGES) {
+    const current = queue.shift()!;
+    if (current.depth >= MAX_DIR_DEPTH) continue;
+
+    for (const href of subdirHrefs(current.html)) {
+      if (pages.length >= MAX_DIR_PAGES) break;
+      let child: URL;
+      try {
+        child = new URL(href, current.url);
+      } catch {
+        continue;
+      }
+      if (child.origin !== base.origin) continue;
+      if (!child.pathname.startsWith(basePath)) continue;
+      // Nur nach UNTEN: "Parent Directory" und Selbstverweise sind kürzer oder gleich lang.
+      if (child.pathname.length <= current.url.pathname.length) continue;
+      const key = child.origin + child.pathname;
+      if (visited.has(key)) continue;
+      visited.add(key);
+
+      let childHtml: string;
+      try {
+        childHtml = await fetchPage(child.toString());
+      } catch (err) {
+        errors.push(`${child.pathname}: ${err instanceof Error ? err.message : String(err)}`);
+        continue;
+      }
+      pages.push({ url: child.toString(), html: childHtml, dirLabel: dirLabelFor(child.pathname, basePath) });
+      if (isDirectoryIndex(childHtml)) queue.push({ url: child, depth: current.depth + 1, html: childHtml });
+    }
+  }
+
+  return { pages, errors };
 }
 
 /**
@@ -273,28 +461,35 @@ export async function scanHtmlSections(pageUrls: string[]): Promise<HtmlSectionS
   const seenUrls = new Set<string>();
 
   for (const pageUrl of pageUrls) {
-    let html: string;
+    let tree: { pages: ResolvedPage[]; errors: string[] };
     try {
-      html = await fetchPage(pageUrl);
+      tree = await fetchPageTree(pageUrl);
     } catch (err) {
       pages.push({ url: pageUrl, sections: [], error: err instanceof Error ? err.message : String(err) });
       continue;
     }
 
-    const { links, blocks } = collectLinks(html, pageUrl);
-
     const counts = new Map<string, number>();
-    // Reihenfolge des Auftretens auf der Seite beibehalten — so steht die
-    // Auswahlliste später genauso da wie die Seite selbst.
-    for (const label of blocks) counts.set(label, 0);
-    for (const link of links) {
-      if (seenUrls.has(link.url)) continue; // seitenübergreifend deduplizieren
-      seenUrls.add(link.url);
-      if (!link.sectionLabel) continue;
-      counts.set(link.sectionLabel, (counts.get(link.sectionLabel) ?? 0) + 1);
+    for (const page of tree.pages) {
+      const { links, blocks } = collectLinks(page.html, page.url, page.dirLabel);
+      // Reihenfolge des Auftretens beibehalten — so steht die Auswahlliste
+      // später genauso da wie die Seite bzw. der Ordner selbst. Vorhandene
+      // Zählstände nicht zurücksetzen: bei einem Verzeichnisindex liefern
+      // mehrere Seiten in denselben Zähler.
+      for (const label of blocks) if (!counts.has(label)) counts.set(label, 0);
+      for (const link of links) {
+        if (seenUrls.has(link.url)) continue; // seitenübergreifend deduplizieren
+        seenUrls.add(link.url);
+        if (!link.sectionLabel) continue;
+        counts.set(link.sectionLabel, (counts.get(link.sectionLabel) ?? 0) + 1);
+      }
     }
 
-    pages.push({ url: pageUrl, sections: [...counts.entries()].map(([label, count]) => ({ label, count })) });
+    pages.push({
+      url: pageUrl,
+      sections: [...counts.entries()].map(([label, count]) => ({ label, count })),
+      ...(tree.errors.length > 0 ? { error: tree.errors.join(' · ') } : {}),
+    });
   }
 
   return { pages, totalCount: seenUrls.size };
@@ -332,9 +527,9 @@ export async function listHtmlFiles(
   const seenSections = new Set<string>();
 
   for (const pageUrl of pageUrls) {
-    let html: string;
+    let tree: { pages: ResolvedPage[]; errors: string[] };
     try {
-      html = await fetchPage(pageUrl);
+      tree = await fetchPageTree(pageUrl);
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       console.error(`HTML-Quelle konnte nicht geladen werden (${pageUrl}): ${reason}`);
@@ -343,13 +538,24 @@ export async function listHtmlFiles(
       continue;
     }
 
-    const { links, blocks } = collectLinks(html, pageUrl);
-    // Über die Blockliste, nicht über die Links: ein noch leerer Abschnitt ist
-    // vorhanden und darf nicht als "verschwunden" gemeldet werden.
-    for (const label of blocks) seenSections.add(normalizeSectionLabel(label));
-    for (const link of links) {
-      if (wanted.size > 0 && !wanted.has(normalizeSectionLabel(link.sectionLabel))) continue;
-      if (!found.has(link.url)) found.set(link.url, link.fileName);
+    // Ein Unterordner, der sich nicht laden ließ, zählt genauso: seine Dateien
+    // könnten fehlen, ohne dass sie wirklich entfernt wurden.
+    for (const reason of tree.errors) {
+      console.error(`HTML-Quelle: Unterordner konnte nicht geladen werden (${reason})`);
+      errors.push(`${pageUrl} → ${reason}`);
+      complete = false;
+    }
+
+    for (const page of tree.pages) {
+      const { links, blocks } = collectLinks(page.html, page.url, page.dirLabel);
+      // Über die Blockliste, nicht über die Links: ein noch leerer Abschnitt ist
+      // vorhanden und darf nicht als "verschwunden" gemeldet werden. Genau das
+      // ist der Ordner "Ergebnisse", der sich erst während der Veranstaltung füllt.
+      for (const label of blocks) seenSections.add(normalizeSectionLabel(label));
+      for (const link of links) {
+        if (wanted.size > 0 && !wanted.has(normalizeSectionLabel(link.sectionLabel))) continue;
+        if (!found.has(link.url)) found.set(link.url, link.fileName);
+      }
     }
   }
 

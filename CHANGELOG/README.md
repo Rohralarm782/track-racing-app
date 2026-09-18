@@ -19,6 +19,9 @@ Beim Erhöhen der Version immer beides ändern:
 
 | Version | Datum | Inhalt |
 |---|---|---|
+| [2.6.0](2.6.0.md) | 18.09.2026 | Offene Ordner (Verzeichnisindex) als Quelle: Unterordner werden mitgelesen und als Abschnitte auswählbar; PDFs mit nichtssagendem Dateinamen ("R03.pdf") werden über ihren Dokumentkopf zugeordnet und bekommen einen lesbaren Namen |
+| [2.5.0](2.5.0.md) | 18.09.2026 | SPINS: Ergebnisse gefahrener Läufe werden auch dann übernommen, wenn der Ausrichter keine PDFs hochlädt (Tabelle wird zu einem PDF gesetzt); Auswahl der Veranstaltung in der Quellen-Karte statt Kennung von Hand |
+| [2.4.0](2.4.0.md) | 18.09.2026 | SPINS Live Timing (`spins-live.de`) als Kommuniqué-Quelle: Ergebnis-PDFs werden über die Datei-Schnittstelle gelesen statt gescrapt, die Veranstaltung wird über Datum und Name gesucht. Eintragbar neben der Ausrichterseite in derselben Quelle. Zusätzlich: Schreibweise „Temporennen“ wird erkannt |
 | [2.3.0](2.3.0.md) | 17.09.2026 | Sportlerprofil mit zwei Reitern: „Übersicht“ zeigt die neue Karte „Verfügbare Gänge“ (alle Kombinationen aus Kettenblättern und Ritzeln, umschaltbar zwischen Zoll und Abrolllänge in Metern) und die gefahrenen Zeiten; die Pflege der Kettenblätter und Ritzel liegt im Reiter „Sportler Einstellungen“ |
 | [2.2.0](2.2.0.md) | 17.09.2026 | Verfolgungsplanung: Pläne, zu denen im Timer ein Lauf gespeichert wurde, verschwinden aus der Planliste und stehen eingeklappt unter „Gefahrene Pläne“. **Schema: `prisma db push`** |
 | [2.1.1](2.1.1.md) | 17.09.2026 | Bahnlängen-Auswahl überall auf 200 / 250 / 333,33 m reduziert (285,71 m und 400 m entfernt) |

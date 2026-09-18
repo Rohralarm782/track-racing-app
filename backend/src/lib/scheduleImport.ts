@@ -134,7 +134,13 @@ const DISCIPLINE_HINTS: Record<string, string[]> = {
   MA: ['madison'],
   PR: ['punktefahren'],
   OM: ['omnium'],
-  TR: ['temporunden'],
+  // "Temporennen" ist dieselbe Disziplin, im Ablaufplan der DM 2026
+  // (Öschelbronn) durchgehend so geschrieben. Muss hier UND in classify.ts
+  // stehen: fehlt die Variante nur auf einer Seite, bekommt der Zeitplan-Eintrag
+  // "25 Rd. Temporennen (Omnium)" das Kürzel OM (nur Omnium greift), das
+  // Dokument dagegen TR — und isDisciplineConflict schließt die richtige
+  // Zuordnung hart aus.
+  TR: ['temporunden', 'temporennen'],
   VF: ['verfolgung'],
   MV: ['mannschaftsverfolgung'],
   EV: ['einzelverfolgung', 'einerverfolgung', 'ev'],

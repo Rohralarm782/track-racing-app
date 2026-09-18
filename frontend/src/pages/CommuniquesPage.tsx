@@ -9,6 +9,7 @@ import OmniumImport from '../components/OmniumImport';
 import { useAdmin, useKiosk } from '../components/Layout';
 import { parseSourceInput } from '../lib/communiqueSource';
 import CommuniqueSectionPicker from '../components/CommuniqueSectionPicker';
+import SpinsEventPicker from '../components/SpinsEventPicker';
 import {
   api, communiquesApi, documentLabel,
   type CommuniqueSource, type ClassificationUpdate,
@@ -653,6 +654,11 @@ export default function CommuniquesPage() {
                 style={{ resize: 'vertical', fontFamily: 'inherit' }}
               />
             </div>
+            {setupDetected?.sourceType === 'HTML' && (
+              <div style={{ marginBottom: 14 }}>
+                <SpinsEventPicker eventId={eventId!} input={shareInput} onChange={setShareInput} />
+              </div>
+            )}
             {setupDetected?.sourceType === 'HTML' && (
               <div style={{ marginBottom: 14 }}>
                 <CommuniqueSectionPicker

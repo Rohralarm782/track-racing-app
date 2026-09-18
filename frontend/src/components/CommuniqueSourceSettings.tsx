@@ -4,6 +4,7 @@ import {
   parseSourceInput, describeSource, sourceToInput, sameSourceConfig,
 } from '../lib/communiqueSource';
 import CommuniqueSectionPicker from './CommuniqueSectionPicker';
+import SpinsEventPicker from './SpinsEventPicker';
 
 // Quellen-Karte in den Veranstaltungs­einstellungen (⚙️-Tab): zeigt die aktuell
 // hinterlegte Kommuniqué-Quelle und erlaubt, die Links nachträglich zu ändern.
@@ -131,6 +132,9 @@ export default function CommuniqueSourceSettings({ eventId }: { eventId: string 
               </span>
             )}
           </div>
+          {detected?.sourceType === 'HTML' && (
+            <SpinsEventPicker eventId={eventId} input={input} onChange={setInput} />
+          )}
           {detected?.sourceType === 'HTML' && (
             <CommuniqueSectionPicker
               eventId={eventId}

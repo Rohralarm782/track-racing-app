@@ -149,14 +149,17 @@ const DISCIPLINE_CODE_WORDS = /\b(MA|PR|OM|MV|EV|TS)\b/g;
 // "Halbfinale Sprint") und verhindert den Textvergleich mit dem Zeitplan-
 // Eintrag, dessen Phase diesen Zusatz nicht enthält (z.B. "Halbfinale 1.
 // Serie") — keine der beiden Zeichenketten ist dann mehr Teilstring der anderen.
-const DISCIPLINE_WORDS_FULL = /\b(Punktefahren|Madison|Omnium|Temporunden|Ausscheidungsfahren|Auscheidungsfahren|Mannschaftsverfolgung|Einzelverfolgung|Einerverfolgung|Verfolgung|Scratch|Teamsprint|Zeitfahren|Sprint|Keirin)\b/gi;
+const DISCIPLINE_WORDS_FULL = /\b(Punktefahren|Madison|Omnium|Temporunden|Temporennen|Ausscheidungsfahren|Auscheidungsfahren|Mannschaftsverfolgung|Einzelverfolgung|Einerverfolgung|Verfolgung|Scratch|Teamsprint|Zeitfahren|Sprint|Keirin)\b/gi;
 
 export function detectDisciplineCode(fileName: string): string | null {
   fileName = separatorsToSpaces(fileName);
   if (/\bMA\b/i.test(fileName) || /madison/i.test(fileName)) return 'MA';
   if (/\bPR\b/i.test(fileName) || /punktefahren/i.test(fileName)) return 'PR';
   if (/\bOM\b/i.test(fileName) || /omnium/i.test(fileName)) return 'OM';
-  if (/temporunden/i.test(fileName)) return 'TR';
+  // "Temporennen" ist die im Ablaufplan der DM 2026 (Öschelbronn) verwendete
+  // Schreibweise derselben Disziplin — ohne diese Variante bleibt der
+  // disciplineCode leer und die Zuordnung verliert ein Signal.
+  if (/temporunden|temporennen/i.test(fileName)) return 'TR';
   // Mannschafts-/Einzelverfolgung MÜSSEN vor dem generischen "verfolgung"-Fallback
   // geprüft werden. Ein blankes "VF" wird bewusst NICHT als Verfolgung gewertet,
   // da es in Sprint-Dateinamen "Viertelfinale" bedeutet (Phase, keine Disziplin).

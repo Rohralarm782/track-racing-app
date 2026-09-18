@@ -6,9 +6,10 @@ import { requireAdmin } from '../middleware/auth';
 import { listShareFiles } from '../lib/webdav';
 import { listHtmlFiles, scanHtmlSections } from '../lib/htmlScrape';
 import { listDriveFiles, isPdfFileName } from '../lib/gdrive';
+import { isSpinsUrl, listSpinsFiles, listSpinsEventsForPicker } from '../lib/spins';
 import {
   IMAGE_ANALYSIS_VERSION, analyzeImageForDocument, classifyImageDocument,
-  buildDisplayName, isImageFileName, isAnalyzableImage,
+  buildDisplayName, isImageFileName, isAnalyzableImage, needsHeadAnalysis,
 } from '../lib/imageClassify';
 import { fetchDocumentFile } from '../lib/remoteSource';
 import { classifyFileName, parseCommuniqueVersion } from '../lib/classify';
@@ -115,6 +116,20 @@ router.post('/:eventId/scan-sections', requireAdmin, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// GET /api/communiques/:eventId/spins-events — Veranstaltungen bei SPINS zur
+// Auswahl (Admin). Der Link auf die SPINS-Seite ist für alle Veranstaltungen
+// derselbe; welche gemeint ist, steht nirgends darin. Deshalb hier die Liste,
+// vorsortiert danach, ob sie zeitlich zur Veranstaltung in der App passt.
+router.get('/:eventId/spins-events', requireAdmin, async (req, res, next) => {
+  try {
+    const event = await prisma.event.findUnique({
+      where: { id: req.params.eventId },
+      select: { date: true },
+    });
+    res.json({ events: await listSpinsEventsForPicker(event?.date ?? null) });
+  } catch (e) { next(e); }
+});
+
 // POST /api/communiques/:eventId/poll — manuelles Anstoßen (auch vom Cron-Interval genutzt)
 router.post('/:eventId/poll', async (req, res, next) => {
   try {
@@ -181,17 +196,20 @@ router.post('/:eventId/documents/:docId/recognize', requireAdmin, async (req, re
       include: { source: true },
     });
     if (!doc) { res.status(404).json({ error: 'Dokument nicht gefunden' }); return; }
-    if (!isAnalyzableImage(doc.fileName)) {
+    // PDFs sind hier ausdrücklich erlaubt: Genau dieser Knopf beantwortet am
+    // Vorabend die Frage, ob eine Ansetzung wie "R03.pdf" gelesen wird —
+    // ohne dass dafür etwas gespeichert oder deployt werden muss.
+    if (!isAnalyzableImage(doc.fileName) && !isPdfFileName(doc.fileName)) {
       res.status(400).json({
         error: isImageFileName(doc.fileName)
           ? 'Dieses Bildformat kann nicht ausgewertet werden (HEIC/HEIF). Bitte von Hand zuordnen.'
-          : 'Die Erkennung aus dem Dokument gibt es nur für Fotos. PDFs werden über den Dateinamen zugeordnet.',
+          : 'Diese Datei kann nicht aus dem Dokument heraus erkannt werden (nur Fotos und PDFs).',
       });
       return;
     }
 
     const result = await classifyImageDocument(doc, doc.source);
-    if (!result) { res.status(422).json({ error: 'Aus diesem Bild ließ sich nichts lesen.' }); return; }
+    if (!result) { res.status(422).json({ error: 'Aus diesem Dokument ließ sich nichts lesen.' }); return; }
     res.json({ ...result, displayName: buildDisplayName(result, doc.fileName) });
   } catch (e) { next(e); }
 });
@@ -500,10 +518,39 @@ export async function pollSource(source: CommuniqueSource) {
   let pollError: string | null = null;
   let remoteFiles;
   if (source.sourceType === 'HTML') {
-    const html = await listHtmlFiles(source.htmlPageUrls, source.htmlSections);
-    remoteFiles = html.files;
-    listingComplete = html.complete;
-    const problems = [...html.errors];
+    // SPINS-Adressen (spins-live.de) werden NICHT gescrapt: die Seite baut ihre
+    // Liste per JavaScript auf und enthält im Quelltext keinen PDF-Link. Sie
+    // laufen über die SPINS-Datei-Schnittstelle, der Rest der Adressen wie
+    // bisher über den Scraper. Beide Listen werden zusammengeführt — so lassen
+    // sich Zeitplan/Startlisten von der Ausrichterseite und Ergebnisse aus
+    // SPINS in EINER Quelle führen (das Datenmodell erlaubt pro Veranstaltung
+    // nur eine).
+    const spinsUrls = source.htmlPageUrls.filter(isSpinsUrl);
+    const pageUrls = source.htmlPageUrls.filter((u: string) => !isSpinsUrl(u));
+    // Ohne Seiten gar nicht erst scrapen: sonst meldet der Abschnitts-Filter
+    // alle hinterlegten Abschnitte als "nicht gefunden", obwohl es schlicht
+    // keine Seite zu durchsuchen gibt.
+    const html = pageUrls.length > 0
+      ? await listHtmlFiles(pageUrls, source.htmlSections)
+      : { files: [], complete: true, errors: [] as string[], missingSections: [] as string[] };
+    let spins: { files: typeof html.files; complete: boolean; errors: string[] } =
+      { files: [], complete: true, errors: [] };
+    if (spinsUrls.length > 0) {
+      // Name, Datum und Ort der Veranstaltung dienen dazu, die richtige
+      // SPINS-Veranstaltung zu finden — deren Kennung steht nicht im Link.
+      const event = await prisma.event.findUnique({
+        where: { id: eventId },
+        select: { name: true, date: true, location: true },
+      });
+      spins = await listSpinsFiles(spinsUrls, {
+        name: event?.name ?? '',
+        date: event?.date ?? null,
+        location: event?.location ?? null,
+      });
+    }
+    remoteFiles = [...html.files, ...spins.files];
+    listingComplete = html.complete && spins.complete;
+    const problems = [...html.errors, ...spins.errors];
     // Ein hinterlegter Abschnitt, den es auf der Seite nicht mehr gibt (Ausrichter
     // hat die Überschrift umbenannt), liefert lautlos null Dokumente. Deshalb als
     // Fehler melden, damit die rote Box in der Quellen-Karte anschlägt.
@@ -553,6 +600,12 @@ export async function pollSource(source: CommuniqueSource) {
     // ein "IMG-20260919-WA0037.jpg" auf "Alle/SONSTIGES" zurücksetzen und die
     // Bild-Erkennung damit sofort wieder zunichtemachen.
     if (isImageFileName(d.fileName)) return false;
+    // PDFs, deren Zuordnung aus dem DOKUMENTKOPF stammt (nichtssagender
+    // Dateiname wie "R03.pdf", siehe imageClassify.ts), aus demselben Grund:
+    // classifyFileName würde sie bei jedem Poll wieder auf "Alle/SONSTIGES"
+    // zurücksetzen und damit die Auswertung sofort zunichtemachen. Erkennbar
+    // daran, dass eine Auswertung gelaufen ist UND einen Anzeigenamen ergeben hat.
+    if (d.imageVersion > 0 && d.displayName) return false;
     const fresh = classifyFileName(d.fileName);
     return fresh.docType !== d.docType || fresh.ak !== d.ak || fresh.discipline !== d.discipline
       || fresh.disciplineCode !== d.disciplineCode || fresh.phaseLabel !== d.phaseLabel;
@@ -582,8 +635,12 @@ export async function pollSource(source: CommuniqueSource) {
           : {
               remoteModifiedAt: f.modifiedAt, docType, ak, discipline, disciplineCode, phaseLabel,
               remoteUrl: f.url ?? null,
-              // Bild wurde ausgetauscht → erneut auswerten.
-              ...(isImageFileName(f.fileName) ? { imageVersion: 0, displayName: null } : {}),
+              // Datei wurde ausgetauscht → erneut auswerten. Gilt für Fotos und
+              // für PDFs, die schon einmal über ihren Kopf ausgewertet wurden
+              // (sonst bliebe der Name des alten Standes stehen).
+              ...(isImageFileName(f.fileName) || (existing?.imageVersion ?? 0) > 0
+                ? { imageVersion: 0, displayName: null }
+                : {}),
             };
         return prisma.communiqueDocument.upsert({
           where: { sourceId_fileName: { sourceId, fileName: f.fileName } },
@@ -666,7 +723,7 @@ export async function pollSource(source: CommuniqueSource) {
     await autoImportScheduleFromDocument(eventId, doc, source);
   }
 
-  // ── Bild-Auswertung für abfotografierte Kommuniqués ────────────────────────
+  // ── Kopf-Auswertung: Fotos und PDFs ohne sprechenden Dateinamen ────────────
   // Muss VOR applySupersessions laufen: erst danach steht communiqueNumber am
   // Dokument, und ohne die kann eine neuere Fassung desselben Aushangs die
   // ältere nicht verdrängen.
@@ -681,20 +738,28 @@ export async function pollSource(source: CommuniqueSource) {
       classificationManual: false,
       imageVersion: { lt: IMAGE_ANALYSIS_VERSION },
     },
-    select: { id: true, fileName: true, remoteUrl: true, classificationManual: true },
+    select: {
+      id: true, fileName: true, remoteUrl: true, classificationManual: true,
+      // Für needsHeadAnalysis: nur PDFs, aus deren Namen NICHTS zu holen war.
+      docType: true, ak: true, disciplineCode: true,
+    },
   });
   // isAnalyzableImage statt isImageFileName: HEIC-Aufnahmen sind Bilder, können
   // vom Modell aber nicht gelesen werden. Sie bleiben unangetastet in der Liste
   // stehen und werden von Hand zugeordnet.
-  const analyzableImages = imageDocs.filter(d => isAnalyzableImage(d.fileName));
+  //
+  // Dazu PDFs mit nichtssagendem Dateinamen ("R03.pdf"): Ohne Kopf-Auswertung
+  // blieben sie ohne Altersklasse, ohne Disziplin und als SONSTIGES — damit
+  // weder im Zeitplan verknüpfbar noch Grundlage der MEV-Analyse.
+  const toAnalyze = imageDocs.filter(d => isAnalyzableImage(d.fileName) || needsHeadAnalysis(d));
   let imagesAnalyzed = 0;
-  for (const doc of analyzableImages) {
+  for (const doc of toAnalyze) {
     try {
       await analyzeImageForDocument(doc, source);
       imagesAnalyzed++;
     } catch (err) {
-      // Ein einzelnes Foto darf den Poll nicht abbrechen.
-      console.error(`[poll] Bild-Auswertung fehlgeschlagen (${doc.fileName}):`, err);
+      // Ein einzelnes Dokument darf den Poll nicht abbrechen.
+      console.error(`[poll] Kopf-Auswertung fehlgeschlagen (${doc.fileName}):`, err);
     }
   }
 

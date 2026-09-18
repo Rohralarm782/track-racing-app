@@ -17,7 +17,17 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
  * ohnehin alles, was gebraucht wird, und zwar zuverlässiger als in einem
  * Etikett.
  *
- * Für PDFs ändert sich nichts: die laufen weiter über classify.ts.
+ * Seit 2.6.0 gilt dasselbe für PDFs, deren DATEINAME nichts hergibt: Der
+ * Ausrichter der DM 2026 (Öschelbronn) legt seine Laufansetzungen als "R03.pdf"
+ * bzw. "R01-R02.pdf" ab — daraus liest classify.ts weder Altersklasse noch
+ * Disziplin noch Dokumentart. Folge wäre nicht nur ein nichtssagender Name,
+ * sondern auch: keine Zuordnung zum Zeitplan und keine MEV-Analyse (die hängt
+ * an docType=STARTLISTE). Im Dokument selbst steht dagegen alles, was gebraucht
+ * wird ("U15w – Startreihenfolge 100m fliegend (R3)").
+ *
+ * PDFs mit sprechendem Dateinamen laufen unverändert über classify.ts — die
+ * Kopf-Auswertung greift nur, wenn der Name NICHTS liefert (siehe
+ * needsHeadAnalysis).
  *
  * ── Aufbau echter Kommuniqués ───────────────────────────────────────────────
  * Geprüft an Kommuniqués der DM Büttgen 2026. Der Kopf sieht so aus:
@@ -65,6 +75,14 @@ type AnalyzableMediaType = typeof ANALYZABLE_MEDIA_TYPES[number];
 /** Obergrenze für ein einzelnes Bild (Rohbytes). Darüber weist das Modell ab. */
 const MAX_IMAGE_BYTES = 4_500_000;
 
+/**
+ * Obergrenze für ein PDF (Rohbytes). Deutlich großzügiger als bei Bildern: eine
+ * Startliste ist Text und bleibt weit darunter (die Laufansetzungen der DM 2026
+ * liegen bei ~70 kB). Die Grenze fängt nur den Ausreißer ab, etwa ein
+ * eingescanntes Dokument mit Bildseiten.
+ */
+const MAX_PDF_BYTES = 8_000_000;
+
 export interface ImageClassification {
   communiqueNumber: string | null; // normalisiert als "K68-05"
   ak: string;                      // "U17w", "Elite m", "Alle"
@@ -90,6 +108,49 @@ export function isImageFileName(fileName: string): boolean {
 /** True, wenn das Bildformat vom Modell gelesen werden kann. */
 export function isAnalyzableImage(fileName: string): boolean {
   return /\.(jpe?g|png|webp|gif)$/i.test(fileName);
+}
+
+/** True, wenn die Datei ein PDF ist (Kopf-Auswertung möglich). */
+export function isPdfDocument(fileName: string): boolean {
+  return /\.pdf$/i.test(fileName);
+}
+
+/**
+ * True, wenn ein PDF über seinen KOPF ausgewertet werden muss, weil der
+ * Dateiname nichts hergibt. Bewusst streng: ALLE drei Erkennungen aus dem
+ * Dateinamen müssen leer ausgegangen sein. Ein Name wie
+ * "K29-01-ME_EV_Quali_Ansetz.pdf" liefert Altersklasse, Kürzel und Art und
+ * bleibt deshalb unangetastet bei classify.ts — die Kopf-Auswertung ist die
+ * Rückfallebene, nicht der neue Normalfall.
+ */
+export function needsHeadAnalysis(doc: {
+  fileName: string;
+  docType: DocType;
+  ak: string;
+  disciplineCode: string | null;
+}): boolean {
+  return isPdfDocument(doc.fileName)
+    && doc.docType === 'SONSTIGES'
+    && doc.ak === 'Alle'
+    && !doc.disciplineCode;
+}
+
+/**
+ * Laufnummer(n) aus einem Dateinamen, der AUS NICHTS ANDEREM besteht:
+ * "R03.pdf" → "R3", "R01-R02.pdf" → "R1–R2", "R19-20.pdf" → "R19–R20".
+ *
+ * Diese Nummern stehen so auch im Ablaufplan ("R1", "R 10") und sind trackside
+ * die Sprache, in der über die Läufe geredet wird — deshalb stehen sie vorn im
+ * Anzeigenamen. Rein aus dem Dateinamen gelesen, ohne Modell: das Muster ist
+ * eindeutig, und führende Nullen fallen weg, damit "R03" und "R3" gleich
+ * aussehen. Streng verankert, damit ein gewöhnlicher Dateiname
+ * ("IMG-20260919-WA0037.jpg", "K134A - U17w Ansetz.pdf") NIE anschlägt.
+ */
+export function runNumberFromFileName(fileName: string): string | null {
+  const stem = fileName.replace(/\.[A-Za-z0-9]+$/, '').trim();
+  const m = stem.match(/^R\s*0*(\d{1,3})(?:\s*[-–]\s*R?\s*0*(\d{1,3}))?$/i);
+  if (!m) return null;
+  return m[2] ? `R${m[1]}–R${m[2]}` : `R${m[1]}`;
 }
 
 function mediaTypeFor(fileName: string): AnalyzableMediaType | null {
@@ -123,7 +184,11 @@ const VALID_CODES = ['PR', 'MA', 'OM', 'TR', 'MV', 'EV', 'VF', 'TS'];
 /**
  * Baut den Anzeigenamen. Bewusst nicht wie ein Dateiname, sondern lesbar:
  *   "K68-05 · Punktefahren Finale · Ansetzung"
+ *   "R3 · U15w · 100 m fliegend · Ansetzung"
  * Fehlende Teile fallen einfach weg.
+ *
+ * Die Laufnummer wird aus dem Dateinamen (= fallback) gewonnen, nicht vom
+ * Modell erfragt — sie steht dort eindeutig und kostenlos.
  */
 export function buildDisplayName(c: ImageClassification, fallback: string): string {
   const mitte = [c.disciplineName, c.phaseLabel].filter(Boolean).join(' ');
@@ -131,32 +196,45 @@ export function buildDisplayName(c: ImageClassification, fallback: string): stri
     : c.docType === 'ERGEBNIS' ? 'Ergebnis'
     : c.docType === 'ZEITPLAN' ? 'Zeitplan'
     : null;
-  const teile = [c.communiqueNumber, mitte || null, art].filter(Boolean);
+  const lauf = runNumberFromFileName(fallback);
+  // Die Altersklasse gehört in den Namen, sobald die Nummer aus dem Dateinamen
+  // kommt: "R3" allein sagt trackside nichts, "R3 · U15w · 100 m fliegend"
+  // schon. Bei Kommuniqués mit K-Nummer bleibt der Name wie bisher — dort
+  // steht die Altersklasse ohnehin in der Spaltenüberschrift der Liste.
+  const ak = lauf && c.ak && c.ak !== 'Alle' ? c.ak : null;
+  const teile = [lauf, c.communiqueNumber, ak, mitte || null, art].filter(Boolean);
   // Ohne Nummer UND ohne Disziplin ist nichts Brauchbares erkannt worden —
   // dann bleibt der Dateiname stehen, statt ein nichtssagendes Etikett zu
-  // erzeugen, das echte Information vortäuscht.
+  // erzeugen, das echte Information vortäuscht. Eine Laufnummer allein zählt
+  // nicht: die steht bereits im Dateinamen.
   if (!c.communiqueNumber && !mitte) return fallback;
   return teile.join(' · ');
 }
 
 /**
- * Wertet ein Bild aus und liefert die Klassifizierung — oder null, wenn das
- * nicht möglich war (falsches Format, zu groß, Modellfehler, unlesbar).
- * Wirft nicht: der Poll darf an einem einzelnen Foto nicht scheitern.
+ * Wertet ein Bild ODER ein PDF aus und liefert die Klassifizierung — oder null,
+ * wenn das nicht möglich war (falsches Format, zu groß, Modellfehler, unlesbar).
+ * Wirft nicht: der Poll darf an einem einzelnen Dokument nicht scheitern.
+ *
+ * PDFs gehen als Dokument-Block an dasselbe Modell (wie in mevDetect.ts), Fotos
+ * als Bild-Block. Der Prompt ist bis auf die Anrede identisch — gelesen wird in
+ * beiden Fällen der Kopfbereich.
  */
 export async function classifyImageDocument(
   doc: AnalyzableImageDoc,
   source: { sourceType: SourceType; shareToken: string | null },
 ): Promise<ImageClassification | null> {
+  const isPdf = isPdfDocument(doc.fileName);
   const mediaType = mediaTypeFor(doc.fileName);
-  if (!mediaType) return null;
+  if (!mediaType && !isPdf) return null;
 
   try {
     const file = await fetchDocumentFile(source, {
       fileName: doc.fileName,
       remoteUrl: doc.remoteUrl ?? null,
     });
-    if (file.data.length > MAX_IMAGE_BYTES) {
+    const maxBytes = isPdf ? MAX_PDF_BYTES : MAX_IMAGE_BYTES;
+    if (file.data.length > maxBytes) {
       console.warn(`[imageClassify] ${doc.fileName}: ${Math.round(file.data.length / 1024)} kB — zu groß, übersprungen`);
       return null;
     }
@@ -171,13 +249,20 @@ export async function classifyImageDocument(
       messages: [{
         role: 'user',
         content: [
-          {
-            type: 'image',
-            source: { type: 'base64', media_type: mediaType, data: file.data.toString('base64') },
-          } as any,
+          (isPdf
+            ? {
+                type: 'document',
+                source: { type: 'base64', media_type: 'application/pdf', data: file.data.toString('base64') },
+              }
+            : {
+                type: 'image',
+                source: { type: 'base64', media_type: mediaType!, data: file.data.toString('base64') },
+              }) as any,
           {
             type: 'text',
-            text: `Dies ist das Foto eines Kommuniqués (Aushang) einer Bahnrad-Veranstaltung.
+            text: `${isPdf
+              ? 'Dies ist ein Kommuniqué (PDF) einer Bahnrad-Veranstaltung — Ansetzung, Startliste oder Ergebnis.'
+              : 'Dies ist das Foto eines Kommuniqués (Aushang) einer Bahnrad-Veranstaltung.'}
 Lies den KOPFBEREICH des Dokuments und gib die Zuordnung zurück.
 
 Der Kopf sieht typischerweise so aus:
@@ -214,9 +299,11 @@ Art des Dokuments:
   ZEITPLAN   = Zeitplan der Veranstaltung
   SONSTIGES  = alles andere
 
-Setze "confident" auf false, wenn das Foto unscharf, angeschnitten oder schräg
+${isPdf
+  ? `Setze "confident" auf false, wenn der Kopfbereich unvollständig ist oder du bei einer der Angaben raten musst. Lieber einmal zu oft false als zu selten.`
+  : `Setze "confident" auf false, wenn das Foto unscharf, angeschnitten oder schräg
 ist, wenn der Kopfbereich nicht vollständig zu sehen ist, oder wenn du bei einer
-der Angaben raten musst. Lieber einmal zu oft false als zu selten.${hintBlock}
+der Angaben raten musst. Lieber einmal zu oft false als zu selten.`}${hintBlock}
 
 Gib NUR JSON zurück (kein Markdown, kein Text davor oder danach):
 {

@@ -360,6 +360,16 @@ export interface CommuniqueSectionScan {
   totalCount: number;
 }
 
+// Ergebnis von communiquesApi.spinsEvents: die Veranstaltungen, die bei SPINS
+// angelegt sind. matchesDate markiert die, deren Datum zur Veranstaltung in der
+// App passt — die Auswahl trifft trotzdem der Mensch.
+export interface SpinsEventOption {
+  id: number;
+  name: string;
+  date: string | null;
+  matchesDate: boolean;
+}
+
 // ─── Zeitplan ────────────────────────────────────────────────────────────────
 
 export type ScheduleEntryType = 'RACE' | 'CEREMONY' | 'INFO';
@@ -488,6 +498,9 @@ export const communiquesApi = {
 
   scanSections: (eventId: string, htmlPageUrls: string[]) =>
     api.post<CommuniqueSectionScan>(`/api/communiques/${eventId}/scan-sections`, { htmlPageUrls }),
+
+  spinsEvents: (eventId: string) =>
+    api.get<{ events: SpinsEventOption[] }>(`/api/communiques/${eventId}/spins-events`),
 
   poll: (eventId: string) =>
     api.post<{ newCount: number; newDocs: CommuniqueDocument[] }>(`/api/communiques/${eventId}/poll`, {}),

@@ -2,6 +2,7 @@ import type { SourceType } from '@prisma/client';
 import { fetchShareFile } from './webdav';
 import { fetchHtmlFile } from './htmlScrape';
 import { fetchDriveFile } from './gdrive';
+import { parseSpinsHeatRef, renderSpinsHeatPdf } from './spins';
 
 /**
  * Einheitlicher Zugriffspunkt auf die PDF-Bytes eines Dokuments, unabhängig
@@ -18,6 +19,14 @@ export async function fetchDocumentFile(
   source: FetchSource,
   doc: FetchDoc,
 ): Promise<{ data: Buffer; contentType: string }> {
+  // Dokumente, die aus SPINS-Ergebnisdaten entstehen, haben keine Datei auf
+  // einem Server: ihr remoteUrl zeigt auf den Lauf ("spins:heat:392"), und das
+  // PDF wird beim Abruf aus der Ergebnistabelle erzeugt. Diese Prüfung steht
+  // VOR dem HTML-Zweig, weil solche Dokumente in einer HTML-Quelle liegen.
+  const heatId = parseSpinsHeatRef(doc.remoteUrl);
+  if (heatId !== null) {
+    return renderSpinsHeatPdf(heatId);
+  }
   if (source.sourceType === 'HTML') {
     if (!doc.remoteUrl) {
       throw new Error(`HTML-Dokument ohne remoteUrl: ${doc.fileName}`);
