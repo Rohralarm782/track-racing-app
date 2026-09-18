@@ -108,6 +108,11 @@ model Team {
   isFavorite Boolean  @default(false)
   rider1     String?
   rider2     String?
+  // Rückennummer-Farbe der beiden Fahrer im Madison: "R" (rot) oder "S"
+  // (schwarz). Kommt aus der "Mad.Nr."-Spalte der Ansetzung (z.B. "5R"/"5S").
+  // null bei Einzelrennen und bei Teams, die von Hand angelegt wurden.
+  rider1Bib  String?
+  rider2Bib  String?
   color      String?
   pattern    String?
 

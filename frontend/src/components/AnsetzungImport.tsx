@@ -14,6 +14,7 @@ interface Props {
 interface DetectedTeam {
   number: number; name: string; club?: string | null; lv?: string | null;
   rider2?: string | null; rider2Club?: string | null; rider2Lv?: string | null;
+  rider1Bib?: string | null; rider2Bib?: string | null;
   points?: number | null;
 }
 interface DetectedAK { name: string; shortName: string; teams: DetectedTeam[] }
@@ -39,6 +40,27 @@ interface PickableRace {
 }
 
 /**
+ * Rückennummer-Farbe als Marke. Im Madison fährt je Team immer genau einer mit
+ * roter und einer mit schwarzer Nummer — trackside ist das die schnellste Art
+ * zu erkennen, wer von beiden gerade im Rennen ist.
+ */
+function BibMark({ bib }: { bib?: string | null }) {
+  const known = bib === 'R' || bib === 'S';
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+      width: 18, height: 18, borderRadius: 4, fontSize: 11, fontWeight: 700,
+      flex: '0 0 auto',
+      background: bib === 'R' ? '#dc2626' : bib === 'S' ? '#1f2937' : 'transparent',
+      border: known ? 'none' : '1px dashed #d1d5db',
+      color: known ? '#fff' : '#9ca3af',
+    }}>
+      {known ? bib : '–'}
+    </span>
+  );
+}
+
+/**
  * Importiert eine Renn-Ansetzung (Communiqué-PDF) und legt fest, wer in EINEM
  * bestimmten Rennen startet. Falls das Rennen noch nicht existiert, wird es
  * gleich mit angelegt ("halbautomatisch") — die Ansetzung *ist* dann direkt
@@ -49,6 +71,10 @@ export default function AnsetzungImport({ eventId, event, initialBase64, suggest
   const [error, setError] = useState('');
   const [detectedTeams, setDetectedTeams] = useState<DetectedTeam[]>([]);
   const [detectedPlannedSprints, setDetectedPlannedSprints] = useState<number | null>(null);
+  // Hinweise aus der Auswertung: `warnings` sind erklärungsbedürftig, aber
+  // unkritisch; `blocking` sperrt den Import, weil dort etwas fehlt.
+  const [warnings, setWarnings] = useState<string[]>([]);
+  const [blocking, setBlocking] = useState<string[]>([]);
 
   // Auswahl: bestehendes Rennen ODER neues Rennen anlegen
   const [selectedRaceId, setSelectedRaceId] = useState('');
@@ -67,6 +93,10 @@ export default function AnsetzungImport({ eventId, event, initialBase64, suggest
     | { mode: 'direct'; created: number; removed: number; pointsImported: number }
     | null
   >(null);
+
+  // Team-Paare? Dann zeigt die Vorschau beide Fahrer mit ihrer Nummernfarbe.
+  const isPairs = detectedTeams.some(t => !!t.rider2);
+  const riderCount = detectedTeams.reduce((n, t) => n + (t.rider2 ? 2 : 1), 0);
 
   // Alle wählbaren Rennen: alte (mit Kategorie) + neue (direkt am Event) zusammen
   const pickableRaces: PickableRace[] = [
@@ -88,13 +118,18 @@ export default function AnsetzungImport({ eventId, event, initialBase64, suggest
   async function analyze() {
     setStep('analyzing'); setError('');
     try {
-      const res = await api.post<{ ageClasses: DetectedAK[]; plannedSprints?: number | null; raceKind?: string | null }>(
+      const res = await api.post<{
+        ageClasses: DetectedAK[]; plannedSprints?: number | null; raceKind?: string | null;
+        warnings?: string[]; blocking?: string[];
+      }>(
         `/api/events/${eventId}/analyze-startlist`,
         { pdfBase64: initialBase64 },
       );
       const teams = res.ageClasses.flatMap(ak => ak.teams);
       setDetectedTeams(teams);
       setDetectedPlannedSprints(res.plannedSprints ?? null);
+      setWarnings(res.warnings ?? []);
+      setBlocking(res.blocking ?? []);
       if (res.raceKind) {
         const matchKey = res.raceKind.toLowerCase();
         const matched = RACE_KIND_OPTIONS.find(k => k.key === matchKey);
@@ -173,15 +208,87 @@ export default function AnsetzungImport({ eventId, event, initialBase64, suggest
 
         {step === 'analyzing' && (
           <div className="loading" style={{ padding: '30px 0' }}>
-            <span className="spinner" /> Analysiere Ansetzung mit KI…
+            <span className="spinner" /> Lese Ansetzung…
           </div>
         )}
 
         {(step === 'pick-race' || step === 'applying') && (
           <>
             <p className="text-sm text-muted" style={{ marginTop: 0 }}>
-              {detectedTeams.length} Team(s) erkannt
-              {detectedPlannedSprints != null && ` · ${detectedPlannedSprints} Wertungen geplant`}. Für welches Rennen gilt diese Ansetzung?
+              {detectedTeams.length}{isPairs ? ` Team(s) aus ${riderCount} Zeilen` : ' Fahrer'} erkannt
+              {isPairs && ' · Paarung über Mad.Nr. (R/S)'}
+              {detectedPlannedSprints != null && ` · ${detectedPlannedSprints} Wertungen geplant`}
+            </p>
+
+            {blocking.length > 0 && (
+              <div className="alert alert-error mb-3">
+                <strong>{blocking.length} Widerspruch/Widersprüche — es fehlt etwas</strong>
+                <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+                  {blocking.map((b, i) => <li key={i} style={{ margin: '3px 0' }}>{b}</li>)}
+                </ul>
+              </div>
+            )}
+
+            {warnings.length > 0 && (
+              <div className="alert alert-warning mb-3">
+                <strong>{warnings.length} Hinweis(e)</strong>
+                <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+                  {warnings.map((w, i) => <li key={i} style={{ margin: '3px 0' }}>{w}</li>)}
+                </ul>
+              </div>
+            )}
+
+            {/* ── Vorschau: was gleich geschrieben wird ───────────────────────
+                Vorher stand hier nur die Anzahl. Ob die Paarung gestimmt hat,
+                sah man erst NACH dem Schreiben — trackside zu spät. */}
+            {detectedTeams.length > 0 && (
+              <div style={{
+                border: '1px solid var(--c-border)', borderRadius: 10,
+                maxHeight: 240, overflowY: 'auto', marginBottom: 12,
+              }}>
+                {detectedTeams.map((t, i) => {
+                  const fav = t.lv === 'MEV' || t.rider2Lv === 'MEV';
+                  return (
+                    <div key={i} style={{
+                      display: 'flex', gap: 10, padding: '8px 11px', alignItems: 'flex-start',
+                      borderBottom: i < detectedTeams.length - 1 ? '1px solid var(--c-border)' : 'none',
+                      background: fav ? '#fffdf5' : 'transparent',
+                    }}>
+                      <span style={{
+                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                        minWidth: 26, height: 24, padding: '0 6px', borderRadius: 6,
+                        background: '#f3f4f6', fontWeight: 700, fontSize: 13, flex: '0 0 auto',
+                      }}>{t.number || '–'}</span>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ display: 'flex', gap: 7, alignItems: 'center', minWidth: 0 }}>
+                          {isPairs && <BibMark bib={t.rider1Bib ?? 'R'} />}
+                          <span style={{ fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {t.name}
+                          </span>
+                          {t.lv && <span className="text-muted" style={{ fontSize: 11, flex: '0 0 auto' }}>{t.lv}</span>}
+                          {fav && <span style={{ color: '#d97706', flex: '0 0 auto' }}>★</span>}
+                        </div>
+                        {isPairs && (
+                          <div style={{ display: 'flex', gap: 7, alignItems: 'center', minWidth: 0, marginTop: 3 }}>
+                            <BibMark bib={t.rider2 ? (t.rider2Bib ?? 'S') : null} />
+                            <span
+                              className={t.rider2 ? undefined : 'text-muted'}
+                              style={{ fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                            >
+                              {t.rider2 ?? '— kein Partner —'}
+                            </span>
+                            {t.rider2Lv && <span className="text-muted" style={{ fontSize: 11, flex: '0 0 auto' }}>{t.rider2Lv}</span>}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <p className="text-sm text-muted" style={{ marginTop: 0 }}>
+              Für welches Rennen gilt diese Ansetzung?
             </p>
 
             {!creatingNew && (
@@ -286,9 +393,14 @@ export default function AnsetzungImport({ eventId, event, initialBase64, suggest
             <button
               className="btn btn-primary btn-block mt-3"
               onClick={apply}
-              disabled={step === 'applying' || (!creatingNew && !selectedRaceId) || (creatingNew && !newRaceName.trim())}
+              disabled={
+                step === 'applying' || blocking.length > 0
+                || (!creatingNew && !selectedRaceId) || (creatingNew && !newRaceName.trim())
+              }
             >
-              {step === 'applying' ? 'Wende an…' : 'Ansetzung anwenden'}
+              {step === 'applying' ? 'Wende an…'
+                : blocking.length > 0 ? 'Anwenden — erst Widersprüche klären'
+                : 'Ansetzung anwenden'}
             </button>
           </>
         )}

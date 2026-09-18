@@ -130,6 +130,18 @@ h3 { font-size: 0.95rem; font-weight: 600; margin: 0; }
 .alert-error { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
 .alert-success { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
 .alert-info { background: #dbeafe; color: #1e40af; border: 1px solid #bfdbfe; }
+.alert-warning { background: #fffbeb; color: #92400e; border: 1px solid #fcd34d; }
+
+/* Rückennummer-Farbe im Madison: rot bzw. schwarz. Trackside das schnellste
+   Merkmal, um zu erkennen, welcher der beiden Fahrer gerade im Rennen ist. */
+.bib {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 17px; height: 17px; border-radius: 4px;
+  font-size: 10px; font-weight: 700; color: #fff;
+  flex: 0 0 auto; vertical-align: -3px;
+}
+.bib-R { background: #dc2626; }
+.bib-S { background: #1f2937; }
 
 /* ── Modal ───────────────────────────────────────── */
 .modal-overlay {

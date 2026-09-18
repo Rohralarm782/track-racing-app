@@ -11,6 +11,7 @@ import { z } from 'zod';
 import Anthropic from '@anthropic-ai/sdk';
 import prisma from '../prisma';
 import { requireAdmin } from '../middleware/auth';
+import { findDuplicateNumbers } from '../lib/madisonPairing';
 import { computePunktefahren, computeTemporennen } from '../lib/scoring';
 
 const router = Router();
@@ -433,11 +434,31 @@ router.post('/:id/apply-ansetzung', requireAdmin, async (req, res, next) => {
       teams: Array<{
         number: number; name: string; club?: string | null; lv?: string | null;
         rider2?: string | null; rider2Club?: string | null; rider2Lv?: string | null;
+        rider1Bib?: string | null; rider2Bib?: string | null;
         points?: number | null;
       }>;
       plannedSprints?: number | null;
     };
     if (!Array.isArray(teams)) { res.status(400).json({ error: 'teams fehlt' }); return; }
+
+    // ── Kollisionsschutz ──────────────────────────────────────────────────
+    // Der upsert unten läuft auf den Schlüssel (raceId, number). Zwei Einträge
+    // mit derselben Nummer überschreiben sich dabei gegenseitig, ohne dass ein
+    // Fehler entsteht — aus zwei Teams wird still eines, und die Rückmeldung
+    // nennt trotzdem eine plausibel klingende Zahl. Genau das passierte bei
+    // Madison-Ansetzungen, wenn "5R" und "5S" beide als Nummer 5 ankamen.
+    // Lieber laut abbrechen als leise die halbe Startliste verlieren.
+    const duplicates = findDuplicateNumbers(teams);
+    if (duplicates.length > 0) {
+      res.status(409).json({
+        error: `Doppelte Startnummer(n) in der Ansetzung: ${duplicates.join(', ')}. `
+             + `Es wurde nichts übernommen. Bei Madison-Ansetzungen bedeutet das meist, `
+             + `dass die rote und die schwarze Rückennummer (z.B. "5R"/"5S") nicht zu `
+             + `einem Team zusammengefasst wurden.`,
+        duplicates,
+      });
+      return;
+    }
 
     const race = await prisma.race.findUnique({
       where: { id: req.params.id },
@@ -496,6 +517,8 @@ router.post('/:id/apply-ansetzung', requireAdmin, async (req, res, next) => {
           rider2Lv: t.rider2Lv ?? null,
           rider1: isPair ? t.name : null,
           rider2: t.rider2 ?? null,
+          rider1Bib: t.rider1Bib ?? null,
+          rider2Bib: t.rider2Bib ?? null,
           isFavorite: t.lv === 'MEV' || t.rider2Lv === 'MEV',
         };
         return prisma.team.upsert({

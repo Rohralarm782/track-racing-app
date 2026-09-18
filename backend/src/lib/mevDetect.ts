@@ -17,7 +17,7 @@ const START_POSITIONS = ['ZG', 'GG', 'B', 'M'];
  * automatisch neu. Bei JEDER inhaltlichen Änderung an Prompt oder Auswertung
  * hochzählen — sonst behalten bereits analysierte Dokumente ihr altes Ergebnis.
  */
-export const MEV_ANALYSIS_VERSION = 5;
+export const MEV_ANALYSIS_VERSION = 6;
 
 export interface MevRider {
   name: string;
@@ -154,7 +154,12 @@ Gib NUR JSON zurück (kein Markdown, kein Text davor/danach):
 {"hasLvColumn":true,"mevRiders":[{"name":"Vorname Nachname","startNo":88,"lauf":9,"laufLabel":null,"team":"${lv} 2","startPos":"B","startSlot":10}],"heatCount":13,"starterCount":24,"roundCount":40}
 
 Regeln:
-- hasLvColumn: true, wenn die Tabelle eine LV-/Landesverband-Spalte hat, sonst false
+- hasLvColumn: true, wenn die Tabelle eine LV-/Landesverband-Spalte hat, sonst false.
+  ACHTUNG: Die Spalte heißt nicht immer "LV". Bei Meisterschafts-Ansetzungen stehen
+  häufig ZWEI Spalten nebeneinander, die BEIDE mit "Verein" überschrieben sind — die
+  erste enthält den ausgeschriebenen Vereinsnamen ("RSC Cottbus"), die zweite ein
+  Kurzkürzel aus 2–4 Großbuchstaben ("BRA", "MEV", "NRW", "THÜ"). Die zweite ist die
+  LV-Spalte: hasLvColumn true, und daraus den Landesverband lesen.
 - name: "Vorname Nachname", keine Startnummer/Verein/UCI-ID
 - startNo: die Startnummer dieses Fahrers laut Spalte "Start-Nr." o.ä., sonst null
 - lauf / laufLabel: beide beziehen sich AUSSCHLIESSLICH auf eine echte Lauf-Spalte der Tabelle (Spaltenüberschrift "Lauf", "Heat", "Paarung" o.ä.). Gibt es keine solche Spalte, sind BEIDE null. Die Startnummer ("Start-Nr.") ist NIEMALS die Lauf-Nummer — verwechsle die beiden Spalten nicht. Auch eine Überschrift wie "Vorlauf 1" über der Tabelle ist KEINE Lauf-Angabe im Sinne dieser Felder: dann beide null.
@@ -163,6 +168,12 @@ Regeln:
   * laufLabel: der Text der Lauf-Spalte, wenn er KEINE reine Zahl ist — z.B. bei Sprint-Finals steht dort "Platz 1/2" bzw. "Platz 3/4", bei Hoffnungsläufen o.ä. auch anderer Text. Wortlaut aus dem Dokument übernehmen (Zeilenumbrüche in der Zelle als Leerzeichen). Ist der Wert eine reine Zahl, dann null.
   * Ein Fahrer hat also entweder lauf ODER laufLabel gesetzt, nie beides.
 - team: der Wert aus der Team-/Mannschaft-Spalte (z.B. "${lv} 2"), falls eine solche Spalte existiert, sonst null. NICHT der Vereinsname aus der "Verein"-Spalte — das Team-Kürzel besteht meist aus Landesverband-Kürzel + Nummer.
+  * SONDERFALL Madison: Hat die Tabelle eine Spalte "Mad.Nr." mit Werten wie "5R"/"5S"
+    (Zahl + R für rote bzw. S für schwarze Rückennummer), so ist die ZAHL die Team-Nummer
+    — beide Fahrer eines Teams bekommen denselben team-Wert, nämlich diese Zahl als Text
+    ("5"). Die Mad.Nr. ist dabei WEDER eine Start-Nr. NOCH eine Lauf-Nummer: steht keine
+    eigene "Startnr."-Spalte daneben, ist startNo null, und lauf/laufLabel bleiben null,
+    solange es keine echte Lauf-Spalte gibt.
 - Bei Team-Paaren/Mannschaften (z.B. Madison, Teamsprint, Mannschaftsverfolgung) ALLE Fahrer des Teams einzeln auflisten, falls einer oder mehrere "${lv}" sind; alle bekommen denselben lauf- und team-Wert
 - startPos: die Startposition dieses Fahrers/Teams. Genau einer dieser vier Werte oder null:
   * Einzelstart-Formate (Zeitfahren, Einzel-/Mannschaftsverfolgung — je nach Format EIN oder ZWEI Starter pro Lauf; beim 1000m-Zeitfahren startet oft nur eine Fahrerin pro Lauf, das ist normal und macht die Lauf-Spalte nicht ungültig): "ZG" (Zielgerade) oder "GG" (Gegengerade). Die Zuordnung steht NICHT in der Tabelle, sondern in einem Hinweissatz unter der Tabelle, z.B. "Die erstgenannte Fahrerin startet von der Zielgeraden". Diesen Satz wörtlich auswerten und auf die Zeilen-Reihenfolge INNERHALB des Laufs anwenden: bei dieser Formulierung startet der im Lauf zuerst genannte Fahrer von "ZG", der zweite (falls vorhanden) von "GG". Steht dort stattdessen "Gegengeraden", gilt es genau umgekehrt. Fehlt der Hinweissatz, ist die Position unbekannt -> null.

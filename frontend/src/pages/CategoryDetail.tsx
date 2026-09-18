@@ -28,6 +28,24 @@ const STRATEGY_OPTIONS = [
 
 type Strategy = 'import' | 'keep' | 'higher';
 
+/**
+ * Fahrerpaar eines Madison-Teams mit den Rücken­nummer-Farben, sofern sie aus
+ * der Ansetzung bekannt sind (Spalte "Mad.Nr.", z.B. "5R"/"5S"). Ohne diese
+ * Angabe bleibt die Darstellung wie bisher — Teams, die von Hand angelegt
+ * wurden, haben keine Farbe.
+ */
+function RiderPair({ team }: { team: Team }) {
+  if (!team.rider1) return <>—</>;
+  const mark = (bib?: string | null) =>
+    bib === 'R' || bib === 'S' ? <span className={`bib bib-${bib}`}>{bib}</span> : null;
+  if (!team.rider2) return <>{mark(team.rider1Bib)} {team.rider1}</>;
+  return (
+    <>
+      {mark(team.rider1Bib)} {team.rider1} / {mark(team.rider2Bib)} {team.rider2}
+    </>
+  );
+}
+
 export default function CategoryDetail() {
   const { id }                        = useParams<{ id: string }>();
   const navigate                      = useNavigate();
@@ -380,7 +398,7 @@ export default function CategoryDetail() {
                         )}
                         {isTeamPairs && (
                           <td className="text-muted text-sm">
-                            {team.rider1 && team.rider2 ? `${team.rider1} / ${team.rider2}` : team.rider1 ?? '—'}
+                            <RiderPair team={team} />
                           </td>
                         )}
                         <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
@@ -541,7 +559,7 @@ export default function CategoryDetail() {
                         {teams.some(t => t.club) && <td className="text-muted text-sm">{team.club ?? ''}</td>}
                         {isTeamPairs && (
                           <td className="text-muted">
-                            {team.rider1 && team.rider2 ? `${team.rider1} / ${team.rider2}` : team.rider1 ?? '—'}
+                            <RiderPair team={team} />
                           </td>
                         )}
                       </tr>

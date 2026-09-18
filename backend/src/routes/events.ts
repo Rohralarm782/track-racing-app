@@ -3,6 +3,7 @@ import { z } from 'zod';
 import Anthropic from '@anthropic-ai/sdk';
 import prisma from '../prisma';
 import { requireAdmin } from '../middleware/auth';
+import { pairMadisonEntries, type RawEntry } from '../lib/madisonPairing';
 
 const router = Router();
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -127,12 +128,15 @@ router.post('/:id/analyze-startlist', requireAdmin, async (req, res, next) => {
 Erkenne alle Altersklassen und liste die Teilnehmer je Altersklasse auf.
 Gib NUR JSON zurück (kein Markdown, kein Text davor/danach):
 
-{"ageClasses":[{"name":"U17 männlich","shortName":"U17m","teams":[{"number":1,"name":"Vorname Nachname","club":"Vereinsname","lv":"MEV"}]}],"plannedSprints":5,"raceKind":"MADISON"}
+{"ageClasses":[{"name":"U17 männlich","shortName":"U17m","teams":[{"numberRaw":"1","name":"Vorname Nachname","club":"Vereinsname","lv":"MEV"}]}],"plannedSprints":5,"raceKind":"MADISON"}
 
 Regeln:
 - Erkenne AK-Abschnitte an Überschriften (z.B. "U17 männlich", "Juniorinnen U19", "Elite Frauen")
 - shortName normalisieren: U13m, U13w, U15m, U15w, U17m, U17w, U19m, U19w, Elite m, Elite w, Masters m, Masters w
-- number: Startnummer als Ganzzahl
+- numberRaw: der Wert der Nummernspalte als ZEICHENKETTE, GENAU so wie er im
+  Dokument steht — also "7" bei einer reinen Zahl, aber "5R" bzw. "5S", wenn
+  dort ein Buchstabe angehängt ist. NICHTS abschneiden, nichts umrechnen,
+  nicht zu einer Zahl machen. Die Zusammenfassung erledigt das Programm.
 - name: "Vorname Nachname" (NICHT "Nachname, Vorname" — kein Komma!)
 - club: Vereinsname aus der Vereinsspalte, null wenn nicht vorhanden
 - lv: Landesverband-Kürzel aus der "LV"-Spalte (z.B. "MEV", "BRA", "NRW"), null wenn nicht vorhanden
@@ -146,21 +150,34 @@ Regeln:
   Weglassen, wenn nicht eindeutig erkennbar.
 
 WICHTIG — Team-Paare (z.B. Madison/Zweier-Mannschaftsfahren):
-Manche Startlisten haben eine Team-Nummer-Spalte (oft "Nr."), die über GENAU ZWEI Zeilen
-zusammengefasst/verschmolzen ist — das bedeutet, diese zwei Fahrer bilden EIN Team.
-Erkennst du dieses Muster (z.B. weil der Titel "Madison" oder "Zweier-Mannschaftsfahren"
-enthält, oder weil die Nummern-Spalte sichtbar über zwei Zeilen zusammengefasst ist):
-- Fasse die zwei Zeilen zu EINEM Team-Eintrag zusammen
-- number: die gemeinsame Team-Nummer (aus der zusammengefassten Spalte, NICHT die individuelle Start-Nr.)
-- name: Name des ERSTEN Fahrers
-- club, lv: Verein/Landesverband des ERSTEN Fahrers
-- rider2: Name des ZWEITEN Fahrers ("Vorname Nachname")
-- rider2Club: Verein des zweiten Fahrers, null wenn nicht vorhanden
-- rider2Lv: Landesverband des zweiten Fahrers, null wenn nicht vorhanden
-Bei normalen Einzel-Startlisten (kein Team-Paar-Muster) NIE rider2/rider2Club/rider2Lv angeben.
+Es gibt ZWEI Schreibweisen. Bei BEIDEN bilden zwei Fahrer EIN Team.
+
+(a) "Mad.Nr."-Spalte mit R/S-Endung — der häufigere Fall bei Meisterschaften:
+    Jeder Fahrer steht in einer EIGENEN Zeile mit einer EIGENEN Nummer, z.B.
+    "5R" (rote Rückennummer) und "5S" (schwarze Rückennummer). Die Zellen sind
+    NICHT verschmolzen. In diesem Fall:
+    - Gib jede Zeile EINZELN aus, mit numberRaw GENAU so wie im Dokument
+      ("5R", "5S") — fasse hier NICHTS zusammen und setze KEIN rider2.
+    - Die Zusammenfassung zu Teams macht das Programm anhand der R/S-Endung.
+    - Ist zusätzlich eine "Startnr."-Spalte vorhanden (individuelle Nummern wie
+      69, 70): diese NICHT verwenden. Maßgeblich ist allein die Mad.Nr.
+
+(b) Nummernspalte (oft "Nr."), die über GENAU ZWEI Zeilen zusammengefasst/
+    verschmolzen ist. Erkennst du dieses Muster:
+    - Fasse die zwei Zeilen zu EINEM Team-Eintrag zusammen
+    - numberRaw: die gemeinsame Team-Nummer (aus der zusammengefassten Spalte,
+      NICHT die individuelle Start-Nr.)
+    - name: Name des ERSTEN Fahrers
+    - club, lv: Verein/Landesverband des ERSTEN Fahrers
+    - rider2: Name des ZWEITEN Fahrers ("Vorname Nachname")
+    - rider2Club: Verein des zweiten Fahrers, null wenn nicht vorhanden
+    - rider2Lv: Landesverband des zweiten Fahrers, null wenn nicht vorhanden
+
+Bei normalen Einzel-Startlisten (weder (a) noch (b)) NIE rider2/rider2Club/rider2Lv angeben.
 
 - Überspringe durchgestrichene Einträge und Kopfzeilen
-- Dedupliziere nach Startnummer/Team-Nummer innerhalb einer AK
+- Dedupliziere nur ECHTE Doppelungen (dieselbe Zeile zweimal) innerhalb einer AK.
+  "5R" und "5S" sind KEINE Doppelung, sondern zwei verschiedene Fahrer — beide behalten.
 - Nur reines JSON, sonst nichts`,
           },
         ],
@@ -169,7 +186,26 @@ Bei normalen Einzel-Startlisten (kein Team-Paar-Muster) NIE rider2/rider2Club/ri
 
     const text = (message.content.find((c: any) => c.type === 'text') as any)?.text ?? '';
     const clean = text.replace(/```json\n?|```/g, '').trim();
-    res.json(JSON.parse(clean));
+    const parsed = JSON.parse(clean);
+
+    // ── Madison-Paarung: deterministisch, nicht vom Modell ─────────────────
+    // Das Modell liefert je Fahrer eine Zeile mit numberRaw ("5R"). Welche
+    // Zeilen ein Team bilden, entscheidet der Code — siehe madisonPairing.ts.
+    // Fasst das Modell (Fall b) bereits zusammen, trägt keine Zeile eine
+    // R/S-Endung und pairMadisonEntries lässt die Liste unverändert.
+    const ageClasses = Array.isArray(parsed?.ageClasses) ? parsed.ageClasses : [];
+    const warnings: string[] = [];
+    const blocking: string[] = [];
+    for (const ak of ageClasses) {
+      const raw: RawEntry[] = Array.isArray(ak?.teams) ? ak.teams : [];
+      const paired = pairMadisonEntries(raw);
+      ak.teams = paired.teams;
+      const tag = ak?.shortName ?? ak?.name ?? 'AK';
+      for (const w of paired.warnings) warnings.push(`${tag}: ${w}`);
+      for (const b of paired.blocking) blocking.push(`${tag}: ${b}`);
+    }
+
+    res.json({ ...parsed, ageClasses, warnings, blocking });
   } catch (e) { next(e); }
 });
 
@@ -188,6 +224,7 @@ router.post('/:id/apply-startlist', requireAdmin, async (req, res, next) => {
         teams: Array<{
           number: number; name: string; club: string | null; lv?: string | null;
           rider2?: string | null; rider2Club?: string | null; rider2Lv?: string | null;
+          rider1Bib?: string | null; rider2Bib?: string | null;
         }>;
       }>;
     };
@@ -214,6 +251,8 @@ router.post('/:id/apply-startlist', requireAdmin, async (req, res, next) => {
               rider2Lv: t.rider2Lv ?? null,
               rider1: t.rider2 ? t.name : null,
               rider2: t.rider2 ?? null,
+              rider1Bib: t.rider1Bib ?? null,
+              rider2Bib: t.rider2Bib ?? null,
               isFavorite: t.lv === 'MEV' || t.rider2Lv === 'MEV',
             })),
           });

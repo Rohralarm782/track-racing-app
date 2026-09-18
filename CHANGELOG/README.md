@@ -19,6 +19,7 @@ Beim Erhöhen der Version immer beides ändern:
 
 | Version | Datum | Inhalt |
 |---|---|---|
+| [3.0.0](3.0.0.md) | 18.09.2026 | Madison-Ansetzungen mit „Mad.Nr.“-Spalte (5R/5S für rote/schwarze Rückennummer) werden korrekt zu Teams zusammengefasst — vorher ging dabei still die Hälfte der Startliste verloren. Import zeigt vor dem Anwenden, was geschrieben wird, und sperrt bei Widersprüchen. R/S wird je Fahrer gespeichert und angezeigt. **Schema: `prisma db push`** |
 | [2.6.0](2.6.0.md) | 18.09.2026 | Offene Ordner (Verzeichnisindex) als Quelle: Unterordner werden mitgelesen und als Abschnitte auswählbar; PDFs mit nichtssagendem Dateinamen ("R03.pdf") werden über ihren Dokumentkopf zugeordnet und bekommen einen lesbaren Namen |
 | [2.5.0](2.5.0.md) | 18.09.2026 | SPINS: Ergebnisse gefahrener Läufe werden auch dann übernommen, wenn der Ausrichter keine PDFs hochlädt (Tabelle wird zu einem PDF gesetzt); Auswahl der Veranstaltung in der Quellen-Karte statt Kennung von Hand |
 | [2.4.0](2.4.0.md) | 18.09.2026 | SPINS Live Timing (`spins-live.de`) als Kommuniqué-Quelle: Ergebnis-PDFs werden über die Datei-Schnittstelle gelesen statt gescrapt, die Veranstaltung wird über Datum und Name gesucht. Eintragbar neben der Ausrichterseite in derselben Quelle. Zusätzlich: Schreibweise „Temporennen“ wird erkannt |

@@ -25,6 +25,8 @@ export interface Team {
   isFavorite?: boolean;
   rider1?: string | null;
   rider2?: string | null;
+  rider1Bib?: string | null;   // "R" / "S" — Rückennummer-Farbe im Madison
+  rider2Bib?: string | null;
   color?: string | null;
   pattern?: string | null;
 }
