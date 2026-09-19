@@ -245,6 +245,11 @@ export interface MevRider {
   startPos?: 'ZG' | 'GG' | 'B' | 'M' | null;
   // Nur im Massenstart: Platz innerhalb der Ballustrade-/Messlinien-Reihe (1-basiert)
   startSlot?: number | null;
+  // Platz in der Startreihenfolge, wenn das Dokument eine "Pos."-Spalte hat
+  // (z.B. "Startreihenfolge 100m fliegend") — 1 = startet zuerst. Weder
+  // Startnummer noch Lauf-Nummer. Fehlt bei Dokumenten, die vor Einführung
+  // der Erkennung analysiert wurden (wird beim Poll nachgetragen).
+  startOrder?: number | null;
 }
 
 export interface CommuniqueDocument {

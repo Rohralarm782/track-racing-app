@@ -68,6 +68,14 @@ function agoLabel(iso: string): string {
 // hinter dem Namen: "Carlotta (Lauf 11, ZG)", bei Massenstart ohne Läufe nur
 // "Dorothea (B 10)" (Zehnte an der Ballustrade), im Sprint-Finale
 // "Finn-Liam (Platz 3/4)".
+// Fehlt eine Lauf-Spalte, hat das Dokument aber eine Startreihenfolge ("Pos."-
+// Spalte der 100m-fliegend-Startlisten), steht dort "Carolina (Start 8)" —
+// achte Starterin von 17.
+// Bei Team-Einträgen (Madison & Co.) wird die Startposition NIE angezeigt: sie
+// gehört dem Team, nicht dem einzelnen Fahrer. Eine Angabe je Fahrer ist immer
+// eine Fehlauswertung der Ansetzung — real stand im Zeitplan "MEV: 20 (B 1)"
+// für Team 20, obwohl dessen Ansetzung überhaupt keine Startpositions-Spalte
+// hatte und die 1 nur die Zeilennummer des ersten gefundenen Fahrers war.
 //   ZG/GG = Ziel-/Gegengerade (Einzelstart: Zeitfahren, Verfolgung)
 //   B/M   = Ballustrade/Messlinie (Massenstart: Punktefahren, Madison, ...)
 // Die Lauf-Spalte enthält nicht immer eine Zahl — bei Sprint-Finals steht dort
@@ -80,9 +88,15 @@ function riderDetail(r: MevRider, heatTime?: string | null): string {
   const bits: string[] = [];
   if (r.lauf != null) bits.push(`Lauf ${r.lauf}`);
   else if (r.laufLabel) bits.push(r.laufLabel);
+  // Ohne Lauf-Angabe der Platz in der Startreihenfolge: "Start 8" = achter
+  // Starter. Nur als Ersatz für den Lauf — gibt es beides, ist der Lauf die
+  // maßgebliche Angabe und zwei Zahlen nebeneinander stiften nur Verwirrung.
+  else if (r.startOrder != null) bits.push(`Start ${r.startOrder}`);
   // Im Massenstart zusätzlich der Platz in der Reihe: "B 10" = Zehnter an der
   // Ballustrade. Im Einzelstart gibt es keinen Platz, dort bleibt es bei "ZG"/"GG".
-  if (r.startPos) bits.push(r.startSlot != null ? `${r.startPos} ${r.startSlot}` : r.startPos);
+  // Bei Team-Einträgen gar nicht: die Startposition gehört dem Team, eine
+  // Angabe je Fahrer ist immer falsch (siehe Kopfkommentar).
+  if (r.startPos && !r.team) bits.push(r.startSlot != null ? `${r.startPos} ${r.startSlot}` : r.startPos);
   if (heatTime) bits.push(`~${heatTime}`);
   return bits.length > 0 ? ` (${bits.join(', ')})` : '';
 }

@@ -17,7 +17,7 @@ const START_POSITIONS = ['ZG', 'GG', 'B', 'M'];
  * automatisch neu. Bei JEDER inhaltlichen Änderung an Prompt oder Auswertung
  * hochzählen — sonst behalten bereits analysierte Dokumente ihr altes Ergebnis.
  */
-export const MEV_ANALYSIS_VERSION = 6;
+export const MEV_ANALYSIS_VERSION = 7;
 
 export interface MevRider {
   name: string;
@@ -27,6 +27,7 @@ export interface MevRider {
   team: string | null;
   startNo: number | null;
   startPos: string | null;
+  startOrder: number | null;
 }
 
 // Was analyzeMevForDocument vom Dokument braucht — deckungsgleich mit dem
@@ -144,6 +145,7 @@ Finde alle Fahrer bzw. Teams, deren Landesverband-Kürzel (Spalte "LV" o.ä.) "$
 Prüfe außerdem:
 - ob die Tabelle überhaupt eine "LV"-Spalte (Landesverband) hat
 - ob die Tabelle eine "Lauf"-Spalte hat (Lauf-/Paarungs-Nummer, typisch bei Einzelstart-Formaten wie Zeitfahren oder Verfolgung, aber auch bei anderen Formaten möglich)
+- ob die Tabelle eine Startreihenfolge-Spalte hat (Überschrift "Pos.", "Position", "Startreihenfolge", "Startfolge" oder "Reihenfolge") — typisch bei "Startreihenfolge 100m fliegend", wo jeder Fahrer einzeln nacheinander startet (siehe startOrder unten)
 - ob die Tabelle eine "Team"/"Mannschaft"-Spalte hat (typisch bei Mannschafts-Disziplinen wie Teamsprint, Mannschaftsverfolgung, Madison — dort stehen mehrere Fahrer pro Lauf, gruppiert unter einem Team-Kürzel wie "${lv} 2" oder "${lv} 1")
 - die Startposition jedes gefundenen "${lv}"-Fahrers/Teams (siehe startPos unten)
 - die Gesamtzahl der Starter/Teams in der Tabelle
@@ -151,7 +153,7 @@ Prüfe außerdem:
 
 Gib NUR JSON zurück (kein Markdown, kein Text davor/danach):
 
-{"hasLvColumn":true,"mevRiders":[{"name":"Vorname Nachname","startNo":88,"lauf":9,"laufLabel":null,"team":"${lv} 2","startPos":"B","startSlot":10}],"heatCount":13,"starterCount":24,"roundCount":40}
+{"hasLvColumn":true,"mevRiders":[{"name":"Vorname Nachname","startNo":88,"lauf":9,"laufLabel":null,"team":"${lv} 2","startPos":"B","startSlot":10,"startOrder":null}],"heatCount":13,"starterCount":24,"roundCount":40}
 
 Regeln:
 - hasLvColumn: true, wenn die Tabelle eine LV-/Landesverband-Spalte hat, sonst false.
@@ -178,8 +180,14 @@ Regeln:
 - startPos: die Startposition dieses Fahrers/Teams. Genau einer dieser vier Werte oder null:
   * Einzelstart-Formate (Zeitfahren, Einzel-/Mannschaftsverfolgung — je nach Format EIN oder ZWEI Starter pro Lauf; beim 1000m-Zeitfahren startet oft nur eine Fahrerin pro Lauf, das ist normal und macht die Lauf-Spalte nicht ungültig): "ZG" (Zielgerade) oder "GG" (Gegengerade). Die Zuordnung steht NICHT in der Tabelle, sondern in einem Hinweissatz unter der Tabelle, z.B. "Die erstgenannte Fahrerin startet von der Zielgeraden". Diesen Satz wörtlich auswerten und auf die Zeilen-Reihenfolge INNERHALB des Laufs anwenden: bei dieser Formulierung startet der im Lauf zuerst genannte Fahrer von "ZG", der zweite (falls vorhanden) von "GG". Steht dort stattdessen "Gegengeraden", gilt es genau umgekehrt. Fehlt der Hinweissatz, ist die Position unbekannt -> null.
   * Massenstart-Formate (Punktefahren, Madison, Scratch, Ausscheidungsfahren): "B" (Ballustrade/Balustrade) oder "M" (Messlinie/Mess-linie). Die Startaufstellung besteht dort aus ZWEI nebeneinander oder untereinander stehenden Tabellen bzw. einer Spalte mit genau diesen Überschriften — maßgeblich ist, in welcher der beiden der Fahrer steht. Die zweite Tabelle kann auch "Cote d'Azur" überschrieben sein — das ist die Messlinien-Gruppe -> "M".
+    HARTE VORBEDINGUNG: "B"/"M" nur, wenn diese Überschriften bzw. die zwei getrennten Startreihen im Dokument WÖRTLICH vorkommen. Eine einzige durchlaufende Startaufstellung ohne solche Überschriften (real: "U17m – Startaufstellung Madison Quali 2" mit den Spalten Mad.Nr./Name/Vorname/UCI-ID/Verein/LV) enthält KEINE Startposition -> startPos null UND startSlot null. Nicht raten, nur weil es ein Massenstart-Rennen ist.
   * In allen anderen Fällen: null
 - startSlot: NUR bei Massenstart (startPos "B" oder "M"): die Position des Fahrers INNERHALB seiner Startreihe, also die 1-basierte Zeilennummer in genau der Tabelle, in der er steht (erste Zeile der Ballustrade-Tabelle = 1, zweite = 2, usw.; die Messlinien-/Cote-d'Azur-Tabelle wird separat ab 1 gezählt). Leerzeilen am Tabellenende nicht mitzählen. Gibt es eine eigene, GEFÜLLTE Positions-Spalte, deren Wert verwenden. Bei Einzelstart (startPos "ZG"/"GG") und wenn startPos null ist: immer null.
+  Niemals aus der Zeilenreihenfolge der gefundenen "${lv}"-Fahrer ableiten (also nicht 1, 2, 3 … über die Treffer hinweg durchzählen) und niemals aus dem R/S-Suffix einer Mad.Nr.: die zwei Fahrer eines Madison-Teams belegen EINEN Startplatz, nicht zwei. Bei Team-Disziplinen haben deshalb alle Fahrer eines Teams denselben startSlot — oder null.
+- startOrder: der Platz dieses Fahrers in der Startreihenfolge, also der Wert der mit "Pos."/"Position"/"Startreihenfolge"/"Startfolge"/"Reihenfolge" überschriebenen Spalte (1-basiert, 1 = startet zuerst). Das ist WEDER die Start-Nr. NOCH die Mad.Nr. NOCH eine Lauf-Nummer. Gibt es keine solche Spalte: null.
+  * Typischer Fall: "Startreihenfolge 100m fliegend" — jeder Fahrer fährt allein, die Tabelle hat "Pos." und "Startnr." nebeneinander. Dann ist startOrder der Wert aus "Pos." und startNo der Wert aus "Startnr.".
+  * NUR in Startlisten/Ansetzungen/Startreihenfolgen. In einer ERGEBNIS-Liste ist eine Spalte "Pl."/"Pos."/"Rang" die PLATZIERUNG und niemals eine Startreihenfolge -> dann startOrder null.
+  * Hat die Tabelle zusätzlich eine echte Lauf-Spalte, dürfen lauf und startOrder beide gefüllt sein.
 - heatCount: Gesamtzahl unterschiedlicher Werte in der Lauf-Spalte der GESAMTEN Tabelle (nicht nur bei "${lv}"-Zeilen) — Text-Werte wie "Platz 1/2" zählen genauso mit wie Zahlen. Leerzeilen ohne Fahrer am Tabellenende (z.B. eine vornummerierte Zeile "10." ohne Namen) NICHT mitzählen. null, falls die Tabelle keine Lauf-Spalte hat.
 - starterCount: Gesamtzahl der Fahrer/Teams (Zeilen) in der Tabelle, unabhängig von einer Lauf-Spalte
 - roundCount: die im Dokument genannte Rundenzahl. Aktiv danach suchen (siehe oben) — nur null zurückgeben, wenn wirklich nirgends im Dokument eine Rundenzahl steht
@@ -211,6 +219,9 @@ Regeln:
             // Freitext-Feld würde sonst ungeprüft in der Zeitplan-Zeile landen.
             startPos: START_POSITIONS.includes(r.startPos) ? r.startPos : null,
             startSlot: typeof r.startSlot === 'number' ? r.startSlot : null,
+            // Platz in der Startreihenfolge ("Pos."-Spalte, z.B. bei
+            // "Startreihenfolge 100m fliegend") — Bereichsprüfung unten.
+            startOrder: typeof r.startOrder === 'number' ? r.startOrder : null,
           }))
       : [];
     const hasLvColumn = typeof parsed?.hasLvColumn === 'boolean' ? parsed.hasLvColumn : null;
@@ -248,6 +259,36 @@ Regeln:
       const outOfRange = r.startSlot != null
         && (r.startSlot < 1 || (starterCount != null && r.startSlot > starterCount));
       if (!massStart || outOfRange) r.startSlot = null;
+    }
+
+    // Bei Mannschafts-Disziplinen gehört die Startposition dem TEAM, nicht dem
+    // einzelnen Fahrer: die zwei Fahrer eines Madison-Teams belegen EINEN Platz.
+    // Unterschiedliche startSlot-Werte innerhalb eines Teams sind damit sicher
+    // falsch. Real (DM 2026, "U17m Startaufstellung Madison Quali 2"): das Modell
+    // hat die gefundenen Fahrer einfach durchgezählt — Team 20 -> 1 und 2, in
+    // einem anderen Lauf Team 28 -> 1 und 2, Team 29 -> 3 und 4 — obwohl das
+    // Dokument gar keine Startpositions-Spalte hat. Im Zeitplan stand dann
+    // "MEV: 20 (B 1)". In dem Fall die Position fürs ganze Team verwerfen statt
+    // zu raten; das erfundene "B" fällt mit weg.
+    const slotsByTeam = new Map<string, Set<number>>();
+    for (const r of mevRiders) {
+      if (r.team == null || r.startSlot == null) continue;
+      if (!slotsByTeam.has(r.team)) slotsByTeam.set(r.team, new Set());
+      slotsByTeam.get(r.team)!.add(r.startSlot);
+    }
+    for (const r of mevRiders) {
+      if (r.team == null) continue;
+      if ((slotsByTeam.get(r.team)?.size ?? 0) > 1) { r.startSlot = null; r.startPos = null; }
+    }
+
+    // Die Startreihenfolge ist ein Platz im Starterfeld: 1 bis Starterzahl. Eine
+    // Startnummer oder eine Platzierung aus einer Ergebnisliste sprengt diesen
+    // Bereich meist; zusätzlich greift die Anzeige-Regel im Zeitplan.
+    for (const r of mevRiders) {
+      if (r.startOrder != null
+        && (r.startOrder < 1 || (starterCount != null && r.startOrder > starterCount))) {
+        r.startOrder = null;
+      }
     }
 
     // Ausscheidungsfahren: die Rundenzahl steht praktisch nie im Dokument,
