@@ -131,6 +131,15 @@ Hat die Tabelle dagegen eine LV-Spalte, ist AUSSCHLIESSLICH diese Spalte maßgeb
     const message = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 1500,
+      // Ohne diese Angabe arbeitet die Auswertung mit dem Vorgabewert 1.0 und
+      // liefert bei JEDEM Durchlauf derselben Datei ein anderes Ergebnis —
+      // real aufgetreten (DM Öschelbronn, U15m Verfolgung): vier Neuanalysen
+      // desselben Kommuniqués ergaben nacheinander nur Namen, Namen mit
+      // Startposition, Namen mit falschen Lauf-Nummern und wieder Namen mit
+      // Startposition. 0 macht das Ergebnis reproduzierbar. Es wird dadurch
+      // nicht automatisch richtig — aber ohne Reproduzierbarkeit lässt sich
+      // eine Verbesserung nicht von Zufall unterscheiden.
+      temperature: 0,
       messages: [{
         role: 'user',
         content: [

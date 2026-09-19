@@ -27,19 +27,51 @@ export function genderFromAk(ak: string | null | undefined): 'm' | 'w' | null {
   return null;
 }
 
-// Übliche Renndauer nach Distanz UND Geschlecht. Distanz wird — wie bisher —
-// per Wortgrenze aus dem disciplineLabel gematcht ("3000m"); fehlt sie, greift
-// "default". Der Wert wird dann geschlechtsspezifisch ausgelesen; ohne
-// eindeutiges Geschlecht (gender === null) fällt es auf den m-Wert zurück.
+/**
+ * Vereinheitlicht die Schreibweise einer Distanzangabe, damit der Vergleich
+ * nicht an Formatierungen scheitert. Die Zeitplan-Auswertung übernimmt den
+ * Disziplin-Text so, wie er im PDF steht — und das ist nicht einheitlich:
+ * "3000m Mannschaftsverfolgung", aber auch "2.000 m Einerverfolgung".
+ * Verglichen wurde bisher gegen den Tabellenschlüssel "2000m", weshalb die
+ * Punkt-Schreibweise durch jedes Raster fiel und still auf "default" landete
+ * (real aufgetreten, DM Öschelbronn: U15m 2.000 m Einerverfolgung rechnete mit
+ * 3,0 statt 2,5 Minuten je Lauf).
+ *
+ * Normalisiert wird nur, was die Distanz betrifft:
+ *   - Tausendertrennzeichen ZWISCHEN Ziffern entfernen: "2.000" → "2000"
+ *     (Punkt, Komma sowie schmales/geschütztes Leerzeichen; das normale
+ *     Leerzeichen bewusst NICHT, damit "Lauf 1 500" nicht zu "1500" wird)
+ *   - Leerraum zwischen Zahl und Einheit entfernen: "2000 m" → "2000m"
+ * Alles andere bleibt unangetastet, nur kleingeschrieben.
+ */
+function normalizeDistanceText(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/(\d)[.,\u00a0\u202f](\d{3})(?!\d)/g, '$1$2')
+    .replace(/(\d)\s*m\b/g, '$1m');
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Übliche Renndauer nach Distanz UND Geschlecht. Distanz wird per Wortgrenze
+// aus dem disciplineLabel gematcht ("3000m") — beide Seiten vorher über
+// normalizeDistanceText() vereinheitlicht, damit "2.000 m" und "2000m"
+// denselben Tabelleneintrag treffen. Fehlt die Distanz, greift "default".
+// Der Wert wird dann geschlechtsspezifisch ausgelesen; ohne eindeutiges
+// Geschlecht (gender === null) fällt es auf den m-Wert zurück.
 function typicalRaceMinutes(
   disciplineLabel: string,
   gender: 'm' | 'w' | null,
   distances: DistanceRaceMinutes,
 ): number {
   const g: 'm' | 'w' = gender ?? 'm';
+  const label = normalizeDistanceText(disciplineLabel);
   for (const [key, val] of Object.entries(distances)) {
     if (key === 'default') continue;
-    if (new RegExp(`\\b${key}\\b`, 'i').test(disciplineLabel)) return val[g];
+    const needle = escapeRegExp(normalizeDistanceText(key));
+    if (new RegExp(`\\b${needle}\\b`, 'i').test(label)) return val[g];
   }
   return distances.default[g];
 }
@@ -279,8 +311,16 @@ async function nudgeCategory(ak: string, disciplineLabel: string, massStart: boo
  * Wird nach JEDER neuen "Aktueller Stand"-Meldung aufgerufen (siehe PUT
  * /events/:id/status in schedule.ts). Vergleicht die real vergangene Zeit
  * seit der letzten Meldung mit der Summe der aktuellen Schätzungen für die
- * dazwischen liegenden Zeitplan-Einträge und verschiebt deren Kategorien
- * anteilig in Richtung der beobachteten Realität.
+ * dazwischen liegenden RENNEN und verschiebt deren Kategorien anteilig in
+ * Richtung der beobachteten Realität.
+ *
+ * Wichtig dabei: gelernt wird ausschließlich über Rennen, gemessen wurde aber
+ * Wanduhrzeit. Warm-up-/Pausenblöcke und Siegerehrungen zwischen den beiden
+ * Meldungen wurden früher voll auf die Rennkategorien draufgerechnet — der
+ * Korrekturfaktor konnte dadurch nur nach oben wandern, und zwar bei jedem
+ * Wettkampftag erneut (real aufgetreten: U15m 2.000 m Einerverfolgung stand
+ * bei ~1,75 und schätzte 7 statt 4 Minuten je Lauf). Ihr Zeitanteil wird
+ * deshalb abgezogen, bevor das Verhältnis gebildet wird.
  */
 export async function recalibrateFromStatusUpdate(
   eventId: string,
@@ -303,14 +343,40 @@ export async function recalibrateFromStatusUpdate(
   const realElapsedMin = (at.getTime() - previous.createdAt.getTime()) / 60000;
   if (realElapsedMin <= 0 || realElapsedMin > 240) return; // unplausibel (z.B. Tagesende/lange Pause) — nicht lernen
 
-  const between = await prisma.scheduleEntry.findMany({
-    where: { eventId, type: 'RACE', order: { gte: prevEntry.order, lt: newEntry.order } },
+  // ALLE Einträge des Abschnitts laden, nicht nur die Rennen: die Zeit
+  // zwischen zwei Meldungen enthält auch Warm-up-/Pausenblöcke (INFO) und
+  // Siegerehrungen (CEREMONY). Gelernt wird nur über Rennen — deshalb muss
+  // deren Zeitanteil unten abgezogen werden, sonst wandert jede Pause als
+  // vermeintliche Rennzeit in den Korrekturfaktor.
+  const betweenAll = await prisma.scheduleEntry.findMany({
+    where: { eventId, order: { gte: prevEntry.order, lt: newEntry.order } },
     include: { linkedDocument: { select: { roundCount: true, heatCount: true } } },
+    orderBy: { order: 'asc' },
   });
+  const between = betweenAll.filter(e => e.type === 'RACE');
   if (between.length === 0) return;
 
   const settings = await getSettings();
   const event = await prisma.event.findUnique({ where: { id: eventId }, select: { trackM: true } });
+
+  // Zeitanteil der Nicht-Rennen im Abschnitt: Ehrungen nach der Blockrechnung
+  // (gemeinsame Rüstzeit), Pausen/Warm-up nach der vom Veranstalter geplanten
+  // Dauer. Ein INFO-Eintrag ohne geplante Dauer zählt mit 0 — konservativ, er
+  // macht die Schätzung dann höchstens wie bisher zu lang, nie zu kurz.
+  const ceremonyMin = ceremonyBlockMinutes(betweenAll, settings);
+  let nonRaceMin = 0;
+  for (const e of betweenAll) {
+    if (e.type === 'RACE') continue;
+    if (e.type === 'CEREMONY') {
+      nonRaceMin += ceremonyMin.get(e.id) ?? settings.ceremonyBaseMin;
+      continue;
+    }
+    if (e.plannedDurationMin != null && e.plannedDurationMin > 0) nonRaceMin += e.plannedDurationMin;
+  }
+  const raceElapsedMin = realElapsedMin - nonRaceMin;
+  // Bleibt nach Abzug nichts übrig, war der Abschnitt überwiegend Pause —
+  // daraus lässt sich über die Renndauer nichts lernen.
+  if (raceElapsedMin <= 0) return;
 
   let predictedTotal = 0;
   const withEstimate: Array<{ ak: string; disciplineLabel: string; massStart: boolean }> = [];
@@ -323,7 +389,7 @@ export async function recalibrateFromStatusUpdate(
   }
   if (predictedTotal <= 0 || withEstimate.length === 0) return;
 
-  const errorRatio = realElapsedMin / predictedTotal;
+  const errorRatio = raceElapsedMin / predictedTotal;
   if (errorRatio < MIN_PLAUSIBLE_RATIO || errorRatio > MAX_PLAUSIBLE_RATIO) return; // Ausreißer ignorieren (z.B. lange Pause mit reingerechnet)
 
   for (const cat of withEstimate) {
