@@ -474,6 +474,17 @@ model CommuniqueDocument {
   starterCount  Int?      // Gesamtzahl Starter/Teams laut Tabelle
   roundCount    Int?      // Rundenzahl des Rennens (Massenstart-Formate); bei Ausscheidungsfahren = starterCount*2 statt Textfund (siehe mevDetect.ts)
   mevAnalyzedAt DateTime? // wann die MEV-Analyse zuletzt gelaufen ist (null = noch nicht analysiert)
+  // Abschnitte EINES Dokuments, das mehrere Startaufstellungen enthält:
+  // [{ index, title, runNo, phaseLabel, heatCount, starterCount, roundCount }].
+  // Die Fahrer stehen weiterhin gesammelt in mevRiders und tragen dort ihren
+  // Abschnitt (MevRider.section) — eine Quelle je Fahrer, keine zweite Liste.
+  // Leeres Array = Normalfall (ein Rennen je Dokument), dann
+  // gelten allein die Felder darüber. Bei zwei Abschnitten tragen die Felder
+  // darüber weiterhin die Werte des Abschnitts mit den meisten MEV-Fahrern,
+  // damit ältere Ansichten und die Dauer-Schätzung unverändert weiterlaufen.
+  // Die Reihenfolge im Array ist die Reihenfolge IM DOKUMENT — nicht die der
+  // Lauf-Nummern: in "R13-R14" steht R14 zuerst.
+  sections      Json      @default("[]")
   mevVersion    Int       @default(0) // Stand des Analyse-Prompts (siehe MEV_ANALYSIS_VERSION in mevDetect.ts); kleiner = wird beim nächsten Poll neu analysiert
 
   // ─── Automatische Ersetzung (K12 → K12A → K12B) ────────────────────────────
@@ -489,10 +500,13 @@ model CommuniqueDocument {
   supersededBy   CommuniqueDocument?  @relation("Supersession", fields: [supersededById], references: [id], onDelete: SetNull)
   supersedes     CommuniqueDocument[] @relation("Supersession")
 
-  scheduleEntry ScheduleEntry?
+  // Listen statt 1:1, seit linkedDocumentId/linkedResultDocumentId kein @unique
+  // mehr tragen. Beide Rückrelationen werden im Code nicht gelesen; sie stehen
+  // hier, weil Prisma die Gegenseite verlangt.
+  scheduleEntries ScheduleEntry[]
   // Reverse von linkedResultDocumentId (siehe ScheduleEntry) — falls DIESES
   // Dokument als Ergebnis zu einem Zeitplan-Eintrag verknüpft ist.
-  scheduleEntryAsResult ScheduleEntry? @relation("ScheduleEntryResult")
+  scheduleEntriesAsResult ScheduleEntry[] @relation("ScheduleEntryResult")
   // Zeitplan-Einträge, die aus DIESEM Dokument automatisch importiert wurden
   // (nur bei docType=ZEITPLAN relevant) — siehe sourceDocumentId oben.
   sourceForEntries ScheduleEntry[] @relation("ScheduleEntrySource")
@@ -538,8 +552,21 @@ model ScheduleEntry {
   massStart       Boolean           @default(false) // true = Massenstart-Format, Starterzahl wird nicht angezeigt
   order           Int               // Reihenfolge über die gesamte Veranstaltung hinweg
 
-  linkedDocumentId String?             @unique
+  // KEIN @unique (mehr): Eine Ansetzung kann MEHRERE Zeitplan-Einträge bedienen.
+  // Real (DM 2026): "R13-R14 Ansetzung Punktefahren U15m.pdf" enthält zwei
+  // vollständige Startaufstellungen (A-Lauf und B-Lauf), während der Ablaufplan
+  // zwei getrennte Einträge führt. Mit @unique bekam nur einer der beiden Läufe
+  // die Ansetzung, der andere blieb leer. Mehrfachvergabe ist in autoMatch eng
+  // begrenzt: nur für Dokumente mit mehreren erkannten Abschnitten (siehe
+  // CommuniqueDocument.sections) und nur an Einträge, deren Phase zu einem noch
+  // freien Abschnitt passt.
+  linkedDocumentId String?
   linkedDocument    CommuniqueDocument? @relation(fields: [linkedDocumentId], references: [id], onDelete: SetNull)
+  // Welcher Abschnitt des verknüpften Dokuments zu DIESEM Eintrag gehört
+  // (0-basierter Index in CommuniqueDocument.sections). null = Dokument hat nur
+  // einen Abschnitt, oder die Zuordnung wurde von Hand gesetzt — dann leitet die
+  // Zeitplan-Route den Abschnitt aus der Phase ab.
+  linkedSectionIndex Int?
   // true = linkedDocument wurde VON HAND verknüpft (PATCH /schedule-entries/:id).
   // autoMatch fasst solche Verknüpfungen nie an (weder Disziplin-Selbstheilung
   // noch Nicht-Anker-Serien-Entkopplung), damit ein Poll/Abgleich die bewusste
@@ -549,7 +576,9 @@ model ScheduleEntry {
   // Verknüpftes Ergebnis-Kommuniqué, sobald verfügbar — bewusst getrennt von
   // linkedDocument (Startliste/Ansetzung), damit die dortigen MEV-Namen auch
   // nach Veröffentlichung des Ergebnisses weiter angezeigt werden können.
-  linkedResultDocumentId String?             @unique
+  // KEIN @unique, analog zu linkedDocumentId: ein Ergebnis-Kommuniqué mit zwei
+  // Läufen gehört zu zwei Zeitplan-Einträgen.
+  linkedResultDocumentId String?
   linkedResultDocument    CommuniqueDocument? @relation("ScheduleEntryResult", fields: [linkedResultDocumentId], references: [id], onDelete: SetNull)
   // Wie linkedDocumentManual, aber für das Ergebnis-Kommuniqué.
   linkedResultManual Boolean @default(false)

@@ -188,6 +188,79 @@ export function inferCodeForEntry(disciplineLabel: string): string | null {
   return matches.length === 1 ? matches[0][0] : null;
 }
 
+// ── Ansetzungen mit mehreren Läufen ──────────────────────────────────────────
+// Eine Datei kann mehrere vollständige Startaufstellungen enthalten (real:
+// "R13-R14 Ansetzung Punktefahren U15m.pdf" mit A-Lauf und B-Lauf), während der
+// Ablaufplan zwei getrennte Einträge führt. Solche Dokumente dürfen deshalb
+// MEHRFACH verknüpft werden — aber nur an Einträge, deren Phase zu einem noch
+// freien Abschnitt passt. Ohne diese harte Bedingung wäre das Dokument ein
+// beliebig oft vergebbarer Joker, der reihenweise falsche Verknüpfungen erzeugt.
+// Dokumente mit weniger als zwei Abschnitten verhalten sich unverändert: ein
+// Dokument, ein Eintrag.
+export interface DocSection {
+  index: number;
+  title: string | null;
+  runNo: number | null;
+  phaseLabel: string | null;
+  heatCount: number | null;
+  starterCount: number | null;
+  roundCount: number | null;
+}
+
+/** Abschnitte eines Dokuments (siehe MevSection in mevDetect.ts). Leer = einteilig. */
+export function docSections(doc: { sections?: unknown } | null | undefined): DocSection[] {
+  const raw = doc && Array.isArray((doc as any).sections) ? (doc as any).sections as any[] : [];
+  if (raw.length < 2) return [];
+  return raw.map((sec, i) => ({
+    index: typeof sec?.index === 'number' ? sec.index : i,
+    title: typeof sec?.title === 'string' ? sec.title : null,
+    runNo: typeof sec?.runNo === 'number' ? sec.runNo : null,
+    phaseLabel: typeof sec?.phaseLabel === 'string' ? sec.phaseLabel : null,
+    heatCount: typeof sec?.heatCount === 'number' ? sec.heatCount : null,
+    starterCount: typeof sec?.starterCount === 'number' ? sec.starterCount : null,
+    roundCount: typeof sec?.roundCount === 'number' ? sec.roundCount : null,
+  }));
+}
+
+// Phase des Zeitplan-Eintrags gegen die Phase aus der Abschnitts-Überschrift.
+// Real gepaart: "A-Lauf" ↔ "A-Lauf", "Qualifikation 1" ↔ "Quali 1",
+// "2. Vorlauf" ↔ "2. Vorlauf". Bewusst ohne Fuzzy-Logik: was hier nicht
+// zusammenpasst, bleibt unverknüpft statt falsch verknüpft.
+function phaseMatchesSection(entryPhase: string | null, sectionPhase: string | null): boolean {
+  if (!entryPhase || !sectionPhase) return false;
+  const a = normalize(entryPhase);
+  const b = normalize(sectionPhase);
+  if (!a || !b) return false;
+  if (a === b || a.includes(b) || b.includes(a)) return true;
+  // Gleiche Ziffer + gemeinsamer Wortanfang ("quali1" ↔ "qualifikation1").
+  const da = a.match(/\d+/)?.[0] ?? null;
+  const db = b.match(/\d+/)?.[0] ?? null;
+  if (da && db && da === db) {
+    const sa = a.replace(/\d+/g, '');
+    const sb = b.replace(/\d+/g, '');
+    const short = sa.length <= sb.length ? sa : sb;
+    const long = sa.length <= sb.length ? sb : sa;
+    if (short.length >= 4 && long.startsWith(short.slice(0, 4))) return true;
+  }
+  return false;
+}
+
+/**
+ * Welcher Abschnitt eines mehrteiligen Dokuments gehört zu diesem Eintrag?
+ * null = kein eindeutiger Treffer (auch bei mehreren passenden Abschnitten —
+ * dann lieber gar nicht zuordnen). Wird sowohl beim automatischen Verknüpfen
+ * als auch beim Ausliefern des Zeitplans benutzt, damit beide Seiten dieselbe
+ * Antwort geben.
+ */
+export function resolveSectionIndex(
+  sections: DocSection[],
+  entry: { phase: string | null },
+): number | null {
+  if (sections.length < 2) return null;
+  const hits = sections.filter(sec => phaseMatchesSection(entry.phase, sec.phaseLabel));
+  return hits.length === 1 ? hits[0].index : null;
+}
+
 interface MatchableEntry {
   id: string;
   ak: string;
@@ -444,9 +517,27 @@ export async function autoMatch(eventId: string) {
   const entryRank = rankEntries(allRaceEntries);
 
   for (const { docType, field, manualField } of passes) {
-    const alreadyLinked = new Set(
-      allRaceEntries.filter(e => e[field]).map(e => e[field] as string)
-    );
+    // Einteilige Dokumente: einmal vergeben, dann raus. Mehrteilige Dokumente
+    // (Ansetzung für zwei Läufe): nicht das Dokument ist belegt, sondern der
+    // einzelne Abschnitt. Die Belegung wird aus den BESTEHENDEN Verknüpfungen
+    // aufgebaut — bevorzugt aus dem gespeicherten linkedSectionIndex, sonst über
+    // die Phase abgeleitet, damit auch von Hand gesetzte Links zählen.
+    const alreadyLinked = new Set<string>();
+    const usedSections = new Map<string, Set<number>>();
+    for (const e of allRaceEntries) {
+      const docId = e[field] as string | null;
+      if (!docId) continue;
+      const secs = docSections(docById.get(docId));
+      if (secs.length < 2) { alreadyLinked.add(docId); continue; }
+      const idx = field === 'linkedDocumentId' && typeof (e as any).linkedSectionIndex === 'number'
+        ? (e as any).linkedSectionIndex as number
+        : resolveSectionIndex(secs, e);
+      if (idx == null) { alreadyLinked.add(docId); continue; } // unklar → wie bisher sperren
+      if (!usedSections.has(docId)) usedSections.set(docId, new Set());
+      usedSections.get(docId)!.add(idx);
+      // Sind alle Abschnitte belegt, ist das Dokument insgesamt durch.
+      if (usedSections.get(docId)!.size >= secs.length) alreadyLinked.add(docId);
+    }
     // Nicht-Anker-Serien (2./3. S.) bleiben absichtlich unverknüpft — sie erben
     // vom Anker (1. S.). Nur so bekommt das Dokument keinen fremden 2./3.-Serie-
     // Eintrag angehängt.
@@ -454,7 +545,15 @@ export async function autoMatch(eventId: string) {
     const docRank = rankDocs(docs, docType);
 
     for (const entry of openEntries) {
-      const available = docs.filter(d => !alreadyLinked.has(d.id));
+      const available = docs.filter(d => {
+        if (alreadyLinked.has(d.id)) return false;
+        const secs = docSections(d);
+        if (secs.length < 2) return true;
+        // Mehrteilig: nur verfügbar, wenn genau ein Abschnitt zu diesem Eintrag
+        // passt UND dieser noch frei ist.
+        const idx = resolveSectionIndex(secs, entry);
+        return idx != null && !(usedSections.get(d.id)?.has(idx) ?? false);
+      });
 
       // Ergebnis-Sonderweg: zuerst über die bereits verknüpfte Startliste (starker
       // Anker, siehe findResultViaStartlist), dann als Rückfall das generische
@@ -474,17 +573,76 @@ export async function autoMatch(eventId: string) {
         // Automatisch gesetzte Verknüpfung → manuell-Flag ausdrücklich auf false,
         // damit ein evtl. veraltetes Flag (z.B. nach gelöschtem Dokument) nicht
         // fälschlich eine Auto-Zuordnung vor der Selbstheilung schützt.
-        await prisma.scheduleEntry.update({ where: { id: entry.id }, data: { [field]: match.id, [manualField]: false } as any });
+        const secs = docSections(docById.get(match.id));
+        const sectionIndex = secs.length >= 2 ? resolveSectionIndex(secs, entry) : null;
+        await prisma.scheduleEntry.update({
+          where: { id: entry.id },
+          data: {
+            [field]: match.id,
+            [manualField]: false,
+            // Nur der Startlisten-Durchlauf führt den Abschnitt am Eintrag mit;
+            // für Ergebnisse wird er bei Bedarf über die Phase abgeleitet.
+            ...(field === 'linkedDocumentId' ? { linkedSectionIndex: sectionIndex } : {}),
+          } as any,
+        });
         (entry as any)[field] = match.id; // lokale Kopie mitziehen (Ergebnis-Pass liest linkedDocumentId)
         (entry as any)[manualField] = false;
-        alreadyLinked.add(match.id);
+        if (field === 'linkedDocumentId') (entry as any).linkedSectionIndex = sectionIndex;
+        if (secs.length >= 2 && sectionIndex != null) {
+          if (!usedSections.has(match.id)) usedSections.set(match.id, new Set());
+          usedSections.get(match.id)!.add(sectionIndex);
+          if (usedSections.get(match.id)!.size >= secs.length) alreadyLinked.add(match.id);
+          console.log(`Zeitplan-Matching: geteilte Ansetzung — "${entry.disciplineLabel} ${entry.phase ?? ''}" (${entry.ak}) → ${match.fileName} [Abschnitt ${sectionIndex + 1}/${secs.length}]`);
+        } else {
+          alreadyLinked.add(match.id);
+        }
       }
     }
   }
 }
 
-export function loadScheduleWithLinks(eventId: string) {
-  return prisma.scheduleEntry.findMany({
+/**
+ * Schneidet ein mehrteiliges Dokument auf den Abschnitt zu, der zu DIESEM
+ * Eintrag gehört: Fahrer, Laufzahl, Starterzahl und Rundenzahl kommen dann aus
+ * der richtigen Startaufstellung statt aus beiden gemischt. Zusätzlich
+ * sectionLabel/sectionCount für den Hinweis im Zeitplan ("A-Lauf · 1 von 2").
+ *
+ * Einteilige Dokumente (sections leer) bleiben unverändert — dieser Weg ist für
+ * den Normalfall bewusst ein No-op.
+ */
+export function applySectionView<T extends { phase: string | null; linkedSectionIndex?: number | null; linkedDocument?: any }>(entry: T): T {
+  const doc = entry.linkedDocument;
+  if (!doc) return entry;
+  const secs = docSections(doc);
+  if (secs.length < 2) return entry;
+
+  const idx = typeof entry.linkedSectionIndex === 'number'
+    ? entry.linkedSectionIndex
+    : resolveSectionIndex(secs, entry);
+  const sec = idx != null ? secs.find(x => x.index === idx) ?? null : null;
+  if (!sec) {
+    // Abschnitt nicht eindeutig: lieber das ganze Dokument zeigen als den
+    // falschen Lauf. Die Zahl der Abschnitte wird trotzdem gemeldet, damit im
+    // Zeitplan erkennbar bleibt, dass die Datei mehrere Läufe enthält.
+    doc.sectionCount = secs.length;
+    doc.sectionLabel = null;
+    return entry;
+  }
+
+  const riders = Array.isArray(doc.mevRiders) ? (doc.mevRiders as any[]) : [];
+  const own = riders.filter(r => (typeof r?.section === 'number' ? r.section : 0) === sec.index);
+  doc.mevRiders = own;
+  doc.mevNames = own.map(r => r?.name).filter((n: unknown) => typeof n === 'string');
+  doc.heatCount = sec.heatCount;
+  doc.starterCount = sec.starterCount;
+  doc.roundCount = sec.roundCount;
+  doc.sectionCount = secs.length;
+  doc.sectionLabel = sec.phaseLabel ?? (sec.runNo != null ? `R${sec.runNo}` : null);
+  return entry;
+}
+
+export async function loadScheduleWithLinks(eventId: string) {
+  const entries = await prisma.scheduleEntry.findMany({
     where: { eventId },
     orderBy: { order: 'asc' },
     include: {
@@ -492,11 +650,13 @@ export function loadScheduleWithLinks(eventId: string) {
         select: {
           id: true, fileName: true, remoteModifiedAt: true, mevNames: true, mevRiders: true,
           heatCount: true, roundCount: true, starterCount: true, mevAnalyzedAt: true,
+          sections: true,
         },
       },
       linkedResultDocument: { select: { id: true, fileName: true, remoteModifiedAt: true } },
     },
   });
+  return entries.map(e => applySectionView(e as any)) as typeof entries;
 }
 
 // ─── Automatischer Import aus einem Zeitplan-Kommuniqué ────────────────────

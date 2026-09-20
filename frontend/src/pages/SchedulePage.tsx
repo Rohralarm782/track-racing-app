@@ -1240,12 +1240,33 @@ export default function SchedulePage() {
                           </span>
                         )}
                         {entry.linkedDocument ? (
-                          <span
-                            style={{ color: 'var(--c-primary)', cursor: 'pointer', whiteSpace: 'nowrap' }}
-                            onClick={() => setViewingDocId(entry.linkedDocument!.id)}
-                          >
-                            📄 Kommuniqué öffnen
-                          </span>
+                          <>
+                            <span
+                              style={{ color: 'var(--c-primary)', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                              onClick={() => setViewingDocId(entry.linkedDocument!.id)}
+                            >
+                              📄 Kommuniqué öffnen
+                            </span>
+                            {/* Eine Ansetzung, die zwei Läufe enthält (real: "R13-R14
+                                Ansetzung Punktefahren U15m"): Namen, Startplätze und
+                                Laufzahl oben gehören bereits nur zu DIESEM Lauf — das
+                                Kennzeichen sagt, welcher Abschnitt gezeigt wird und dass
+                                dieselbe Datei auch am Nachbar-Eintrag hängt. */}
+                            {(entry.linkedDocument.sectionCount ?? 0) >= 2 && (
+                              <span
+                                title={entry.linkedDocument.sectionLabel
+                                  ? `Die Datei enthält ${entry.linkedDocument.sectionCount} Startaufstellungen — angezeigt wird ${entry.linkedDocument.sectionLabel}.`
+                                  : `Die Datei enthält ${entry.linkedDocument.sectionCount} Startaufstellungen; der passende Abschnitt ist nicht eindeutig, angezeigt wird die ganze Datei.`}
+                                style={{
+                                  fontSize: 11, fontWeight: 500, color: 'var(--c-text-muted)',
+                                  background: 'var(--c-bg-muted, #f3f4f6)', padding: '1px 7px',
+                                  borderRadius: 10, whiteSpace: 'nowrap',
+                                }}
+                              >
+                                geteilt{entry.linkedDocument.sectionLabel ? ` · ${entry.linkedDocument.sectionLabel}` : ''}
+                              </span>
+                            )}
+                          </>
                         ) : !canEdit ? (
                           <span style={{ whiteSpace: 'nowrap' }}>kein Kommuniqué zugeordnet</span>
                         ) : null}

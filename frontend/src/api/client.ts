@@ -234,6 +234,10 @@ export type Discipline = 'SPRINT' | 'AUSDAUER' | 'ALLGEMEIN';
 
 export interface MevRider {
   name: string;
+  // Abschnitt (Startaufstellung) innerhalb des Dokuments — 0 bei einteiligen
+  // Ansetzungen. Fehlt bei Dokumenten, die vor Einführung der Abschnitte
+  // analysiert wurden.
+  section?: number;
   lauf: number | null;
   // Textueller Lauf, wenn die Lauf-Spalte keine Zahl enthält — z.B. "Platz 3/4"
   // im Sprint-Finale. Entweder lauf ODER laufLabel ist gesetzt, nie beides.
@@ -393,6 +397,15 @@ export interface ScheduleEntryLinkedDoc {
   roundCount: number | null;
   starterCount: number | null;
   mevAnalyzedAt: string | null;
+  // Nur bei einer Ansetzung für mehrere Läufe (real: "R13-R14 Ansetzung
+  // Punktefahren U15m.pdf" mit A-Lauf und B-Lauf): Zahl der Startaufstellungen
+  // in der Datei. Die Felder oben sind dann bereits auf den Abschnitt DIESES
+  // Eintrags zugeschnitten — siehe applySectionView im Backend.
+  sectionCount?: number | null;
+  // Bezeichnung des zugeschnittenen Abschnitts ("A-Lauf", "Quali 2", "R14").
+  // null trotz sectionCount = Abschnitt nicht eindeutig zuzuordnen, angezeigt
+  // wird dann das ganze Dokument.
+  sectionLabel?: string | null;
 }
 
 export interface ScheduleEntryResultDoc {
@@ -415,6 +428,9 @@ export interface ScheduleEntry {
   massStart: boolean;
   order: number;
   linkedDocumentId: string | null;
+  // Welcher Abschnitt der verknüpften Ansetzung zu diesem Eintrag gehört
+  // (0-basiert); null bei einteiligen Ansetzungen.
+  linkedSectionIndex?: number | null;
   linkedDocument: ScheduleEntryLinkedDoc | null;
   linkedResultDocumentId: string | null;
   linkedResultDocument: ScheduleEntryResultDoc | null;

@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import prisma from '../prisma';
 import { requireAdmin } from '../middleware/auth';
-import { analyzeZeitplanPdf, autoMatch, loadScheduleWithLinks, ScheduleEntryInputSchema } from '../lib/scheduleImport';
+import { analyzeZeitplanPdf, autoMatch, loadScheduleWithLinks, applySectionView, ScheduleEntryInputSchema } from '../lib/scheduleImport';
 import { ceremonyBlockMinutes, estimateMinutes, recalibrateFromStatusUpdate, usedFallback } from '../lib/durationEstimate';
 import { getSettings } from '../lib/settings';
 import { analyzeMevForDocument } from '../lib/mevDetect';
@@ -352,6 +352,7 @@ const STATUS_ENTRY_INCLUDE = {
         select: {
           id: true, fileName: true, mevNames: true, mevRiders: true,
           heatCount: true, roundCount: true, starterCount: true, mevAnalyzedAt: true,
+          sections: true,
         },
       },
       linkedResultDocument: { select: { id: true, fileName: true } },
@@ -365,6 +366,9 @@ router.get('/events/:id/status', async (req, res, next) => {
       where: { eventId: req.params.id },
       include: STATUS_ENTRY_INCLUDE,
     });
+    // Wie im Zeitplan: bei einer Ansetzung für zwei Läufe zählt der Abschnitt
+    // dieses Eintrags, nicht das ganze Dokument.
+    if (status?.scheduleEntry) applySectionView(status.scheduleEntry as any);
     res.json(status);
   } catch (e) { next(e); }
 });

@@ -17,10 +17,15 @@ const START_POSITIONS = ['ZG', 'GG', 'B', 'M'];
  * automatisch neu. Bei JEDER inhaltlichen Änderung an Prompt oder Auswertung
  * hochzählen — sonst behalten bereits analysierte Dokumente ihr altes Ergebnis.
  */
-export const MEV_ANALYSIS_VERSION = 7;
+export const MEV_ANALYSIS_VERSION = 8;
 
 export interface MevRider {
   name: string;
+  /**
+   * 0-basierter Index der Startaufstellung, in der dieser Fahrer steht (siehe
+   * MevSection). Bei Dokumenten mit nur einer Startaufstellung immer 0.
+   */
+  section: number;
   lauf: number | null;
   laufLabel: string | null;
   startSlot: number | null;
@@ -28,6 +33,29 @@ export interface MevRider {
   startNo: number | null;
   startPos: string | null;
   startOrder: number | null;
+}
+
+/**
+ * Eine von mehreren Startaufstellungen INNERHALB einer Datei. Real (DM 2026):
+ * "R13-R14 Ansetzung Punktefahren U15m.pdf" enthält den A-Lauf (R14) und den
+ * B-Lauf (R13) — zwei getrennte Rennen, zwei getrennte Zeitplan-Einträge.
+ *
+ * Reihenfolge = Reihenfolge IM DOKUMENT, nicht nach Lauf-Nummer: in besagter
+ * Datei steht R14 vor R13. Deshalb wird die Zuordnung nie aus der Position
+ * abgeleitet, sondern aus runNo bzw. phaseLabel der Überschrift.
+ *
+ * Die Fahrer selbst stehen weiterhin gesammelt in mevRiders und tragen dort
+ * ihren Abschnitt (MevRider.section) — bewusst keine zweite Liste, damit es
+ * für jeden Fahrer genau eine Quelle gibt.
+ */
+export interface MevSection {
+  index: number;
+  title: string | null;
+  runNo: number | null;
+  phaseLabel: string | null;
+  heatCount: number | null;
+  starterCount: number | null;
+  roundCount: number | null;
 }
 
 // Was analyzeMevForDocument vom Dokument braucht — deckungsgleich mit dem
@@ -160,9 +188,12 @@ Prüfe außerdem:
 - die Gesamtzahl der Starter/Teams in der Tabelle
 - die Rundenzahl für das Rennen. Bei allen Disziplinen AUSSER Ausscheidungsfahren steht diese praktisch immer irgendwo im Dokument, oft in einer Zeile direkt unter der Renn-Überschrift im Format "<Distanz> / <Rundenzahl> Runden / <Anzahl> Wertungen" (z.B. "15km / 60 Runden / 6 Wertungen") — diese Zeile kann auch am Ende des Dokuments wiederholt werden. Manchmal auch anders formuliert, z.B. "Wertung nach 40 Runden" oder als Teil der Renn-Überschrift ("Punktefahren über 40 Runden").${rosterBlock}
 
+ABSCHNITTE — mehrere Startaufstellungen in EINER Datei:
+Manche Dateien enthalten MEHRERE vollständige Startaufstellungen, jede mit eigener Überschrift, z.B. "U15m – Startaufstellung Punktefahren A-Lauf (R14)" und weiter unten "U15m – Startaufstellung Punktefahren B-Lauf (R13)". Das sind GETRENNTE Rennen und werden getrennt ausgewertet. Die Überschriften stehen nicht zwingend in aufsteigender Reihenfolge — im genannten Beispiel steht R14 vor R13. Sortiere nichts um.
+
 Gib NUR JSON zurück (kein Markdown, kein Text davor/danach):
 
-{"hasLvColumn":true,"mevRiders":[{"name":"Vorname Nachname","startNo":88,"lauf":9,"laufLabel":null,"team":"${lv} 2","startPos":"B","startSlot":10,"startOrder":null}],"heatCount":13,"starterCount":24,"roundCount":40}
+{"hasLvColumn":true,"sections":[{"title":"U15m – Startaufstellung Punktefahren A-Lauf (R14)","runNo":14,"phaseLabel":"A-Lauf","heatCount":null,"starterCount":20,"roundCount":40}],"mevRiders":[{"name":"Vorname Nachname","section":0,"startNo":88,"lauf":9,"laufLabel":null,"team":"${lv} 2","startPos":"B","startSlot":10,"startOrder":null}],"heatCount":13,"starterCount":24,"roundCount":40}
 
 Regeln:
 - hasLvColumn: true, wenn die Tabelle eine LV-/Landesverband-Spalte hat, sonst false.
@@ -171,6 +202,14 @@ Regeln:
   erste enthält den ausgeschriebenen Vereinsnamen ("RSC Cottbus"), die zweite ein
   Kurzkürzel aus 2–4 Großbuchstaben ("BRA", "MEV", "NRW", "THÜ"). Die zweite ist die
   LV-Spalte: hasLvColumn true, und daraus den Landesverband lesen.
+- sections: ein Eintrag je Startaufstellung, in der Reihenfolge, in der sie IM DOKUMENT stehen. Enthält die Datei nur eine Startaufstellung, hat sections genau EINEN Eintrag.
+  * title: die Überschrift der Startaufstellung im Wortlaut
+  * runNo: die Programm-/Laufnummer, wenn sie in der Überschrift in Klammern steht ("(R14)" -> 14, "(R3)" -> 3), sonst null. Das ist WEDER eine Lauf-Nummer aus einer Lauf-Spalte NOCH eine Startnummer.
+  * phaseLabel: die Phasen-Bezeichnung aus der Überschrift, im Wortlaut — z.B. "A-Lauf", "B-Lauf", "Quali 1", "Quali 2", "1. Vorlauf", "Finale". Steht dort keine, null.
+  * heatCount / starterCount / roundCount: wie unten beschrieben, aber jeweils NUR für diesen einen Abschnitt gezählt.
+- section: bei JEDEM gefundenen Fahrer der 0-basierte Index seines Abschnitts in sections. Bei nur einer Startaufstellung immer 0. Ein Fahrer, der in zwei Abschnitten steht, wird zweimal aufgeführt — einmal je Abschnitt.
+- Alle Zählungen beziehen sich immer nur auf den eigenen Abschnitt: die Startreihen (Ballustrade/Messlinie) des zweiten Abschnitts werden wieder ab 1 gezählt, nicht weitergezählt.
+- Die Felder heatCount/starterCount/roundCount AUSSERHALB von sections beziehen sich bei mehreren Abschnitten auf den ERSTEN Abschnitt.
 - name: "Vorname Nachname", keine Startnummer/Verein/UCI-ID
 - startNo: die Startnummer dieses Fahrers laut Spalte "Start-Nr." o.ä., sonst null
 - lauf / laufLabel: beide beziehen sich AUSSCHLIESSLICH auf eine echte Lauf-Spalte der Tabelle (Spaltenüberschrift "Lauf", "Heat", "Paarung" o.ä.). Gibt es keine solche Spalte, sind BEIDE null. Die Startnummer ("Start-Nr.") ist NIEMALS die Lauf-Nummer — verwechsle die beiden Spalten nicht. Auch eine Überschrift wie "Vorlauf 1" über der Tabelle ist KEINE Lauf-Angabe im Sinne dieser Felder: dann beide null.
@@ -215,6 +254,10 @@ Regeln:
           .filter((r: any) => r && typeof r.name === 'string')
           .map((r: any) => ({
             name: r.name,
+            // Abschnitt (Startaufstellung), in dem der Fahrer steht. Fehlt die
+            // Angabe oder ist sie unbrauchbar, gilt der erste Abschnitt — das
+            // entspricht dem bisherigen Verhalten bei einteiligen Dokumenten.
+            section: typeof r.section === 'number' && r.section >= 0 ? Math.trunc(r.section) : 0,
             lauf: typeof r.lauf === 'number' ? r.lauf : null,
             // Textueller Lauf ("Platz 3/4" im Sprint-Finale) — die Lauf-Spalte
             // enthält nicht immer eine Zahl. Kürzen, damit ein ausufernder
@@ -236,7 +279,37 @@ Regeln:
     const hasLvColumn = typeof parsed?.hasLvColumn === 'boolean' ? parsed.hasLvColumn : null;
     const heatCount = typeof parsed?.heatCount === 'number' ? parsed.heatCount : null;
     const starterCount = typeof parsed?.starterCount === 'number' ? parsed.starterCount : null;
-    let roundCount = typeof parsed?.roundCount === 'number' ? parsed.roundCount : null;
+    const roundCount = typeof parsed?.roundCount === 'number' ? parsed.roundCount : null;
+    // ── Abschnitte ────────────────────────────────────────────────────────
+    // Eine Datei kann mehrere Startaufstellungen enthalten (siehe MevSection).
+    // Liefert das Modell keine oder nur eine, wird daraus EIN Abschnitt aus den
+    // Top-Level-Zahlen gebaut — damit die Auswertung unten für einteilige und
+    // mehrteilige Dokumente identisch läuft.
+    const rawSections: any[] = Array.isArray(parsed?.sections) ? parsed.sections : [];
+    const sections: MevSection[] = rawSections.length >= 2
+      ? rawSections.map((sec: any, i: number) => ({
+          index: i,
+          title: typeof sec?.title === 'string' && sec.title.trim()
+            ? sec.title.trim().replace(/\s+/g, ' ').slice(0, 120) : null,
+          runNo: typeof sec?.runNo === 'number' ? sec.runNo : null,
+          phaseLabel: typeof sec?.phaseLabel === 'string' && sec.phaseLabel.trim()
+            ? sec.phaseLabel.trim().replace(/\s+/g, ' ').slice(0, 40) : null,
+          heatCount: typeof sec?.heatCount === 'number' ? sec.heatCount : null,
+          starterCount: typeof sec?.starterCount === 'number' ? sec.starterCount : null,
+          roundCount: typeof sec?.roundCount === 'number' ? sec.roundCount : null,
+        }))
+      : [{ index: 0, title: null, runNo: null, phaseLabel: null, heatCount, starterCount, roundCount }];
+
+    // Ein Fahrer außerhalb des gültigen Bereichs landet im ersten Abschnitt,
+    // statt die Auswertung mit undefined zu sprengen.
+    for (const r of mevRiders) {
+      if (r.section >= sections.length) r.section = 0;
+    }
+    // Abschnitts-Grenzwerte für die Prüfungen unten. Entscheidend ist, dass
+    // NICHT mehr die Zahlen des ganzen Dokuments gelten: der zweite Lauf hat
+    // sein eigenes Starterfeld und seine eigene Laufzahl.
+    const secOf = (r: MevRider): MevSection => sections[r.section] ?? sections[0];
+
     const mevNames = mevRiders.map(r => r.name); // Abwärtskompatibilität
 
     // Schutz gegen eine wiederkehrende Verwechslung: Ohne Lauf-Spalte gibt es
@@ -245,8 +318,8 @@ Regeln:
     // die nur Start-Nr./Name/Vorname enthalten) sonst gern die STARTNUMMER als
     // Lauf-Nummer ausgegeben — im Zeitplan stand dann "Dorothea (Lauf 88)".
     // Gilt für beide Lauf-Felder, numerisch wie textuell.
-    if (heatCount == null) {
-      for (const r of mevRiders) { r.lauf = null; r.laufLabel = null; }
+    for (const r of mevRiders) {
+      if (secOf(r).heatCount == null) { r.lauf = null; r.laufLabel = null; }
     }
 
     // Zweiter Guard gegen dieselbe Verwechslung: Eine Lauf-Nummer liegt immer
@@ -256,7 +329,8 @@ Regeln:
     // in genau diesen Dokumenten steht in der Lauf-Spalte "Platz 3/4" o.ä.,
     // was die eigentlich gemeinte Information ist.
     for (const r of mevRiders) {
-      if (r.lauf != null && heatCount != null && (r.lauf < 1 || r.lauf > heatCount)) {
+      const hc = secOf(r).heatCount;
+      if (r.lauf != null && hc != null && (r.lauf < 1 || r.lauf > hc)) {
         r.lauf = null;
       }
     }
@@ -264,9 +338,10 @@ Regeln:
     // startSlot ist nur im Massenstart definiert (Platz in der Ballustrade- bzw.
     // Messlinien-Reihe) und kann nie größer als das Starterfeld sein.
     for (const r of mevRiders) {
+      const sc = secOf(r).starterCount;
       const massStart = r.startPos === 'B' || r.startPos === 'M';
       const outOfRange = r.startSlot != null
-        && (r.startSlot < 1 || (starterCount != null && r.startSlot > starterCount));
+        && (r.startSlot < 1 || (sc != null && r.startSlot > sc));
       if (!massStart || outOfRange) r.startSlot = null;
     }
 
@@ -279,38 +354,66 @@ Regeln:
     // Dokument gar keine Startpositions-Spalte hat. Im Zeitplan stand dann
     // "MEV: 20 (B 1)". In dem Fall die Position fürs ganze Team verwerfen statt
     // zu raten; das erfundene "B" fällt mit weg.
+    // Schlüssel enthält den Abschnitt: dieselbe Team-Nummer kann im A-Lauf und
+    // im B-Lauf desselben Dokuments vorkommen, ohne dass das ein Widerspruch wäre.
+    const teamKey = (r: MevRider) => `${r.section}|${r.team}`;
     const slotsByTeam = new Map<string, Set<number>>();
     for (const r of mevRiders) {
       if (r.team == null || r.startSlot == null) continue;
-      if (!slotsByTeam.has(r.team)) slotsByTeam.set(r.team, new Set());
-      slotsByTeam.get(r.team)!.add(r.startSlot);
+      const k = teamKey(r);
+      if (!slotsByTeam.has(k)) slotsByTeam.set(k, new Set());
+      slotsByTeam.get(k)!.add(r.startSlot);
     }
     for (const r of mevRiders) {
       if (r.team == null) continue;
-      if ((slotsByTeam.get(r.team)?.size ?? 0) > 1) { r.startSlot = null; r.startPos = null; }
+      if ((slotsByTeam.get(teamKey(r))?.size ?? 0) > 1) { r.startSlot = null; r.startPos = null; }
     }
 
     // Die Startreihenfolge ist ein Platz im Starterfeld: 1 bis Starterzahl. Eine
     // Startnummer oder eine Platzierung aus einer Ergebnisliste sprengt diesen
     // Bereich meist; zusätzlich greift die Anzeige-Regel im Zeitplan.
     for (const r of mevRiders) {
+      const sc = secOf(r).starterCount;
       if (r.startOrder != null
-        && (r.startOrder < 1 || (starterCount != null && r.startOrder > starterCount))) {
+        && (r.startOrder < 1 || (sc != null && r.startOrder > sc))) {
         r.startOrder = null;
       }
     }
 
     // Ausscheidungsfahren: die Rundenzahl steht praktisch nie im Dokument,
     // folgt aber einer festen Formel (Starterzahl × 2) — verlässlicher als ein
-    // Textfund, siehe Absprache mit Hauke.
-    if (doc.disciplineCode === 'AF' && starterCount != null) {
-      roundCount = starterCount * 2;
+    // Textfund, siehe Absprache mit Hauke. Je Abschnitt gerechnet: bei
+    // "R09-R10 Ansetzung Ausscheidungsfahren U15m" haben die beiden Läufe
+    // unterschiedlich große Starterfelder und damit unterschiedliche Rundenzahlen.
+    if (doc.disciplineCode === 'AF') {
+      for (const sec of sections) {
+        if (sec.starterCount != null) sec.roundCount = sec.starterCount * 2;
+      }
     }
+
+    // Die Felder AM DOKUMENT (heatCount/starterCount/roundCount) bleiben
+    // erhalten und tragen die Werte des Abschnitts mit den meisten MEV-Fahrern
+    // — bei Gleichstand des ersten. Damit laufen Dauer-Schätzung und alle
+    // Ansichten, die den Abschnitt nicht kennen, unverändert weiter; die
+    // abschnittsgenaue Anzeige läuft über sections (siehe routes/schedule.ts).
+    const leadSection = sections.reduce((best, sec) => {
+      const n = mevRiders.filter(r => r.section === sec.index).length;
+      const bestN = mevRiders.filter(r => r.section === best.index).length;
+      return n > bestN ? sec : best;
+    }, sections[0]);
+
+    // Nur mehrteilige Dokumente bekommen sections gespeichert. Ein leeres Array
+    // heißt an jeder auswertenden Stelle: ein Rennen je Dokument, alles wie bisher.
+    const storedSections = sections.length >= 2 ? sections : [];
 
     await prisma.communiqueDocument.update({
       where: { id: doc.id },
       data: {
-        mevNames, mevRiders, hasLvColumn, heatCount, starterCount, roundCount,
+        mevNames, mevRiders, hasLvColumn,
+        heatCount: leadSection.heatCount,
+        starterCount: leadSection.starterCount,
+        roundCount: leadSection.roundCount,
+        sections: storedSections,
         mevAnalyzedAt: new Date(), mevVersion: MEV_ANALYSIS_VERSION,
       } as any,
     });
