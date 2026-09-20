@@ -222,25 +222,44 @@ export function docSections(doc: { sections?: unknown } | null | undefined): Doc
   }));
 }
 
+// Wörter ab vier Zeichen, ohne reine Zahlen — Grundlage des Vergleichs unten.
+// "1 lauf qualifikation" -> {lauf, qualifikation}
+function phaseWords(s: string): Set<string> {
+  return new Set(
+    s.split(/[^0-9a-zäöüß]+/i)
+      .filter(w => w.length >= 4 && !/^\d+$/.test(w)),
+  );
+}
+
 // Phase des Zeitplan-Eintrags gegen die Phase aus der Abschnitts-Überschrift.
-// Real gepaart: "A-Lauf" ↔ "A-Lauf", "Qualifikation 1" ↔ "Quali 1",
-// "2. Vorlauf" ↔ "2. Vorlauf". Bewusst ohne Fuzzy-Logik: was hier nicht
-// zusammenpasst, bleibt unverknüpft statt falsch verknüpft.
+// Real gepaart (DM 2026): "A-Lauf" ↔ "A-Lauf", "1. Lauf Qualifikation" ↔
+// "Quali Lauf 1", "2. Lauf Qualifikation" ↔ "Quali 2".
+//
+// Der reine Teilstring-Vergleich reichte dafür nicht: Ablaufplan und Ansetzung
+// benutzen dieselben Wörter in UNTERSCHIEDLICHER Reihenfolge ("1 lauf
+// qualifikation" gegen "qualifikation lauf 1"). Deshalb zusätzlich wortweise —
+// aber nur bei GLEICHER Ziffer, sonst würde der 1. Lauf auf den 2. passen.
+// Bewusst ohne Fuzzy-Logik: was hier nicht zusammenpasst, bleibt unverknüpft
+// statt falsch verknüpft.
 function phaseMatchesSection(entryPhase: string | null, sectionPhase: string | null): boolean {
   if (!entryPhase || !sectionPhase) return false;
   const a = normalize(entryPhase);
   const b = normalize(sectionPhase);
   if (!a || !b) return false;
   if (a === b || a.includes(b) || b.includes(a)) return true;
-  // Gleiche Ziffer + gemeinsamer Wortanfang ("quali1" ↔ "qualifikation1").
+
+  // Ab hier gilt: gleiche Ziffer ist Pflicht. Fehlt sie auf einer Seite, gibt es
+  // keinen Treffer — "A-Lauf" und "Quali 1" haben nichts miteinander zu tun.
   const da = a.match(/\d+/)?.[0] ?? null;
   const db = b.match(/\d+/)?.[0] ?? null;
-  if (da && db && da === db) {
-    const sa = a.replace(/\d+/g, '');
-    const sb = b.replace(/\d+/g, '');
-    const short = sa.length <= sb.length ? sa : sb;
-    const long = sa.length <= sb.length ? sb : sa;
-    if (short.length >= 4 && long.startsWith(short.slice(0, 4))) return true;
+  if (!da || !db || da !== db) return false;
+
+  // … und mindestens ein gemeinsames Wort ab vier Zeichen. "lauf" allein reicht
+  // aus, wenn die Ziffer stimmt; "1. Vorlauf" gegen "Quali 1" trifft dagegen
+  // nicht, weil sich weder "vorlauf" noch "qualifikation" decken.
+  const wa = phaseWords(a);
+  for (const w of phaseWords(b)) {
+    if (wa.has(w)) return true;
   }
   return false;
 }
