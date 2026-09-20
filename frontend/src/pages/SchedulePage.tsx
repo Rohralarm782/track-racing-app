@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import PdfViewer from '../components/PdfViewer';
 import EventTabBar from '../components/EventTabBar';
@@ -134,7 +134,42 @@ const CEREMONY_ESTIMATE_MIN = 5;
 // Bewusst disziplinübergreifend konstant (siehe Absprache), unabhängig von der
 // in estimatedMinutes steckenden Renndauer.
 const FINISHED_CLEAR_MIN = 2;
-const ESTIMATE_DISPLAY_THRESHOLD_MIN = 5;
+// Ab dieser Abweichung zeigt eine PROGNOSE-Zeile die Schätzung statt der
+// Zeitplan-Uhrzeit. Gilt ausdrücklich NICHT für die Ankerzeile (der aktuell
+// gemeldete Eintrag): dort ist die angesagte bzw. beobachtete Zeit eine
+// Tatsache und wird immer gezeigt — die alte gemeinsame Schwelle von 5 Minuten
+// hat eine angesagte 11:15 hinter der geplanten 11:20 versteckt (real
+// aufgetreten, DM Öschelbronn 20.09.).
+const ESTIMATE_DISPLAY_THRESHOLD_MIN = 2;
+
+// ── Körnung und Trägheit weiter hinten im Tag ───────────────────────────────
+// Die nächsten Zeilen sollen auf die Minute stimmen. Weiter hinten ist jede
+// Minutenangabe Scheingenauigkeit: sie beruht auf aufsummierten Schätzungen und
+// wandert bei jeder Meldung neu. Deshalb ab COARSE_AFTER_ROWS auf
+// COARSE_STEP_MIN gerundet und als "ca." gekennzeichnet — und der einmal
+// gezeigte Wert bleibt stehen, solange sich die zugrunde liegende Schätzung um
+// weniger als COARSE_HYSTERESIS_MIN bewegt hat. Gerechnet wird unverändert
+// genau; das hier ist reine Anzeige.
+const COARSE_AFTER_ROWS = 3;
+const COARSE_STEP_MIN = 5;
+const COARSE_HYSTERESIS_MIN = 5;
+
+type CoarseMemory = Map<string, { raw: number; shown: string }>;
+
+function coarseTime(
+  id: string,
+  raw: string,
+  rank: number,
+  memory: CoarseMemory,
+): { time: string; approx: boolean } {
+  if (rank <= COARSE_AFTER_ROWS) { memory.delete(id); return { time: raw, approx: false }; }
+  const rawMin = toMinutes(raw);
+  const prev = memory.get(id);
+  if (prev && Math.abs(rawMin - prev.raw) < COARSE_HYSTERESIS_MIN) return { time: prev.shown, approx: true };
+  const shown = fromMinutes(Math.round(rawMin / COARSE_STEP_MIN) * COARSE_STEP_MIN);
+  memory.set(id, { raw: rawMin, shown });
+  return { time: shown, approx: true };
+}
 const PAUSE_BUFFER_MIN = 20; // Cool-down-Puffer nach dem letzten Rennen eines Blocks
 
 // Errechnet pro Eintrag eines Tages eine geschätzte Uhrzeit, indem die
@@ -200,7 +235,11 @@ function computeEstimatedTimes(
       } else if (status.statusKey === 'RUNNING' && fullDur != null) {
         const remaining = remainingRaceMinutes(entry, status, fullDur);
         displayMin = cumulative - (fullDur - remaining); // echter Start ≈ jetzt − verstrichen
-        forward = remaining;
+        // Nach dem Zielstrich müssen die Fahrer die Bahn räumen, bevor das
+        // nächste Rennen gerufen werden kann. Diese feste Spanne stand bisher
+        // nur im Status "im Ziel" — wer "läuft · noch 2 Runden" meldet, bekam
+        // die Folgezeit um genau diese Spanne zu früh.
+        forward = remaining + FINISHED_CLEAR_MIN;
       }
     }
 
@@ -219,16 +258,27 @@ function computeEstimatedTimes(
 function remainingRaceMinutes(entry: ScheduleEntry, status: EventStatus, fullDur: number): number {
   const clamp = (m: number) => Math.max(0, Math.min(fullDur, Math.round(m)));
   const x = status.roundsLeft;
+  const perUnit = entry.unitMinutes;
 
   if (entry.massStart === false) {
     const heats = entry.linkedDocument?.heatCount ?? null;
     if (heats && heats > 0 && x != null && x >= 1) {
       // Wir stecken mitten in Lauf X → grob (Y − X + 0.5) Läufe stehen noch aus.
-      return clamp(fullDur * (heats - x + 0.5) / heats);
+      // Mit den Minuten je Lauf direkt, sonst wie bisher anteilig.
+      return clamp(perUnit != null && perUnit > 0
+        ? perUnit * (heats - x + 0.5)
+        : fullDur * (heats - x + 0.5) / heats);
     }
   } else {
     const rounds = entry.linkedDocument?.roundCount ?? null;
-    if (rounds && rounds > 0 && x != null) return clamp(fullDur * x / rounds);
+    if (x != null) {
+      // Der direkte Weg braucht die GESAMTzahl gar nicht: X Runden × Minuten je
+      // Runde. Genau daran scheiterte es bisher — die Kommuniqués der DM
+      // Öschelbronn enthielten keine Rundenzahl, also griff unten die Hälfte der
+      // Renndauer und die Folgezeit lag acht Minuten daneben.
+      if (perUnit != null && perUnit > 0) return clamp(perUnit * x);
+      if (rounds && rounds > 0) return clamp(fullDur * x / rounds);
+    }
   }
 
   // Kein verlässlicher Fortschritt bekannt: als grobe Restschätzung die Hälfte.
@@ -333,6 +383,11 @@ export default function SchedulePage() {
   // gemeldeten Stand, NICHT nach Uhrzeit (die ist laut Schema nur informativ
   // und driftet am Renntag). Default: vergangene ausgeblendet.
   const [showPast, setShowPast] = useState(false);
+
+  // Zuletzt angezeigte grobe Zeiten je Eintrag (siehe coarseTime). Bewusst ein
+  // Ref und kein Zustand: der Wert steuert nur die Anzeige und soll selbst
+  // keinen neuen Durchlauf auslösen.
+  const coarseMemory = useRef<CoarseMemory>(new Map());
 
   // ── Kommuniqué manuell zuordnen (Auswahl-Sheet) ──────────────────────────
   const [docs, setDocs]                 = useState<CommuniqueDocument[]>([]);
@@ -665,6 +720,7 @@ export default function SchedulePage() {
       linkedResultDocument: lead.linkedResultDocument,
       estimatedMinutes: keepOwnEstimate ? e.estimatedMinutes : lead.estimatedMinutes,
       estimateIsFallback: keepOwnEstimate ? e.estimateIsFallback : lead.estimateIsFallback,
+      unitMinutes: keepOwnEstimate ? e.unitMinutes : lead.unitMinutes,
     };
   };
   const resolvedDayEntries = dayEntries.map(resolveEntry);
@@ -987,6 +1043,9 @@ export default function SchedulePage() {
           <div className="card" style={{ padding: '4px 14px' }}>
             {(() => {
               const estimatedTimes = computeEstimatedTimes(resolvedDayEntries, status, currentEntryDay);
+              // Position der Ankerzeile in der sichtbaren Liste — Grundlage für
+              // den Abstand, ab dem gerundet wird.
+              const currentIdx = status ? visibleDayEntries.findIndex(e => e.id === status.scheduleEntryId) : -1;
               // Teilen sich mehrere Einträge exakt dieselbe PDF-Uhrzeit, ist das
               // keine echte Uhrzeit pro Rennen, sondern nur "diese Rennen folgen
               // im Anschluss" — dann lieber nur die Schätzung zeigen statt einer
@@ -1000,15 +1059,27 @@ export default function SchedulePage() {
                 const estimatedTime = estimatedTimes.get(entry.id) ?? entry.time;
                 const isBucketTime = (timeCounts.get(entry.time) ?? 0) > 1;
                 const diffMin = Math.abs(toMinutes(estimatedTime) - toMinutes(entry.time));
-                const showEstimateAsPrimary = isBucketTime || diffMin > ESTIMATE_DISPLAY_THRESHOLD_MIN;
-                const displayTime = showEstimateAsPrimary ? estimatedTime : entry.time;
-                const showNominalSecondary = showEstimateAsPrimary && !isBucketTime;
+                // Ankerzeile: die gemeldete Zeit ist beobachtet, keine Schätzung —
+                // sie steht immer vorn, ohne Schwelle. Prognosezeilen erst ab der
+                // Schwelle, sonst wandert der ganze Tag bei jeder Kleinigkeit.
+                const showEstimateAsPrimary = isCurrent || isBucketTime || diffMin >= ESTIMATE_DISPLAY_THRESHOLD_MIN;
+                const rawDisplayTime = showEstimateAsPrimary ? estimatedTime : entry.time;
+                // Abstand zur Ankerzeile: die ersten Zeilen minutengenau, weiter
+                // hinten gerundet und träge (siehe coarseTime).
+                const forecastRank = currentIdx >= 0 ? idx - currentIdx : idx + 1;
+                const coarse = showEstimateAsPrimary && !isCurrent && entry.type !== 'INFO'
+                  ? coarseTime(entry.id, rawDisplayTime, forecastRank, coarseMemory.current)
+                  : { time: rawDisplayTime, approx: false };
+                const displayTime = coarse.time;
+                const showNominalSecondary = showEstimateAsPrimary && !isBucketTime && displayTime !== entry.time;
                 const heatCount = entry.linkedDocument?.heatCount ?? null;
                 // Einzelstart (Zeitfahren/Einerverfolgung): grob geschätzte
                 // Startzeit je Lauf = Rennstart + (Lauf−1)/Laufzahl × Renndauer.
                 // Nur bei bekanntem Lauf/Laufzahl/Dauer und NICHT im Massenstart
                 // (dort starten alle gemeinsam, eine Lauf-Zeit wäre sinnlos).
-                const raceStartMin = toMinutes(displayTime);
+                // Bewusst die UNGERUNDETE Zeit: die Lauf-Startzeiten im MEV-Text
+                // sollen nicht die "ca."-Körnung der Zeile erben.
+                const raceStartMin = toMinutes(rawDisplayTime);
                 const estMin = entry.estimatedMinutes;
                 const heatTimeFor = (r: MevRider): string | null => {
                   if (entry.massStart) return null;
@@ -1101,7 +1172,7 @@ export default function SchedulePage() {
                     // Schätzung abweicht — gleiche Regel wie bei Rennzeilen.
                     const showBlockNominal =
                       (timeCounts.get(entry.time) ?? 0) <= 1
-                      && Math.abs(blockStartMin - toMinutes(entry.time)) > ESTIMATE_DISPLAY_THRESHOLD_MIN;
+                      && Math.abs(blockStartMin - toMinutes(entry.time)) >= ESTIMATE_DISPLAY_THRESHOLD_MIN;
                     const blockPast = block.every(isPastEntry);
 
                     return (
@@ -1171,7 +1242,7 @@ export default function SchedulePage() {
                   }}
                 >
                   <div>
-                    <div style={{ fontSize: 13, fontWeight: isCurrent ? 600 : 400 }}>{displayTime}</div>
+                    <div style={{ fontSize: 13, fontWeight: isCurrent ? 600 : 400 }}>{coarse.approx ? `ca. ${displayTime}` : displayTime}</div>
                     {showNominalSecondary && (
                       <div style={{ fontSize: 10, color: 'var(--c-text-muted)' }}>{entry.time}</div>
                     )}

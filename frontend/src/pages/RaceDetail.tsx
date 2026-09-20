@@ -312,10 +312,10 @@ export default function RaceDetail() {
   const [showTeamBuilder, setShowTeamBuilder] = useState(false);
 
   // ── Datenabruf ────────────────────────────────────────────────────────────
-  const fetchRace = useCallback(async () => {
-    if (!id) return;
-    try { const d = await api.get<Race>(`/api/races/${id}`); setRace(d); }
-    catch (e: any) { setError(e.message); }
+  const fetchRace = useCallback(async (): Promise<Race | null> => {
+    if (!id) return null;
+    try { const d = await api.get<Race>(`/api/races/${id}`); setRace(d); return d; }
+    catch (e: any) { setError(e.message); return null; }
     finally { setLoading(false); }
   }, [id]);
 
@@ -477,11 +477,20 @@ export default function RaceDetail() {
   }
 
   // ── Omnium-Vorpunkte ──────────────────────────────────────────────────────
+  // Eingabewerte des Vorpunkte-Dialogs aus einem Rennen ableiten. Bewusst als
+  // eigene Funktion: sie wird beim Öffnen UND nach dem PDF-Import gebraucht.
+  // Vorher hing das nur am Öffnen — nach einem Import zeigten die Felder
+  // weiter die alten Nullen, und "Speichern" hat die frisch importierten
+  // Punkte wieder mit 0 überschrieben (real aufgetreten, DM Öschelbronn).
+  function omniumValuesFrom(r: Race): Record<string,string> {
+    const init: Record<string,string> = {};
+    for (const t of r.category.teams) init[t.id] = String(r.omniumScores.find(o=>o.team.id===t.id)?.points??0);
+    return init;
+  }
+
   function openOmnium() {
     if (!race) return;
-    const init: Record<string,string> = {};
-    for (const t of race.category.teams) init[t.id] = String(race.omniumScores.find(o=>o.team.id===t.id)?.points??0);
-    setOmniumValues(init); setOmniumOpen(true);
+    setOmniumValues(omniumValuesFrom(race)); setOmniumOpen(true);
   }
 
   async function saveOmnium() {
@@ -495,7 +504,11 @@ export default function RaceDetail() {
     try {
       const base64 = await new Promise<string>((res,rej)=>{const r=new FileReader();r.onload=()=>res((r.result as string).split(',')[1]);r.onerror=()=>rej(new Error('Fehler'));r.readAsDataURL(file);});
       const result = await api.post<{imported:number,total:number}>(`/api/races/${id}/omnium-pdf`,{pdfBase64:base64});
-      await fetchRace(); alert(`${result.imported} von ${result.total} Einträgen importiert`);
+      const fresh = await fetchRace();
+      if (fresh) setOmniumValues(omniumValuesFrom(fresh));
+      const missed = Math.max(0, result.total - result.imported);
+      alert(`${result.imported} von ${result.total} Einträgen importiert`
+        + (missed > 0 ? `\n${missed} Startnummer${missed===1?'':'n'} ohne passenden Fahrer in diesem Rennen — diese Zeilen bleiben unverändert.` : ''));
     } catch(e:any){setError(e.message);}
     finally{if(omniumPdfRef.current) omniumPdfRef.current.value='';}
   }

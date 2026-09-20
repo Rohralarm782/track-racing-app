@@ -3,7 +3,7 @@ import { z } from 'zod';
 import prisma from '../prisma';
 import { requireAdmin } from '../middleware/auth';
 import { analyzeZeitplanPdf, autoMatch, loadScheduleWithLinks, applySectionView, ScheduleEntryInputSchema } from '../lib/scheduleImport';
-import { ceremonyBlockMinutes, estimateMinutes, recalibrateFromStatusUpdate, usedFallback } from '../lib/durationEstimate';
+import { ceremonyBlockMinutes, estimateMinutes, recalibrateFromStatusUpdate, unitMinutesFor, usedFallback } from '../lib/durationEstimate';
 import { getSettings } from '../lib/settings';
 import { analyzeMevForDocument } from '../lib/mevDetect';
 
@@ -64,7 +64,7 @@ async function withEstimates<T extends {
   linkedDocument: { roundCount: number | null; heatCount: number | null } | null;
 }>(
   entries: T[],
-): Promise<Array<T & { estimatedMinutes: number | null; estimateIsFallback: boolean }>> {
+): Promise<Array<T & { estimatedMinutes: number | null; estimateIsFallback: boolean; unitMinutes: number | null }>> {
   const settings = await getSettings();
   // Bahnlänge der Veranstaltung EINMAL laden (alle Einträge gehören zu derselben
   // Veranstaltung, siehe loadScheduleWithLinks). null = 250 m.
@@ -81,6 +81,9 @@ async function withEstimates<T extends {
       ...e,
       estimatedMinutes: ceremonyMin.has(e.id) ? ceremonyMin.get(e.id)! : base,
       estimateIsFallback: usedFallback(e, e.linkedDocument),
+      // Minuten je Runde/Lauf — das Frontend rechnet daraus die Restzeit einer
+      // laufenden Einheit, ohne die Gesamtzahl zu kennen (siehe unitMinutesFor).
+      unitMinutes: await unitMinutesFor(e, settings, trackM),
     };
   }));
 }

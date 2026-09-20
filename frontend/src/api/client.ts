@@ -446,6 +446,10 @@ export interface ScheduleEntry {
   // true, wenn die Schätzung auf einer Rückfallgröße statt einer echten
   // Runden-/Laufzahl beruht — Signal fürs Frontend, eine manuelle Eingabe anzubieten.
   estimateIsFallback: boolean;
+  // Minuten je EINZELNER Runde (Massenstart) bzw. je Lauf (Einzelstart),
+  // kalibriert wie estimatedMinutes. Daraus folgt die Restzeit aus der Meldung
+  // "noch X Runden", ohne die Gesamtzahl zu kennen. null bei INFO/Ehrungen.
+  unitMinutes: number | null;
 }
 
 export interface DraftScheduleEntry {

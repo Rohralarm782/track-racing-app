@@ -128,6 +128,57 @@ export function baseFormulaMinutes(
   return settings.massStartSetupMin + settings.massStartPerRoundMin * f * unitCount + settings.massStartClearMin;
 }
 
+/**
+ * Minuten je EINZELNER Einheit — je Runde bei Massenstart, je Lauf bei
+ * Einzelstart. Das ist der variable Anteil derselben Formel wie in
+ * baseFormulaMinutes(), nur ohne Rüst-/Abräumzeit und ohne Runden-/Laufzahl.
+ *
+ * Gebraucht wird der Wert fürs Frontend: aus der Meldung "noch X Runden" soll
+ * die Restzeit direkt folgen (X × Minuten je Runde). Bisher rechnete die
+ * Liste anteilig (Gesamtdauer × X / Gesamtzahl) und brauchte dafür die
+ * GESAMTzahl — fehlt die im Kommuniqué, griff der Rückfall "halbe Renndauer"
+ * (real aufgetreten, DM Öschelbronn 20.09.: angezeigt 11:35 statt 11:27).
+ */
+export function unitFormulaMinutes(
+  entry: { ak: string; disciplineLabel: string; massStart: boolean; type: string },
+  settings: AppSettings,
+  trackM?: number | null,
+): number | null {
+  if (entry.type !== 'RACE') return null;
+
+  const code = inferCodeForEntry(entry.disciplineLabel);
+  const f = trackFactor(trackM);
+
+  if (code === 'AF') return settings.afPerRoundMin * f;
+  if (code === 'SP') return settings.sprintPerHeatMin;
+  if (code === 'TS') return settings.teamsprintPerHeatMin;
+  if (code === 'KE') return settings.keirinPerHeatMin;
+  if (code === 'VF' || code === 'MV' || code === 'EV' || code === 'ZF') {
+    const distances = parseDistanceTable(settings.distanceRaceMinutes);
+    return settings.pursuitSetupMin + typicalRaceMinutes(entry.disciplineLabel, genderFromAk(entry.ak), distances);
+  }
+  return settings.massStartPerRoundMin * f;
+}
+
+/**
+ * Wie unitFormulaMinutes(), aber mit demselben Kalibrierungsfaktor wie
+ * estimateMinutes(). Ohne ihn würde die Restzeit einer Kategorie mit
+ * gelerntem Faktor systematisch zu kurz oder zu lang ausfallen, während die
+ * Gesamtdauer daneben korrekt kalibriert ist.
+ */
+export async function unitMinutesFor(
+  entry: { ak: string; disciplineLabel: string; massStart: boolean; type: string },
+  settings: AppSettings,
+  trackM?: number | null,
+): Promise<number | null> {
+  const per = unitFormulaMinutes(entry, settings, trackM);
+  if (per == null) return null;
+  const cal = await prisma.durationEstimate.findUnique({
+    where: { ak_disciplineLabel_massStart: { ak: entry.ak, disciplineLabel: entry.disciplineLabel, massStart: entry.massStart } },
+  });
+  return per * (cal?.correctionFactor ?? 1.0);
+}
+
 function unitCountFor(
   entry: { disciplineLabel: string; massStart: boolean; phase: string | null; manualUnitCount?: number | null },
   linkedDoc: { roundCount: number | null; heatCount: number | null } | null | undefined,
