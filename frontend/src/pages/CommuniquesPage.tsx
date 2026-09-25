@@ -109,7 +109,7 @@ export default function CommuniquesPage() {
   const canEdit = isAdmin && (!kiosk.active || kiosk.editing);
 
   const [event, setEvent]   = useState<EventT | null>(null);
-  const [source, setSource] = useState<CommuniqueSource | null>(null);
+  const [sources, setSources] = useState<CommuniqueSource[]>([]);
   const [loading, setLoading] = useState(true);
   const [ansetzungBase64, setAnsetzungBase64] = useState<string | null>(null);
   const [ansetzungBusy, setAnsetzungBusy] = useState(false);
@@ -192,14 +192,14 @@ export default function CommuniquesPage() {
     if (!eventId) return;
     setLoading(true); setError('');
     try {
-      const [ev, src] = await Promise.all([
+      const [ev, list] = await Promise.all([
         api.get<EventT>(`/api/events/${eventId}`),
         communiquesApi.get(eventId),
       ]);
       setEvent(ev);
-      setSource(src);
-      if (src) {
-        setReadIdsState(readIds(src.id));
+      setSources(list);
+      if (list.length > 0) {
+        setReadIdsState(readIds(eventId));
         checkPushSubscription();
       }
       setLastChecked(new Date());
@@ -213,8 +213,8 @@ export default function CommuniquesPage() {
   async function refreshSilently() {
     if (!eventId) return;
     try {
-      const src = await communiquesApi.get(eventId);
-      setSource(src);
+      const list = await communiquesApi.get(eventId);
+      setSources(list);
       setLastChecked(new Date());
     } catch { /* nächstes Intervall versucht es erneut */ }
   }
@@ -224,8 +224,8 @@ export default function CommuniquesPage() {
     setRefreshing(true); setError('');
     try {
       await communiquesApi.poll(eventId);
-      const src = await communiquesApi.get(eventId);
-      setSource(src);
+      const list = await communiquesApi.get(eventId);
+      setSources(list);
       setLastChecked(new Date());
     } catch (e: any) {
       setError(e.message ?? 'Aktualisierung fehlgeschlagen');
@@ -249,7 +249,7 @@ export default function CommuniquesPage() {
         ...config,
         htmlSections: config.sourceType === 'HTML' ? setupSections : [],
       });
-      setSource({ ...src, documents: [] });
+      setSources([{ ...src, documents: [] }]);
       await handleManualRefresh();
     } catch (e: any) {
       setError(e.message ?? 'Fehler beim Speichern');
@@ -381,12 +381,22 @@ export default function CommuniquesPage() {
     });
   }
 
+  // Aktualisiert ein Dokument innerhalb der (mehreren) Quellen anhand seiner
+  // ID — unabhängig davon, zu welcher Quelle es gehört. Ersetzt die früheren
+  // direkten setSource(...)-Mutationen, die von genau einer Quelle ausgingen.
+  function updateDocInSources(docId: string, updater: (d: CommuniqueDocumentT) => CommuniqueDocumentT) {
+    setSources(prev => prev.map(s => ({
+      ...s,
+      documents: s.documents.map(d => d.id === docId ? updater(d) : d),
+    })));
+  }
+
   function markRead(docId: string) {
-    if (!source) return;
+    if (!eventId) return;
     setReadIdsState(prev => {
       const next = new Set(prev);
       next.add(docId);
-      persistReadIds(source.id, next);
+      persistReadIds(eventId, next);
       return next;
     });
   }
@@ -398,21 +408,15 @@ export default function CommuniquesPage() {
 
   async function togglePin(doc: CommuniqueDocumentT, e: React.MouseEvent) {
     e.stopPropagation(); // nicht gleichzeitig die Karte öffnen
-    if (!eventId || !source) return;
+    if (!eventId) return;
     const nextPinned = !doc.isPinned;
     // optimistisch aktualisieren
-    setSource({
-      ...source,
-      documents: source.documents.map(d => d.id === doc.id ? { ...d, isPinned: nextPinned } : d),
-    });
+    updateDocInSources(doc.id, d => ({ ...d, isPinned: nextPinned }));
     try {
       await communiquesApi.togglePin(eventId, doc.id, nextPinned);
     } catch {
       // bei Fehler zurücksetzen
-      setSource(prev => prev ? {
-        ...prev,
-        documents: prev.documents.map(d => d.id === doc.id ? { ...d, isPinned: !nextPinned } : d),
-      } : prev);
+      updateDocInSources(doc.id, d => ({ ...d, isPinned: !nextPinned }));
     }
   }
 
@@ -432,18 +436,12 @@ export default function CommuniquesPage() {
   // Ausgeblendete Dokumente verschwinden aus der Standardliste — z.B. eine
   // alte Zeitplan-Version nach Upload einer neueren.
   async function applyHide(doc: CommuniqueDocumentT, nextHidden: boolean) {
-    if (!eventId || !source) return;
-    setSource({
-      ...source,
-      documents: source.documents.map(d => d.id === doc.id ? { ...d, isHidden: nextHidden } : d),
-    });
+    if (!eventId) return;
+    updateDocInSources(doc.id, d => ({ ...d, isHidden: nextHidden }));
     try {
       await communiquesApi.toggleHide(eventId, doc.id, nextHidden);
     } catch {
-      setSource(prev => prev ? {
-        ...prev,
-        documents: prev.documents.map(d => d.id === doc.id ? { ...d, isHidden: !nextHidden } : d),
-      } : prev);
+      updateDocInSources(doc.id, d => ({ ...d, isHidden: !nextHidden }));
     }
   }
 
@@ -530,10 +528,7 @@ export default function CommuniquesPage() {
     setMevReanalyzeBusy(true); setError('');
     try {
       const updated = await communiquesApi.reanalyzeMev(eventId, doc.id);
-      setSource(prev => prev ? {
-        ...prev,
-        documents: prev.documents.map(d => d.id === doc.id ? updated : d),
-      } : prev);
+      updateDocInSources(doc.id, () => updated);
       setViewingDoc(updated);
     } catch (e: any) {
       setError(e.message ?? 'MEV-Analyse fehlgeschlagen');
@@ -568,7 +563,7 @@ export default function CommuniquesPage() {
     return <div className="loading"><span className="spinner" />Wird geladen…</div>;
   }
 
-  const docs = source?.documents ?? [];
+  const docs = sources.flatMap(s => s.documents);
   // „Nicht sichtbar" = manuell ausgeblendet ODER automatisch ersetzt (K12→K12B)
   // ODER fehlt in der Quelle. Für Athleten (und in der Standardansicht) alle drei
   // ausblenden; Admins können sie über den Schalter unten einblenden (dann
@@ -632,7 +627,7 @@ export default function CommuniquesPage() {
 
       {error && <div className="alert alert-error">{error}</div>}
 
-      {!source ? (
+      {sources.length === 0 ? (
         <div className="card">
           <h3 style={{ marginBottom: 8 }}>Kommuniqué-Quelle hinterlegen</h3>
           <p className="text-sm text-muted" style={{ marginTop: 0, marginBottom: 14 }}>
@@ -1162,10 +1157,7 @@ export default function CommuniquesPage() {
         eventId={eventId!}
         doc={classifying}
         onClose={() => setClassifying(null)}
-        onSaved={updated => setSource(prev => prev && ({
-          ...prev,
-          documents: prev.documents.map(d => (d.id === updated.id ? { ...d, ...updated } : d)),
-        }))}
+        onSaved={updated => updateDocInSources(updated.id, d => ({ ...d, ...updated }))}
       />
     )}
 

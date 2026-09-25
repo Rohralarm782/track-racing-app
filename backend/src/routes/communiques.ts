@@ -25,11 +25,15 @@ router.get('/vapid-public-key', (_req, res) => {
   res.json({ key: process.env.VAPID_PUBLIC_KEY ?? '' });
 });
 
-// GET /api/communiques/:eventId — Quelle + bekannte Dokumente
+// GET /api/communiques/:eventId — alle Quellen der Veranstaltung + ihre
+// bekannten Dokumente. Liefert ein Array (leer = keine Quelle hinterlegt),
+// seit v-NEXT: eine Veranstaltung kann mehrere Quellen haben (z.B. Website +
+// eigener Drive-Ordner für abfotografierte Aushänge).
 router.get('/:eventId', async (req, res, next) => {
   try {
-    const source = await prisma.communiqueSource.findUnique({
+    const sources = await prisma.communiqueSource.findMany({
       where: { eventId: req.params.eventId },
+      orderBy: { createdAt: 'asc' },
       include: {
         documents: {
           orderBy: { remoteModifiedAt: 'desc' },
@@ -39,8 +43,7 @@ router.get('/:eventId', async (req, res, next) => {
         },
       },
     });
-    if (!source) { res.json(null); return; }
-    res.json(source);
+    res.json(sources);
   } catch (e) { next(e); }
 });
 
@@ -71,34 +74,73 @@ const SourceSchema = z.object({
   },
 );
 
-// POST /api/communiques/:eventId — Share-Link hinterlegen (Admin)
-router.post('/:eventId', requireAdmin, async (req, res, next) => {
+// Aus den geparsten Formulardaten nur die zur Quellenart passenden Felder
+// bauen — die jeweils andere Konfiguration wird geleert (sauberer Wechsel
+// WebDAV <-> HTML <-> GDRIVE). Gemeinsam für Anlegen (POST) und Bearbeiten
+// (PATCH) einer einzelnen Quelle genutzt.
+function buildSourceData(parsed: z.infer<typeof SourceSchema>) {
+  const { sourceType, shareToken, driveFolderId, htmlPageUrls, htmlSections, label } = parsed;
+  return {
+    sourceType,
+    shareToken: sourceType === 'WEBDAV' ? (shareToken?.trim() || null) : null,
+    driveFolderId: sourceType === 'GDRIVE' ? (driveFolderId?.trim() || null) : null,
+    htmlPageUrls: sourceType === 'HTML' ? (htmlPageUrls ?? []) : [],
+    htmlSections: sourceType === 'HTML' ? (htmlSections ?? []) : [],
+    ...(label !== undefined ? { label } : {}),
+  };
+}
+
+// POST /api/communiques/:eventId/sources — neue Quelle anlegen (Admin).
+// Reines Insert, kein Upsert mehr: eine Veranstaltung kann mehrere Quellen
+// haben (z.B. Website + eigener Drive-Ordner für Sprint-Fotos).
+router.post('/:eventId/sources', requireAdmin, async (req, res, next) => {
   try {
     const parsed = SourceSchema.safeParse(req.body);
     if (!parsed.success) { res.status(400).json(parsed.error.flatten()); return; }
+    const source = await prisma.communiqueSource.create({
+      data: { eventId: req.params.eventId, ...buildSourceData(parsed.data) },
+    });
+    res.status(201).json(source);
+  } catch (e) { next(e); }
+});
 
-    const { sourceType, shareToken, driveFolderId, htmlPageUrls, htmlSections, label, purgeDocuments } = parsed.data;
-    // Nur die zur Quellenart passenden Felder schreiben, die jeweils andere
-    // Konfiguration wird geleert (sauberer Wechsel WebDAV <-> HTML).
-    const data = {
-      sourceType,
-      shareToken: sourceType === 'WEBDAV' ? (shareToken?.trim() || null) : null,
-      driveFolderId: sourceType === 'GDRIVE' ? (driveFolderId?.trim() || null) : null,
-      htmlPageUrls: sourceType === 'HTML' ? (htmlPageUrls ?? []) : [],
-      htmlSections: sourceType === 'HTML' ? (htmlSections ?? []) : [],
-      ...(label !== undefined ? { label } : {}),
-    };
-    const source = await prisma.communiqueSource.upsert({
-      where: { eventId: req.params.eventId },
-      create: { eventId: req.params.eventId, ...data },
-      update: data,
+// PATCH /api/communiques/:eventId/sources/:sourceId — bestehende Quelle
+// bearbeiten (Admin). Ersetzt das frühere Upsert-per-eventId.
+router.patch('/:eventId/sources/:sourceId', requireAdmin, async (req, res, next) => {
+  try {
+    const parsed = SourceSchema.safeParse(req.body);
+    if (!parsed.success) { res.status(400).json(parsed.error.flatten()); return; }
+    const existing = await prisma.communiqueSource.findFirst({
+      where: { id: req.params.sourceId, eventId: req.params.eventId },
+      select: { id: true },
+    });
+    if (!existing) { res.status(404).json({ error: 'Quelle nicht gefunden' }); return; }
+
+    const source = await prisma.communiqueSource.update({
+      where: { id: existing.id },
+      data: buildSourceData(parsed.data),
     });
     // Alte Dokumente entfernen, wenn die Quelle umgezogen ist. Der nächste Poll
     // (unmittelbar danach vom Frontend angestoßen) findet die aktuellen PDFs neu.
-    if (purgeDocuments) {
+    if (parsed.data.purgeDocuments) {
       await prisma.communiqueDocument.deleteMany({ where: { sourceId: source.id } });
     }
-    res.status(201).json(source);
+    res.json(source);
+  } catch (e) { next(e); }
+});
+
+// DELETE /api/communiques/:eventId/sources/:sourceId — Quelle entfernen
+// (Admin). Ihre Dokumente hängen per onDelete: Cascade daran und werden mit
+// gelöscht — die Bestätigung dafür liegt im Frontend beim Menschen.
+router.delete('/:eventId/sources/:sourceId', requireAdmin, async (req, res, next) => {
+  try {
+    const existing = await prisma.communiqueSource.findFirst({
+      where: { id: req.params.sourceId, eventId: req.params.eventId },
+      select: { id: true },
+    });
+    if (!existing) { res.status(404).json({ error: 'Quelle nicht gefunden' }); return; }
+    await prisma.communiqueSource.delete({ where: { id: existing.id } });
+    res.status(204).send();
   } catch (e) { next(e); }
 });
 
@@ -130,13 +172,23 @@ router.get('/:eventId/spins-events', requireAdmin, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// POST /api/communiques/:eventId/poll — manuelles Anstoßen (auch vom Cron-Interval genutzt)
+// POST /api/communiques/:eventId/poll — manuelles Anstoßen aller Quellen
+// dieser Veranstaltung (auch vom Cron-Interval pro Quelle einzeln genutzt).
+// Eine fehlschlagende Quelle darf die anderen nicht blockieren — analog zum
+// globalen Poll-Zyklus in index.ts.
 router.post('/:eventId/poll', async (req, res, next) => {
   try {
-    const source = await prisma.communiqueSource.findUnique({ where: { eventId: req.params.eventId } });
-    if (!source) { res.status(404).json({ error: 'Keine Quelle hinterlegt' }); return; }
+    const sources = await prisma.communiqueSource.findMany({ where: { eventId: req.params.eventId } });
+    if (sources.length === 0) { res.status(404).json({ error: 'Keine Quelle hinterlegt' }); return; }
 
-    const newDocs = await pollSource(source);
+    const newDocs: Awaited<ReturnType<typeof pollSource>> = [];
+    for (const source of sources) {
+      try {
+        newDocs.push(...await pollSource(source));
+      } catch (err) {
+        console.error(`Manueller Poll fehlgeschlagen für Quelle ${source.id}:`, err);
+      }
+    }
     res.json({ newCount: newDocs.length, newDocs });
   } catch (e) { next(e); }
 });
@@ -229,18 +281,21 @@ router.post('/:eventId/subscribe', async (req, res, next) => {
     const parsed = SubscribeSchema.safeParse(req.body);
     if (!parsed.success) { res.status(400).json(parsed.error.flatten()); return; }
 
-    const source = await prisma.communiqueSource.findUnique({ where: { eventId: req.params.eventId } });
-    if (!source) { res.status(404).json({ error: 'Keine Quelle hinterlegt' }); return; }
+    // Weiterhin nur abonnierbar, wenn mindestens eine Quelle hinterlegt ist —
+    // ein Abo pro Veranstaltung deckt jetzt ALLE ihre Quellen ab, statt eines
+    // getrennten Abos je Quelle.
+    const anySource = await prisma.communiqueSource.findFirst({ where: { eventId: req.params.eventId } });
+    if (!anySource) { res.status(404).json({ error: 'Keine Quelle hinterlegt' }); return; }
 
     const { endpoint, keys, akFilter, disciplineFilter, matrixFilter } = parsed.data;
     const matrixValue = matrixFilter ?? Prisma.DbNull;
     const sub = await prisma.pushSubscription.upsert({
       where: { endpoint },
       create: {
-        sourceId: source.id, endpoint, p256dh: keys.p256dh, auth: keys.auth,
+        eventId: req.params.eventId, endpoint, p256dh: keys.p256dh, auth: keys.auth,
         akFilter, disciplineFilter, matrixFilter: matrixValue,
       },
-      update: { akFilter, disciplineFilter, matrixFilter: matrixValue },
+      update: { eventId: req.params.eventId, akFilter, disciplineFilter, matrixFilter: matrixValue },
     });
     res.status(201).json(sub);
   } catch (e) { next(e); }
@@ -523,8 +578,8 @@ export async function pollSource(source: CommuniqueSource) {
     // laufen über die SPINS-Datei-Schnittstelle, der Rest der Adressen wie
     // bisher über den Scraper. Beide Listen werden zusammengeführt — so lassen
     // sich Zeitplan/Startlisten von der Ausrichterseite und Ergebnisse aus
-    // SPINS in EINER Quelle führen (das Datenmodell erlaubt pro Veranstaltung
-    // nur eine).
+    // SPINS in EINER HTML-Quelle führen (mehrere Quellen pro Veranstaltung
+    // sind ebenfalls möglich, z.B. zusätzlich eine eigene GDRIVE-Quelle).
     const spinsUrls = source.htmlPageUrls.filter(isSpinsUrl);
     const pageUrls = source.htmlPageUrls.filter((u: string) => !isSpinsUrl(u));
     // Ohne Seiten gar nicht erst scrapen: sonst meldet der Abschnitts-Filter
@@ -649,7 +704,7 @@ export async function pollSource(source: CommuniqueSource) {
         });
       })
     );
-    await notifyNewDocuments(sourceId, created);
+    await notifyNewDocuments(eventId, created);
   }
 
   await prisma.communiqueSource.update({

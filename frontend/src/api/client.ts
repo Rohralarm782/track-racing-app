@@ -510,10 +510,21 @@ export const api = {
 };
 
 export const communiquesApi = {
-  get: (eventId: string) => api.get<CommuniqueSource | null>(`/api/communiques/${eventId}`),
+  // Liefert alle Quellen der Veranstaltung (leeres Array = keine hinterlegt).
+  // Seit v-NEXT: eine Veranstaltung kann mehrere Quellen haben.
+  get: (eventId: string) => api.get<CommuniqueSource[]>(`/api/communiques/${eventId}`),
 
+  // Legt eine NEUE Quelle an (reines Insert, kein Ersetzen einer bestehenden).
   setSource: (eventId: string, config: CommuniqueSourceConfig) =>
-    api.post<CommuniqueSource>(`/api/communiques/${eventId}`, config),
+    api.post<CommuniqueSource>(`/api/communiques/${eventId}/sources`, config),
+
+  // Bearbeitet eine bestehende Quelle.
+  updateSource: (eventId: string, sourceId: string, config: CommuniqueSourceConfig) =>
+    api.patch<CommuniqueSource>(`/api/communiques/${eventId}/sources/${sourceId}`, config),
+
+  // Entfernt eine Quelle samt ihrer Dokumente (Bestätigung liegt beim Menschen).
+  removeSource: (eventId: string, sourceId: string) =>
+    api.delete(`/api/communiques/${eventId}/sources/${sourceId}`),
 
   // Zuordnung von Hand setzen (bleibt bei weiteren Abrufen erhalten).
   setClassification: (eventId: string, docId: string, data: ClassificationUpdate) =>

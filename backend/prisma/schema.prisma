@@ -78,7 +78,8 @@ model Event {
   races      Race[]     // neu: Rennen, die direkt an der Veranstaltung hängen (ohne Kategorie)
   createdAt  DateTime   @default(now())
 
-  communiqueSource CommuniqueSource?
+  communiqueSources CommuniqueSource[]
+  pushSubscriptions PushSubscription[]
   scheduleEntries  ScheduleEntry[]
   status           EventStatus?
   statusLog        StatusUpdateLog[]
@@ -370,7 +371,12 @@ model PursuitRun {
 
 model CommuniqueSource {
   id         String   @id @default(cuid())
-  eventId    String   @unique
+  // Nicht mehr @unique: eine Veranstaltung kann mehrere Quellen haben, z.B.
+  // die Ausrichter-Website (Ausdauer, digital veröffentlicht) UND einen
+  // eigenen Google-Drive-Ordner (Sprint-Ergebnisse, nur ausgehängt und
+  // abfotografiert). Push-Abos hängen bewusst NICHT mehr hier, sondern
+  // direkt an Event — siehe PushSubscription.
+  eventId    String
   event      Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
   sourceType SourceType @default(WEBDAV) // WEBDAV (Nextcloud) oder HTML (Webseite mit PDF-Links)
   shareToken String?  // nur WEBDAV: Token aus der Nextcloud-Share-URL
@@ -404,8 +410,9 @@ model CommuniqueSource {
 
   createdAt  DateTime @default(now())
 
-  documents     CommuniqueDocument[]
-  subscriptions PushSubscription[]
+  documents CommuniqueDocument[]
+
+  @@index([eventId])
 }
 
 model CommuniqueDocument {
@@ -515,19 +522,26 @@ model CommuniqueDocument {
 }
 
 model PushSubscription {
-  id        String           @id @default(cuid())
-  sourceId  String
-  source    CommuniqueSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
-  endpoint  String           @unique
+  id        String   @id @default(cuid())
+  // Hängt bewusst an Event statt an einer einzelnen CommuniqueSource: ein Abo
+  // pro Veranstaltung deckt alle ihre Quellen ab (Website + eigener
+  // Drive-Ordner usw.), statt getrennter Abos je Quelle. BREAKING CHANGE:
+  // bestehende Abos (alte sourceId-Spalte) gehen beim Umstellen verloren —
+  // Geräte müssen sich einmal neu für Push anmelden (siehe CHANGELOG).
+  eventId   String
+  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  endpoint  String   @unique
   p256dh    String
   auth      String
-  akFilter  String[]         @default(["Alle"]) // leer/["Alle"] = alle Klassen (alte Filterlogik)
-  disciplineFilter String[]  @default(["Alle"]) // leer/["Alle"] = Sprint + Ausdauer (alte Filterlogik)
+  akFilter  String[] @default(["Alle"]) // leer/["Alle"] = alle Klassen (alte Filterlogik)
+  disciplineFilter String[] @default(["Alle"]) // leer/["Alle"] = Sprint + Ausdauer (alte Filterlogik)
   // Pro-AK-Disziplinauswahl, z.B. { "U17m": ["SPRINT"], "U19m": ["AUSDAUER"] }.
   // null = alte Filterlogik (akFilter/disciplineFilter) gilt weiter — so
   // funktionieren bereits abonnierte Geräte ohne Re-Subscribe.
   matrixFilter Json?
-  createdAt DateTime         @default(now())
+  createdAt DateTime @default(now())
+
+  @@index([eventId])
 }
 
 // ─── Zeitplan ───────────────────────────────────────────────────────────────

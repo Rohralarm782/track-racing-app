@@ -466,15 +466,21 @@ function nonLeadSprintSerie(entry: { disciplineLabel: string; phase: string | nu
 // zusätzlich (siehe linkedResultDocumentId im Schema) — die MEV-Namen kommen
 // weiterhin von der Startliste.
 export async function autoMatch(eventId: string) {
-  const source = await prisma.communiqueSource.findUnique({ where: { eventId } });
-  if (!source) return;
+  // Mindestens eine Quelle nötig (Kurzschluss, kein funktionaler Unterschied
+  // zur Query unten — vermeidet nur unnötige Arbeit, wenn noch gar keine
+  // Quelle hinterlegt ist).
+  const hasSource = await prisma.communiqueSource.findFirst({ where: { eventId }, select: { id: true } });
+  if (!hasSource) return;
 
   const [allRaceEntries, docs] = await Promise.all([
     prisma.scheduleEntry.findMany({ where: { eventId, type: 'RACE' } }),
     // Ersetzte Dokumente (supersededById gesetzt) sind veraltet und dürfen nicht
     // mehr verknüpft werden — der Poll hat bestehende Verknüpfungen bereits auf
     // den Nachfolger umgehängt (siehe applySupersessions in communiques.ts).
-    prisma.communiqueDocument.findMany({ where: { sourceId: source.id, supersededById: null } }),
+    // Über ALLE Quellen der Veranstaltung hinweg (source-Relation statt fixer
+    // sourceId): ein Dokument von der Website matcht genauso wie eines aus
+    // dem eigenen Drive-Ordner.
+    prisma.communiqueDocument.findMany({ where: { source: { eventId }, supersededById: null } }),
   ]);
 
   const passes: Array<{

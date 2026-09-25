@@ -622,7 +622,7 @@ export default function SchedulePage() {
       // sind unkritisch — dann bleibt die Auswahl im Sheet eben leer.
       if (isAdmin) {
         communiquesApi.get(eventId)
-          .then(src => setDocs((src?.documents ?? []).filter(d => !d.isHidden)))
+          .then(list => setDocs(list.flatMap(s => s.documents).filter(d => !d.isHidden)))
           .catch(() => setDocs([]));
       }
     } catch (e: any) {

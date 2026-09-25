@@ -11,17 +11,18 @@ if (VAPID_PUBLIC && VAPID_PRIVATE) {
 }
 
 /**
- * Benachrichtigt alle Subscriptions einer Quelle, deren Filter zum Dokument
- * passt. Neue Logik: `matrixFilter` (pro AK gewählte Disziplinen, z.B.
+ * Benachrichtigt alle Subscriptions einer Veranstaltung (über alle ihre
+ * Quellen hinweg), deren Filter zum Dokument passt. Neue Logik:
+ * `matrixFilter` (pro AK gewählte Disziplinen, z.B.
  * { "U17m": ["SPRINT"], "U19m": ["AUSDAUER"] }). Ist `matrixFilter` null
  * (ältere Subscriptions), gilt weiterhin die alte akFilter/disciplineFilter-
  * Logik. Ungültige/abgelaufene Subscriptions werden bei HTTP 404/410
  * automatisch entfernt.
  */
-export async function notifyNewDocuments(sourceId: string, docs: CommuniqueDocument[]) {
+export async function notifyNewDocuments(eventId: string, docs: CommuniqueDocument[]) {
   if (docs.length === 0 || !VAPID_PUBLIC || !VAPID_PRIVATE) return;
 
-  const subs = await prisma.pushSubscription.findMany({ where: { sourceId } });
+  const subs = await prisma.pushSubscription.findMany({ where: { eventId } });
   if (subs.length === 0) return;
 
   for (const sub of subs) {
