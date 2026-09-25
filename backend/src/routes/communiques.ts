@@ -734,7 +734,11 @@ export async function pollSource(source: CommuniqueSource) {
   // aber keine anderen Quellen (siehe index.ts).
   // Trigger für die MEV-Analyse (die Json-Spalte mevRiders lässt sich nicht
   // sinnvoll in der DB filtern, deshalb alle Startlisten laden und in JS aussieben):
-  //   1. starterCount === null  -> noch nie erfolgreich analysiert
+  //   1. starterCount === null UND mevAnalyzedAt === null -> noch nie versucht.
+  //      Das mevAnalyzedAt-Kriterium ist nötig, weil analyzeMevForDocument auch
+  //      bei einem Fehlschlag mevAnalyzedAt/mevVersion setzt (siehe mevDetect.ts) —
+  //      ohne dieses zweite Kriterium würde ein dauerhaft scheiterndes Dokument
+  //      (starterCount bleibt für immer null) bei JEDEM Poll erneut versucht.
   //   2. mevVersion veraltet    -> mit einem älteren Prompt/Auswertungsstand
   //      analysiert (siehe MEV_ANALYSIS_VERSION); einmaliger Nachtrag
   //   3. needsRosterRecheck     -> Dokument ohne LV-Spalte, für dessen AK
@@ -749,7 +753,7 @@ export async function pollSource(source: CommuniqueSource) {
     // OHNE diesen Filter bei JEDEM Poll erneut versucht — die Datei würde
     // jedes Mal neu geladen. Auswertung von Fotos ist ein eigener Schritt.
     d => isPdfFileName(d.fileName)
-      && (d.starterCount === null
+      && ((d.starterCount === null && d.mevAnalyzedAt === null)
         || d.mevVersion < MEV_ANALYSIS_VERSION
         || needsRosterRecheck(d, startlists)),
   );

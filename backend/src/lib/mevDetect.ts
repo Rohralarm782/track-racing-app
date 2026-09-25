@@ -418,9 +418,24 @@ Regeln:
       } as any,
     });
   } catch (err) {
-    // Eine fehlgeschlagene Analyse darf den restlichen Poll-Zyklus nicht abbrechen —
-    // das Dokument bleibt einfach unanalysiert (mevAnalyzedAt bleibt null) und wird
-    // beim nächsten Zyklus erneut versucht.
+    // Eine fehlgeschlagene Analyse darf den restlichen Poll-Zyklus nicht abbrechen.
     console.error(`MEV-Analyse fehlgeschlagen für ${doc.fileName}:`, err);
+    // mevAnalyzedAt/mevVersion trotzdem stempeln — wie bei classifyImageDocument
+    // in imageClassify.ts (dort mit derselben Begründung). Ohne diesen Stempel
+    // bleibt starterCount null, und der Poll-Trigger in communiques.ts würde
+    // dieselbe Datei alle 90 Sekunden erneut vollständig herunterladen und ans
+    // Modell schicken — mit temperature: 0 liefert ein Wiederholungsversuch fast
+    // immer denselben Fehlschlag, kauft also keine zweite Chance, kostet aber
+    // jedes Mal Token. Ein echter Zufallsfehler (Timeout, kurzer API-Ausfall)
+    // bleibt über den "Neu analysieren"-Knopf (reanalyze-mev-Route) jederzeit von
+    // Hand nachholbar; dieser Weg prüft explizit ohne Rücksicht auf den Stempel.
+    try {
+      await prisma.communiqueDocument.update({
+        where: { id: doc.id },
+        data: { mevAnalyzedAt: new Date(), mevVersion: MEV_ANALYSIS_VERSION },
+      });
+    } catch (updateErr) {
+      console.error(`MEV-Analyse: Fehlschlag konnte nicht vermerkt werden für ${doc.fileName}:`, updateErr);
+    }
   }
 }
