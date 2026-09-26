@@ -1471,14 +1471,6 @@ export default function SchedulePage() {
                             }}
                           >
                             MEV: {mev}
-                            {mevIsManual && (
-                              <span style={{
-                                fontSize: 9.5, fontWeight: 700, letterSpacing: '.02em',
-                                background: 'rgba(0,0,0,.08)', borderRadius: 5, padding: '1px 5px', marginLeft: 6,
-                              }}>
-                                MANUELL
-                              </span>
-                            )}
                           </span>
                         )}
                       </div>
