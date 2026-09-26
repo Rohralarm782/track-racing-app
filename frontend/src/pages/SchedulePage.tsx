@@ -104,13 +104,25 @@ function riderDetail(r: MevRider, heatTime?: string | null): string {
 function mevSummary(riders: MevRider[], heatTimeFor?: (r: MevRider) => string | null): string | null {
   if (!riders || riders.length === 0) return null;
 
-  const hasTeams = riders.some(r => r.team);
+  // Aufsteigend nach Lauf-Nummer zeigen, unabhängig von der Reihenfolge, in
+  // der das Modell die Fahrer in mevRiders zurückgegeben hat — die folgt
+  // erkennbar nicht immer der Lauf-Reihenfolge im Dokument (real: 28, 30, 26,
+  // 25 statt 25, 26, 28, 30). Fahrer ohne lauf (nur laufLabel oder gar keine
+  // Angabe) bleiben ans Ende sortiert, untereinander in ursprünglicher
+  // Reihenfolge (Array.prototype.sort ist stabil).
+  const sorted = [...riders].sort((a, b) => {
+    const la = a.lauf ?? Infinity;
+    const lb = b.lauf ?? Infinity;
+    return la - lb;
+  });
+
+  const hasTeams = sorted.some(r => r.team);
   let parts: string[];
 
   if (hasTeams) {
     const seen = new Set<string>();
     parts = [];
-    for (const r of riders) {
+    for (const r of sorted) {
       const label = r.team ?? r.name.trim().split(/\s+/)[0];
       const key = `${label}::${r.lauf ?? r.laufLabel ?? ''}`;
       if (seen.has(key)) continue;
@@ -118,7 +130,7 @@ function mevSummary(riders: MevRider[], heatTimeFor?: (r: MevRider) => string | 
       parts.push(`${label}${riderDetail(r, heatTimeFor?.(r))}`);
     }
   } else {
-    parts = riders.map(r => `${r.name.trim().split(/\s+/)[0]}${riderDetail(r, heatTimeFor?.(r))}`);
+    parts = sorted.map(r => `${r.name.trim().split(/\s+/)[0]}${riderDetail(r, heatTimeFor?.(r))}`);
   }
 
   const joined = parts.join(', ');
