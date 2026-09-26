@@ -19,6 +19,7 @@ Beim Erhöhen der Version immer beides ändern:
 
 | Version | Datum | Inhalt |
 |---|---|---|
+| [5.3.0](5.3.0.md) | 26.09.2026 | Sammel-Update aus vier Einzelständen: Zeitplan-Bearbeitung mit Drag & Drop statt ▲/▼, „✂️ In Läufe aufteilen“, AK/Disziplin/Phase umbenennbar; Fahrerlager-Anzeige mit großer Uhr und „Nächste eigene Starts“; Feld „Läufe insgesamt“ für von Hand gepflegte Fahrerlisten; Zuordnen-Dialog zeigt und durchsucht umbenannte Kommuniqués unter ihrem neuen Namen. Neue Pakete `@dnd-kit/*`. Kein Schema, keine Neuauswertung |
 | [5.2.1](5.2.1.md) | 26.09.2026 | Kennzeichen „MANUELL" in der MEV-Zeile entfernt — die lila Farbe allein markiert von Hand gepflegte Fahrerlisten. Nur Frontend |
 | [5.2.0](5.2.0.md) | 26.09.2026 | MEV-Fahrer im Zeitplan von Hand eintragen („✏️ Fahrer bearbeiten"): ersetzt die automatische Erkennung für dieses Kommuniqué, lila „MANUELL" markiert, Poll und „Neu analysieren" fassen es nicht mehr an, bis „Zurück auf automatisch". **Schema: `prisma db push`** (additiv), keine Neuauswertung |
 | [5.1.3](5.1.3.md) | 26.09.2026 | MEV-Fahrer im Zeitplan werden jetzt aufsteigend nach Lauf-Nummer angezeigt statt in der (nicht verlässlich geordneten) Reihenfolge der Modellantwort — betraf sichtbar U17m (28, 30, 26, 25 → 25, 26, 28, 30). Reine Frontend-Änderung, kein Schema, keine Neuauswertung |

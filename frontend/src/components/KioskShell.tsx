@@ -21,6 +21,7 @@
 // Banner bietet „Wieder Vollbild". Für einen unentkommbaren Kiosk zusätzlich den
 // Browser im OS-Kiosk-Modus starten (Chrome/Edge --kiosk).
 import { useEffect, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { api } from '../api/client';
 import PinPad, { getStoredPin, setStoredPin, clearStoredPin } from './PinPad';
 
@@ -36,6 +37,9 @@ export default function KioskShell({ editing, setEditing, onExit }: {
   onExit: () => void;
 }) {
   const [now, setNow]       = useState(new Date());
+  // Auf dem Zeitplan-Tab steht rechts bereits eine große Uhr (siehe
+  // SchedulePage) — die kleine Uhr hier wäre dort doppelt.
+  const onSchedule = useLocation().pathname.endsWith('/schedule');
   const [fsExited, setFsExited] = useState(!document.fullscreenElement);
   const [needsSetup, setNeedsSetup] = useState(!getStoredPin());
   const [exitAsk, setExitAsk]   = useState(false);
@@ -123,7 +127,9 @@ export default function KioskShell({ editing, setEditing, onExit }: {
             <span>🖥️</span><span>Fahrerlager-Anzeige</span>
           </span>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-            <span style={{ fontSize: 20, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{clock}</span>
+            {!onSchedule && (
+              <span style={{ fontSize: 20, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{clock}</span>
+            )}
             {editing ? (
               <button onClick={() => setEditing(false)}
                 className="btn btn-secondary btn-sm" title="Bearbeitung sperren">

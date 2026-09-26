@@ -412,6 +412,12 @@ const ManualRiderSchema = z.object({
 });
 const ManualRidersSchema = z.object({
   riders: z.array(ManualRiderSchema).max(50),
+  // Fallback, falls kein Kommuniqué automatisch ausgewertet wurde (oder die
+  // Auswertung keine Lauf-Spalte fand): ohne bekannte Gesamt-Läufe-Zahl kann
+  // trotz eingetragener Fahrer keine geschätzte Startzeit je Lauf berechnet
+  // werden (siehe heatTimeFor in SchedulePage.tsx). undefined = Feld nicht
+  // mitgeschickt, unverändert lassen; null = bewusst löschen.
+  heatCount: z.number().int().positive().nullable().optional(),
 });
 
 router.patch('/:eventId/documents/:documentId/mev-manual', requireAdmin, async (req, res, next) => {
@@ -442,7 +448,14 @@ router.patch('/:eventId/documents/:documentId/mev-manual', requireAdmin, async (
     }));
     const updated = await prisma.communiqueDocument.update({
       where: { id: doc.id },
-      data: { mevManual: true, mevRiders },
+      // sections wird IMMER geleert: die manuelle Fahrerliste ersetzt die
+      // automatische Abschnitts-Zuordnung vollständig (mevRiders trägt hier
+      // fest section: 0). Bliebe eine ältere, mehrsektionale sections-Liste
+      // stehen, würde applySectionView beim Lesen den hier gesetzten
+      // heatCount wieder mit einem (u.U. veralteten) Abschnittswert
+      // überschreiben. heatCount: undefined im Body lässt den vorhandenen
+      // Wert unangetastet (Prisma ignoriert undefined-Felder).
+      data: { mevManual: true, mevRiders, sections: [], heatCount: parsed.data.heatCount },
     });
     res.json(updated);
   } catch (e) { next(e); }
@@ -465,7 +478,11 @@ router.post('/:eventId/documents/:documentId/mev-manual/reset', requireAdmin, as
     // unbeschriftete Handeingabe stehen zu lassen.
     const updated = await prisma.communiqueDocument.update({
       where: { id: doc.id },
-      data: { mevManual: false, mevRiders: [], mevAnalyzedAt: null, mevVersion: 0 },
+      // heatCount ebenfalls zurück auf null: ein von Hand eingetragener Wert
+      // soll nicht als Altlast stehen bleiben, sondern von der nächsten
+      // automatischen Analyse neu bestimmt werden — konsistent mit
+      // mevRiders/mevAnalyzedAt/mevVersion oben.
+      data: { mevManual: false, mevRiders: [], mevAnalyzedAt: null, mevVersion: 0, heatCount: null },
     });
     res.json(updated);
   } catch (e) { next(e); }

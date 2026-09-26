@@ -578,8 +578,11 @@ export const communiquesApi = {
 
   // MEV-Fahrer von Hand setzen — ersetzt die automatische Erkennung für dieses
   // Dokument, bis resetMevManual wieder auf automatisch zurückstellt.
-  setMevManual: (eventId: string, documentId: string, riders: ManualRiderInput[]) =>
-    api.patch<CommuniqueDocument>(`/api/communiques/${eventId}/documents/${documentId}/mev-manual`, { riders }),
+  // heatCount (Gesamt-Läufe-Zahl) ist der Fallback für Dokumente ohne
+  // automatisch erkannte Lauf-Spalte — undefined lässt einen vorhandenen
+  // Wert unangetastet, null löscht ihn bewusst.
+  setMevManual: (eventId: string, documentId: string, riders: ManualRiderInput[], heatCount?: number | null) =>
+    api.patch<CommuniqueDocument>(`/api/communiques/${eventId}/documents/${documentId}/mev-manual`, { riders, heatCount }),
 
   resetMevManual: (eventId: string, documentId: string) =>
     api.post<CommuniqueDocument>(`/api/communiques/${eventId}/documents/${documentId}/mev-manual/reset`, {}),
@@ -641,6 +644,19 @@ export const scheduleApi = {
 
   moveEntry: (entryId: string, direction: 'up' | 'down') =>
     api.post<ScheduleEntry[]>(`/api/schedule-entries/${entryId}/move`, { direction }),
+
+  // Reihenfolge eines ganzen Tages in einem Rutsch setzen (Drag & Drop) —
+  // orderedIds muss exakt die aktuellen Einträge dieses Tages enthalten.
+  reorderDay: (eventId: string, day: number, orderedIds: string[]) =>
+    api.patch<ScheduleEntry[]>(`/api/events/${eventId}/schedule/days/${day}/reorder`, { orderedIds }),
+
+  // Einen Eintrag in mehrere Läufe aufteilen ("1. Lauf" .. "N. Lauf").
+  splitEntry: (entryId: string, count: number) =>
+    api.post<ScheduleEntry[]>(`/api/schedule-entries/${entryId}/split`, { count }),
+
+  // Altersklasse/Disziplin/Phase eines bestehenden Eintrags umbenennen.
+  renameEntry: (entryId: string, fields: { ak?: string; disciplineLabel?: string; phase?: string | null }) =>
+    api.patch<ScheduleEntry>(`/api/schedule-entries/${entryId}`, fields),
 
   deleteEntry: (entryId: string) =>
     api.delete<ScheduleEntry[]>(`/api/schedule-entries/${entryId}`),

@@ -6,6 +6,14 @@ import SettingsGearButton from '../components/SettingsGearButton';
 import KioskButton from '../components/KioskButton';
 import ScheduleImport from '../components/ScheduleImport';
 import { useAdmin, useKiosk } from '../components/Layout';
+import {
+  DndContext, PointerSensor, useSensor, useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext, arrayMove, verticalListSortingStrategy, useSortable,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 // Zielpfad im Repo: frontend/src/pages/SchedulePage.tsx  (ERSETZT die bestehende Datei)
 //
 // Änderung: neuer Bearbeiten-Modus als Rückfallweg, wenn der Veranstalter
@@ -21,7 +29,7 @@ import { useAdmin, useKiosk } from '../components/Layout';
 // wieder an. Jede Aktion geht sofort ans Backend, es gibt kein Speichern und
 // kein Abbrechen — genau wie beim bestehenden "Tag löschen".
 import {
-  api, communiquesApi, scheduleApi,
+  api, communiquesApi, scheduleApi, documentLabel,
   type Event as EventT, type ScheduleEntry, type EventStatus, type LiveStatusKey, type MevRider,
   type CommuniqueDocument, type ManualRiderInput,
 } from '../api/client';
@@ -140,6 +148,90 @@ function mevSummary(riders: MevRider[], heatTimeFor?: (r: MevRider) => string | 
   return `${riders.length} Fahrer`;
 }
 
+// Lauf-Startzeit EINES Fahrers — ausgelagert aus dem Render-Loop weiter unten,
+// damit dieselbe Formel auch computeNextOwnStarts() (Kiosk-Anzeige "Nächste
+// eigene Starts") nutzt und beide Stellen nicht auseinanderlaufen können.
+// Einzelstart (Zeitfahren/Verfolgung): grob geschätzte Startzeit je Lauf =
+// Rennstart + (Lauf−1)/Laufzahl × Renndauer. Nur bei bekanntem
+// Lauf/Laufzahl/Dauer und NICHT im Massenstart (dort starten alle gemeinsam,
+// eine Lauf-Zeit wäre sinnlos).
+function heatStartTime(
+  entry: { massStart: boolean },
+  raceStartMin: number,
+  heatCount: number | null,
+  estMin: number | null,
+  r: MevRider,
+): string | null {
+  if (entry.massStart) return null;
+  if (r.lauf == null || heatCount == null || heatCount <= 0 || estMin == null) return null;
+  return fromMinutes(raceStartMin + ((r.lauf - 1) / heatCount) * estMin);
+}
+
+interface NextOwnStart {
+  key: string;
+  who: string;
+  race: string;
+  minutesUntil: number;
+}
+
+// Kiosk-Anzeige, rechte Spalte: eigene (MEV-)Fahrer, die in den nächsten
+// windowMin Minuten starten — aufsteigend sortiert.
+//   - Massenstart: alle eigenen Fahrer/Teams des Rennens starten gemeinsam,
+//     daher EINE gebündelte Zeile pro Rennen (Absprache 26.09.2026).
+//   - Einzelstart: eine Zeile je Fahrer mit seiner individuellen Lauf-Zeit
+//     (heatStartTime); bei Team-Disziplinen wie gehabt eine Zeile je Team
+//     und Lauf (gleiche Dedup-Logik wie mevSummary oben, damit ein 4er-Team
+//     nicht vierfach auftaucht).
+function computeNextOwnStarts(
+  dayEntries: ScheduleEntry[],
+  estimatedTimes: Map<string, string>,
+  nowMinutes: number,
+  windowMin: number,
+): NextOwnStart[] {
+  const rows: NextOwnStart[] = [];
+  const distanceMin = (targetMin: number) => ((targetMin - nowMinutes) % 1440 + 1440) % 1440;
+
+  for (const entry of dayEntries) {
+    const riders = entry.linkedDocument?.mevRiders;
+    if (!riders || riders.length === 0) continue;
+
+    const startTimeStr = estimatedTimes.get(entry.id) ?? entry.time;
+    const raceStartMin = toMinutes(startTimeStr);
+    const heatCount = entry.linkedDocument?.heatCount ?? null;
+    const estMin = entry.estimatedMinutes;
+    const race = `${entry.ak} · ${entry.disciplineLabel}${entry.phase ? ` · ${entry.phase}` : ''}`;
+
+    if (entry.massStart) {
+      const labels = new Set<string>();
+      for (const r of riders) labels.add(r.team ?? r.name.trim().split(/\s+/)[0]);
+      const minutesUntil = distanceMin(raceStartMin);
+      if (minutesUntil <= windowMin) {
+        rows.push({ key: entry.id, who: [...labels].join(', '), race, minutesUntil });
+      }
+      continue;
+    }
+
+    const hasTeams = riders.some(r => r.team);
+    const seen = new Set<string>();
+    for (const r of riders) {
+      const label = hasTeams ? (r.team ?? r.name.trim().split(/\s+/)[0]) : r.name.trim().split(/\s+/)[0];
+      if (hasTeams) {
+        const dedupKey = `${label}::${r.lauf ?? r.laufLabel ?? ''}`;
+        if (seen.has(dedupKey)) continue;
+        seen.add(dedupKey);
+      }
+      const t = heatStartTime(entry, raceStartMin, heatCount, estMin, r) ?? startTimeStr;
+      const minutesUntil = distanceMin(toMinutes(t));
+      if (minutesUntil <= windowMin) {
+        rows.push({ key: `${entry.id}-${label}-${r.lauf ?? r.laufLabel ?? r.startOrder ?? ''}`, who: label, race, minutesUntil });
+      }
+    }
+  }
+
+  rows.sort((a, b) => a.minutesUntil - b.minutesUntil);
+  return rows;
+}
+
 const CEREMONY_ESTIMATE_MIN = 5;
 // Feste Abräumzeit nach "im Ziel": die Fahrer sind im Ziel und verlassen die
 // Bahn — bis das nächste Rennen starten kann, vergehen noch rund 2 Minuten.
@@ -153,6 +245,9 @@ const FINISHED_CLEAR_MIN = 2;
 // hat eine angesagte 11:15 hinter der geplanten 11:20 versteckt (real
 // aufgetreten, DM Öschelbronn 20.09.).
 const ESTIMATE_DISPLAY_THRESHOLD_MIN = 2;
+// Zeitfenster für "Nächste eigene Starts" in der Kiosk-Anzeige (Zeitplan-Tab,
+// rechte Spalte) — siehe computeNextOwnStarts weiter unten.
+const NEXT_OWN_STARTS_WINDOW_MIN = 120;
 
 // ── Körnung und Trägheit weiter hinten im Tag ───────────────────────────────
 // Die nächsten Zeilen sollen auf die Minute stimmen. Weiter hinten ist jede
@@ -351,6 +446,116 @@ function parseSprintSerie(phase: string | null): { base: string; serie: number |
   return { base: phase.trim(), serie: null };
 }
 
+// ── Bearbeiten-Modus: eine Zeile ─────────────────────────────────────────
+// Eigene Komponente statt Inline-JSX, weil useSortable (dnd-kit) ein Hook ist
+// und pro Zeile aufgerufen werden muss — das geht nur in einer eigenen
+// Funktionskomponente, nicht in einer .map()-Schleife im Elternteil.
+// Ersetzt die bisherigen ▲/▼-Knöpfe durch einen Ziehgriff (⠿); AK, Disziplin
+// und Phase sind wie die Uhrzeit daneben direkt editierbar (defaultValue +
+// onBlur, damit nicht jeder Tastendruck einen Request auslöst).
+function SortableScheduleRow({
+  entry, editBusy,
+  onSetTime, onRenameField, onSplit, onDelete,
+}: {
+  entry: ScheduleEntry;
+  editBusy: boolean;
+  onSetTime: (entry: ScheduleEntry, value: string) => void;
+  onRenameField: (entry: ScheduleEntry, field: 'ak' | 'disciplineLabel' | 'phase', value: string) => void;
+  onSplit: (entry: ScheduleEntry) => void;
+  onDelete: (entry: ScheduleEntry) => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: entry.id });
+
+  const fieldStyle: React.CSSProperties = {
+    fontSize: 12.5, padding: '3px 4px', border: '1px solid var(--c-border)', borderRadius: 5, fontFamily: 'inherit',
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Transform.toString(transform), transition,
+        display: 'grid', gridTemplateColumns: '26px 1fr auto',
+        gap: 8, alignItems: 'center', padding: '7px 2px',
+        borderBottom: '1px solid var(--c-border)',
+        opacity: isDragging ? 0.4 : (editBusy ? 0.6 : 1),
+        background: 'var(--c-white)',
+      }}
+    >
+      <div
+        {...attributes} {...listeners}
+        title="Ziehen zum Umsortieren"
+        style={{
+          cursor: editBusy ? 'default' : 'grab', color: '#9ca3af', fontSize: 16,
+          textAlign: 'center', touchAction: 'none', lineHeight: 1,
+        }}
+      >⠿</div>
+
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 4, minWidth: 0 }}>
+        {entry.type !== 'RACE' && <span style={{ fontSize: 12.5 }}>{TYPE_ICON[entry.type]}</span>}
+        <input
+          key={`${entry.id}-time-${entry.time}`}
+          defaultValue={entry.time}
+          disabled={editBusy}
+          onBlur={e => onSetTime(entry, e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+          style={{ ...fieldStyle, width: 52 }}
+        />
+        <span style={{ color: '#c3c8d1' }}>·</span>
+        <input
+          key={`${entry.id}-ak-${entry.ak}`}
+          defaultValue={entry.ak}
+          disabled={editBusy}
+          onBlur={e => onRenameField(entry, 'ak', e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+          style={{ ...fieldStyle, width: 78 }}
+        />
+        <span style={{ color: '#c3c8d1' }}>·</span>
+        <input
+          key={`${entry.id}-disc-${entry.disciplineLabel}`}
+          defaultValue={entry.disciplineLabel}
+          disabled={editBusy}
+          onBlur={e => onRenameField(entry, 'disciplineLabel', e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+          style={{ ...fieldStyle, flex: '1 1 100px', minWidth: 70 }}
+        />
+        {entry.type === 'RACE' && (
+          <>
+            <span style={{ color: '#c3c8d1' }}>·</span>
+            <input
+              key={`${entry.id}-phase-${entry.phase ?? ''}`}
+              defaultValue={entry.phase ?? ''}
+              placeholder="Phase"
+              disabled={editBusy}
+              onBlur={e => onRenameField(entry, 'phase', e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+              style={{ ...fieldStyle, width: 92, color: 'var(--c-muted)' }}
+            />
+          </>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+        {entry.type === 'RACE' && (
+          <button
+            className="btn btn-ghost btn-sm"
+            disabled={editBusy}
+            title="In Läufe aufteilen"
+            onClick={() => onSplit(entry)}
+          >✂️</button>
+        )}
+        <button
+          className="btn btn-ghost btn-sm"
+          disabled={editBusy}
+          title="Eintrag löschen"
+          style={{ color: 'var(--c-danger, #dc2626)' }}
+          onClick={() => onDelete(entry)}
+        >🗑</button>
+      </div>
+    </div>
+  );
+}
+
 export default function SchedulePage() {
   const { id: eventId } = useParams<{ id: string }>();
   const { isAdmin } = useAdmin();
@@ -358,6 +563,16 @@ export default function SchedulePage() {
   // Im Kiosk-Modus sind Admin-Aktionen gesperrt, bis über die Kopfleiste per PIN
   // entsperrt wurde (kiosk.editing). Außerhalb des Kiosk zählt allein isAdmin.
   const canEdit = isAdmin && (!kiosk.active || kiosk.editing);
+
+  // Große Uhr + "in X Min"-Countdown rechts (nur Kiosk, Zeitplan-Tab). Eigener
+  // Sekundentakt statt eines globalen, damit der Admin-Modus nicht unnötig
+  // sekündlich neu rendert.
+  const [kioskNow, setKioskNow] = useState(new Date());
+  useEffect(() => {
+    if (!kiosk.active) return;
+    const t = setInterval(() => setKioskNow(new Date()), 1000);
+    return () => clearInterval(t);
+  }, [kiosk.active]);
 
   const [event, setEvent]     = useState<EventT | null>(null);
   const [entries, setEntries] = useState<ScheduleEntry[]>([]);
@@ -380,6 +595,16 @@ export default function SchedulePage() {
   const [newType, setNewType]       = useState<'RACE' | 'CEREMONY' | 'INFO'>('RACE');
   const [newMassStart, setNewMassStart] = useState(false);
   const [viewingDocId, setViewingDocId] = useState<string | null>(null);
+
+  // "In Läufe aufteilen"-Dialog
+  const [splitEntry, setSplitEntry] = useState<ScheduleEntry | null>(null);
+  const [splitCount, setSplitCount] = useState(2);
+  const [splitBusy, setSplitBusy]   = useState(false);
+
+  // Drag & Drop im Bearbeiten-Modus: Distance-Constraint, damit ein simpler
+  // Klick auf den Ziehgriff (z.B. Tippen auf einem Tablet) nicht schon als
+  // Drag gewertet wird.
+  const dndSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
 
   // Update-Dialog ("Aktueller Stand")
   const [showUpdate, setShowUpdate]         = useState(false);
@@ -412,6 +637,11 @@ export default function SchedulePage() {
   // sonst lässt sich ein leeres Feld beim Tippen nicht darstellen.
   const [ridersEntry, setRidersEntry] = useState<ScheduleEntry | null>(null);
   const [riderDraft, setRiderDraft]   = useState<{ name: string; lauf: string; startPos: string }[]>([]);
+  // Fallback-Feld: Gesamt-Läufe-Zahl des Rennens, als Text wie riderDraft.lauf
+  // (leer = unbekannt, nicht 0 — 0 würde in heatTimeFor sonst wie "kein Wert"
+  // behandelt, siehe Guard dort, aber Text vermeidet die Unterscheidung von
+  // vornherein).
+  const [heatCountDraft, setHeatCountDraft] = useState('');
   const [ridersBusy, setRidersBusy]   = useState(false);
   const [ridersError, setRidersError] = useState('');
 
@@ -472,16 +702,96 @@ export default function SchedulePage() {
   }
 
   // ── Bearbeiten-Modus: Aktionen ──────────────────────────────────────────
-  // Alle vier Endpunkte geben die komplette Liste zurück, deshalb reicht
+  // Alle Endpunkte geben die komplette Liste zurück, deshalb reicht
   // setEntries — kein Nachladen nötig. editBusy sperrt währenddessen die
-  // Knöpfe, damit zwei schnelle Klicks nicht in vertauschter Reihenfolge
+  // Knöpfe, damit zwei schnelle Aktionen nicht in vertauschter Reihenfolge
   // beim Server ankommen und die Sortierung durcheinanderbringen.
-  async function handleMove(entryId: string, direction: 'up' | 'down') {
-    if (editBusy) return;
+  //
+  // Reihenfolge per Drag & Drop (ersetzt die früheren ▲/▼-Knöpfe/handleMove).
+  // Optimistisch: die order-Werte, die der Tag JETZT schon belegt, werden neu
+  // auf die gezogene Reihenfolge verteilt — andere Tage bleiben unberührt,
+  // exakt wie beim alten .../move. Schlägt der Request fehl, zurück auf den
+  // zuletzt bestätigten Stand.
+  async function handleReorder(newOrderIds: string[]) {
+    if (editBusy || !eventId) return;
+    const daySlots = dayEntries.map(e => e.order).sort((a, b) => a - b);
+    const prevEntries = entries;
+    setEntries(prev => prev.map(e => {
+      if (e.day !== activeDay) return e;
+      const idx = newOrderIds.indexOf(e.id);
+      return idx === -1 ? e : { ...e, order: daySlots[idx] };
+    }));
     setEditBusy(true); setError('');
-    try { setEntries(await scheduleApi.moveEntry(entryId, direction)); }
-    catch (e: any) { setError(e.message ?? 'Verschieben fehlgeschlagen'); }
-    finally { setEditBusy(false); }
+    try {
+      setEntries(await scheduleApi.reorderDay(eventId, activeDay, newOrderIds));
+    } catch (e: any) {
+      setEntries(prevEntries);
+      setError(e.message ?? 'Umsortieren fehlgeschlagen');
+    } finally {
+      setEditBusy(false);
+    }
+  }
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (editBusy || !over || active.id === over.id) return;
+    const oldIndex = dayEntries.findIndex(e => e.id === active.id);
+    const newIndex = dayEntries.findIndex(e => e.id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+    handleReorder(arrayMove(dayEntries, oldIndex, newIndex).map(e => e.id));
+  }
+
+  // AK/Disziplin/Phase umbenennen — wie handleSetTime nur bei tatsächlicher
+  // Änderung ans Backend geschickt (onBlur, nicht bei jedem Tastendruck).
+  // Löst bewusst keinen Neuabgleich der Kommuniqué-Verknüpfung aus: eine
+  // bestehende Verknüpfung bleibt stehen, bis von Hand "Kommuniqués
+  // abgleichen" gedrückt wird.
+  async function handleRenameField(entry: ScheduleEntry, field: 'ak' | 'disciplineLabel' | 'phase', rawValue: string) {
+    const trimmed = rawValue.trim();
+    if (field === 'phase') {
+      if (trimmed === (entry.phase ?? '')) return;
+    } else if (trimmed === entry[field]) {
+      return;
+    } else if (trimmed === '') {
+      setError(field === 'ak' ? 'Altersklasse darf nicht leer sein.' : 'Disziplin darf nicht leer sein.');
+      return;
+    }
+    setEditBusy(true); setError('');
+    try {
+      const payload = field === 'phase' ? { phase: trimmed || null } : { [field]: trimmed };
+      const updated = await scheduleApi.renameEntry(entry.id, payload);
+      setEntries(prev => prev.map(e => e.id === entry.id ? { ...e, ...updated } : e));
+    } catch (e: any) {
+      setError(e.message ?? 'Speichern fehlgeschlagen');
+    } finally {
+      setEditBusy(false);
+    }
+  }
+
+  // ── "In Läufe aufteilen"-Dialog ──────────────────────────────────────────
+  function openSplitPopover(entry: ScheduleEntry) {
+    setSplitEntry(entry);
+    setSplitCount(2);
+    setError('');
+  }
+  function closeSplitPopover() {
+    setSplitEntry(null);
+  }
+  async function handleConfirmSplit() {
+    if (!splitEntry) return;
+    if (!Number.isInteger(splitCount) || splitCount < 2 || splitCount > 8) {
+      setError('Bitte eine Zahl zwischen 2 und 8 eingeben.');
+      return;
+    }
+    setSplitBusy(true); setError('');
+    try {
+      setEntries(await scheduleApi.splitEntry(splitEntry.id, splitCount));
+      setSplitEntry(null);
+    } catch (e: any) {
+      setError(e.message ?? 'Aufteilen fehlgeschlagen');
+    } finally {
+      setSplitBusy(false);
+    }
   }
 
   async function handleDeleteEntry(entry: ScheduleEntry) {
@@ -632,6 +942,7 @@ export default function SchedulePage() {
     setRiderDraft(existing.length > 0
       ? existing.map(r => ({ name: r.name, lauf: r.lauf != null ? String(r.lauf) : '', startPos: r.startPos ?? '' }))
       : []);
+    setHeatCountDraft(entry.linkedDocument?.heatCount != null ? String(entry.linkedDocument.heatCount) : '');
   }
   function closeEditRiders() {
     setRidersEntry(null);
@@ -666,8 +977,9 @@ export default function SchedulePage() {
         lauf: r.lauf ? parseInt(r.lauf, 10) : null,
         startPos: (r.startPos || null) as ManualRiderInput['startPos'],
       }));
-      const updated = await communiquesApi.setMevManual(eventId, ridersEntry.linkedDocument.id, payload);
-      patchLinkedDoc(ridersEntry.id, { mevRiders: updated.mevRiders ?? [], mevManual: true });
+      const heatCount = heatCountDraft.trim() ? parseInt(heatCountDraft.trim(), 10) : null;
+      const updated = await communiquesApi.setMevManual(eventId, ridersEntry.linkedDocument.id, payload, heatCount);
+      patchLinkedDoc(ridersEntry.id, { mevRiders: updated.mevRiders ?? [], mevManual: true, heatCount: updated.heatCount ?? null });
       closeEditRiders();
     } catch (e: any) {
       setRidersError(e.message ?? 'Speichern fehlgeschlagen');
@@ -681,7 +993,7 @@ export default function SchedulePage() {
     setRidersBusy(true); setRidersError('');
     try {
       await communiquesApi.resetMevManual(eventId, ridersEntry.linkedDocument.id);
-      patchLinkedDoc(ridersEntry.id, { mevRiders: [], mevManual: false });
+      patchLinkedDoc(ridersEntry.id, { mevRiders: [], mevManual: false, heatCount: null });
       closeEditRiders();
     } catch (e: any) {
       setRidersError(e.message ?? 'Zurücksetzen fehlgeschlagen');
@@ -813,6 +1125,17 @@ export default function SchedulePage() {
   const resolvedDayEntries = dayEntries.map(resolveEntry);
   const visibleDayEntries = showPast ? resolvedDayEntries : resolvedDayEntries.filter(e => !isPastEntry(e));
 
+  // Für die Zeitplan-Zeilen UND (im Kiosk) die rechte Spalte — eine
+  // Berechnung statt zweier getrennter.
+  const estimatedTimes = computeEstimatedTimes(resolvedDayEntries, status, currentEntryDay);
+  const nextOwnStarts = kiosk.active
+    ? computeNextOwnStarts(
+        visibleDayEntries, estimatedTimes,
+        kioskNow.getHours() * 60 + kioskNow.getMinutes(),
+        NEXT_OWN_STARTS_WINDOW_MIN,
+      )
+    : [];
+
   // Das gerade geöffnete Dokument (Ansetzung ODER Ergebnis) heraussuchen, um
   // seine remoteModifiedAt als Cache-Version an die PDF-URL zu hängen.
   const viewingDoc = viewingDocId
@@ -889,57 +1212,21 @@ export default function SchedulePage() {
           )}
 
           <div>
-            {dayEntries.map((entry, idx) => (
-              <div
-                key={entry.id}
-                style={{
-                  display: 'grid', gridTemplateColumns: 'auto 58px 1fr auto',
-                  gap: 8, alignItems: 'center', padding: '7px 2px',
-                  borderBottom: '1px solid var(--c-border)',
-                  opacity: editBusy ? 0.6 : 1,
-                }}
-              >
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                  <button
-                    onClick={() => handleMove(entry.id, 'up')}
-                    disabled={idx === 0 || editBusy}
-                    title="Nach oben"
-                    style={{ width: 26, height: 19, padding: 0, lineHeight: 1, fontSize: 11, borderRadius: 5, border: '1px solid var(--c-border)', background: 'var(--c-white)', cursor: 'pointer' }}
-                  >▲</button>
-                  <button
-                    onClick={() => handleMove(entry.id, 'down')}
-                    disabled={idx === dayEntries.length - 1 || editBusy}
-                    title="Nach unten"
-                    style={{ width: 26, height: 19, padding: 0, lineHeight: 1, fontSize: 11, borderRadius: 5, border: '1px solid var(--c-border)', background: 'var(--c-white)', cursor: 'pointer' }}
-                  >▼</button>
-                </div>
-
-                {/* defaultValue + key: das Feld gehört sich selbst, bis der Fokus
-                    weg ist. Mit value/onChange würde jeder Tastendruck einen
-                    Request auslösen. */}
-                <input
-                  key={`${entry.id}-${entry.time}`}
-                  defaultValue={entry.time}
-                  disabled={editBusy}
-                  onBlur={e => handleSetTime(entry, e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-                  style={{ width: 56, fontSize: 12.5, padding: '3px 4px', border: '1px solid var(--c-border)', borderRadius: 5, fontFamily: 'inherit' }}
-                />
-
-                <div style={{ minWidth: 0, fontSize: 13 }}>
-                  {entry.type !== 'RACE' && <span style={{ marginRight: 5 }}>{TYPE_ICON[entry.type]}</span>}
-                  {entry.ak} · {entry.disciplineLabel}{entry.phase ? ` · ${entry.phase}` : ''}
-                </div>
-
-                <button
-                  className="btn btn-ghost btn-sm"
-                  disabled={editBusy}
-                  title="Eintrag löschen"
-                  style={{ color: 'var(--c-danger, #dc2626)' }}
-                  onClick={() => handleDeleteEntry(entry)}
-                >🗑</button>
-              </div>
-            ))}
+            <DndContext sensors={dndSensors} onDragEnd={handleDragEnd}>
+              <SortableContext items={dayEntries.map(e => e.id)} strategy={verticalListSortingStrategy}>
+                {dayEntries.map(entry => (
+                  <SortableScheduleRow
+                    key={entry.id}
+                    entry={entry}
+                    editBusy={editBusy}
+                    onSetTime={handleSetTime}
+                    onRenameField={handleRenameField}
+                    onSplit={openSplitPopover}
+                    onDelete={handleDeleteEntry}
+                  />
+                ))}
+              </SortableContext>
+            </DndContext>
             {dayEntries.length === 0 && (
               <p className="text-sm text-muted">Für diesen Tag gibt es keine Einträge.</p>
             )}
@@ -1066,6 +1353,14 @@ export default function SchedulePage() {
             </div>
           )}
 
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: kiosk.active ? '1fr 440px' : '1fr',
+            gap: kiosk.active ? 20 : 0,
+            alignItems: 'start',
+          }}>
+          <div style={{ minWidth: 0 }}>
+
           {/* Aktueller Stand */}
           <div
             className="card mb-3"
@@ -1129,7 +1424,6 @@ export default function SchedulePage() {
           {/* Zeitplan-Liste (alle Rennen & Siegerehrungen des Tages) */}
           <div className="card" style={{ padding: '4px 14px' }}>
             {(() => {
-              const estimatedTimes = computeEstimatedTimes(resolvedDayEntries, status, currentEntryDay);
               // Position der Ankerzeile in der sichtbaren Liste — Grundlage für
               // den Abstand, ab dem gerundet wird.
               const currentIdx = status ? visibleDayEntries.findIndex(e => e.id === status.scheduleEntryId) : -1;
@@ -1168,11 +1462,8 @@ export default function SchedulePage() {
                 // sollen nicht die "ca."-Körnung der Zeile erben.
                 const raceStartMin = toMinutes(rawDisplayTime);
                 const estMin = entry.estimatedMinutes;
-                const heatTimeFor = (r: MevRider): string | null => {
-                  if (entry.massStart) return null;
-                  if (r.lauf == null || heatCount == null || heatCount <= 0 || estMin == null) return null;
-                  return fromMinutes(raceStartMin + ((r.lauf - 1) / heatCount) * estMin);
-                };
+                const heatTimeFor = (r: MevRider): string | null =>
+                  heatStartTime(entry, raceStartMin, heatCount, estMin, r);
                 const mev = entry.linkedDocument ? mevSummary(entry.linkedDocument.mevRiders, heatTimeFor) : null;
                 const mevIsManual = entry.linkedDocument?.mevManual ?? false;
 
@@ -1485,6 +1776,53 @@ export default function SchedulePage() {
             })()}
           </div>
 
+          </div>
+
+          {kiosk.active && (
+            <div style={{ position: 'sticky', top: 90, display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div className="card" style={{ padding: '22px 16px', textAlign: 'center' }}>
+                <div style={{
+                  fontSize: 64, fontWeight: 700, fontVariantNumeric: 'tabular-nums',
+                  lineHeight: 1, letterSpacing: '-1px',
+                }}>
+                  {String(kioskNow.getHours()).padStart(2, '0')}:{String(kioskNow.getMinutes()).padStart(2, '0')}
+                </div>
+              </div>
+              <div className="card" style={{ padding: '14px 16px 10px' }}>
+                <p className="text-xs" style={{
+                  fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.03em',
+                  color: 'var(--c-primary)', margin: '0 0 10px',
+                }}>
+                  Nächste eigene Starts
+                </p>
+                {nextOwnStarts.length === 0 ? (
+                  <p className="text-sm text-muted" style={{ margin: 0, padding: '4px 0 10px' }}>
+                    Keine eigenen Starts in den nächsten {Math.round(NEXT_OWN_STARTS_WINDOW_MIN / 60)} Stunden.
+                  </p>
+                ) : (
+                  nextOwnStarts.map((row, i) => (
+                    <div key={row.key} style={{
+                      display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10,
+                      padding: '9px 0', borderTop: i === 0 ? 'none' : '1px solid var(--c-border)',
+                    }}>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: 14.5, fontWeight: 500 }}>{row.who}</div>
+                        <div style={{ fontSize: 12, color: 'var(--c-text-muted)', marginTop: 1 }}>{row.race}</div>
+                      </div>
+                      <div style={{
+                        fontSize: 15, fontWeight: 700, whiteSpace: 'nowrap',
+                        color: row.minutesUntil <= 5 ? 'var(--c-danger)' : 'var(--c-primary)',
+                      }}>
+                        in {row.minutesUntil} Min
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+          </div>
+
           {canEdit && (
             <div style={{ marginTop: 18, paddingTop: 12, borderTop: '1px solid var(--c-border)' }}>
               <p className="text-xs text-muted" style={{ fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>
@@ -1505,6 +1843,40 @@ export default function SchedulePage() {
         onDone={() => { setShowImport(false); load(); }}
         onClose={() => setShowImport(false)}
       />
+    )}
+
+    {splitEntry && (
+      <div className="modal-overlay" onClick={closeSplitPopover}>
+        <div className="modal" style={{ maxWidth: 320 }} onClick={e => e.stopPropagation()}>
+          <p className="modal-title">In Läufe aufteilen</p>
+          {error && <div className="alert alert-error mb-3">{error}</div>}
+          <p className="text-sm text-muted" style={{ marginTop: -6, marginBottom: 12 }}>
+            {splitEntry.ak} · {splitEntry.disciplineLabel}{splitEntry.phase ? ` · ${splitEntry.phase}` : ''}
+          </p>
+          <div className="form-group">
+            <label className="form-label">Anzahl Läufe</label>
+            <input
+              className="form-input"
+              type="number"
+              min={2}
+              max={8}
+              value={splitCount}
+              onChange={e => setSplitCount(parseInt(e.target.value, 10) || 2)}
+              style={{ width: 80 }}
+            />
+          </div>
+          <p className="text-sm text-muted" style={{ marginBottom: 14 }}>
+            Ergebnis: {Array.from({ length: Math.max(2, Math.min(8, splitCount)) }, (_, i) => `${i + 1}. Lauf`).join(', ')}
+            {splitEntry.linkedDocumentId ? ' — die verknüpfte Kommuniqué-Ansetzung bleibt an allen Läufen erhalten.' : ''}
+          </p>
+          <div className="flex-between">
+            <button className="btn btn-ghost btn-sm" onClick={closeSplitPopover} disabled={splitBusy}>Abbrechen</button>
+            <button className="btn btn-primary btn-sm" onClick={handleConfirmSplit} disabled={splitBusy}>
+              {splitBusy ? 'Teilt auf…' : 'Aufteilen'}
+            </button>
+          </div>
+        </div>
+      </div>
     )}
 
     {showUpdate && (
@@ -1661,7 +2033,7 @@ export default function SchedulePage() {
               const q = assignSearch.trim().toLowerCase();
               const ranked = docs
                 .map(d => ({ d, score: rankAssignDoc(assignEntry, d) }))
-                .filter(({ d }) => !q || d.fileName.toLowerCase().includes(q))
+                .filter(({ d }) => !q || documentLabel(d).toLowerCase().includes(q))
                 .sort((a, b) =>
                   b.score - a.score ||
                   (new Date(b.d.remoteModifiedAt).getTime() - new Date(a.d.remoteModifiedAt).getTime()));
@@ -1691,7 +2063,7 @@ export default function SchedulePage() {
                     <span style={{ fontSize: 15, flexShrink: 0 }}>{ICON[d.docType] ?? '📄'}</span>
                     <span style={{ minWidth: 0, flex: 1 }}>
                       <span style={{ display: 'block', fontSize: 13, fontWeight: 600, wordBreak: 'break-word' }}>
-                        {d.fileName}
+                        {documentLabel(d)}
                         {suggest && <span className="badge badge-blue" style={{ marginLeft: 6 }}>Vorschlag</span>}
                       </span>
                       <span className="text-xs text-muted">
@@ -1751,6 +2123,26 @@ export default function SchedulePage() {
               Von Hand eingetragene Fahrer ersetzen die automatische Erkennung für dieses Kommuniqué, bis du sie hier wieder zurücksetzt.
             </p>
           )}
+          <div style={{
+            margin: '4px 0 14px', padding: '10px 11px', borderRadius: 9,
+            background: '#f5f3ff', border: '1px solid #ddd6fe',
+            display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+          }}>
+            <label htmlFor="heatCountDraft" style={{ fontSize: 12.5, fontWeight: 600, color: '#5b21b6', whiteSpace: 'nowrap' }}>
+              Läufe insgesamt
+            </label>
+            <input
+              id="heatCountDraft"
+              className="form-input" type="number" inputMode="numeric" min={1} placeholder="—"
+              style={{ width: 68, textAlign: 'center', padding: '6px 8px' }}
+              value={heatCountDraft}
+              onChange={e => setHeatCountDraft(e.target.value)}
+            />
+            <div style={{ fontSize: 11, color: '#6d28d9', flexBasis: '100%', lineHeight: 1.4 }}>
+              Fallback, falls kein Kommuniqué automatisch ausgewertet wurde: nur mit dieser Zahl
+              kann pro Fahrer eine geschätzte Startzeit berechnet werden. Leer lassen = weiterhin unbekannt.
+            </div>
+          </div>
           <div style={{ display: 'flex', gap: 6, marginBottom: 2, fontSize: 10.5, color: 'var(--c-text-muted)' }}>
             <span style={{ flex: 1 }}>Name</span>
             <span style={{ width: 58, textAlign: 'center' }}>Lauf</span>

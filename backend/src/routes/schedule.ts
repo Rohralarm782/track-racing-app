@@ -129,19 +129,30 @@ const PatchEntrySchema = z.object({
   // läuft weiter über EventStatus/offsetMinutes. Hier wird korrigiert, wenn
   // der Veranstalter umplant, ohne einen neuen Zeitplan zu veröffentlichen.
   time: z.string().regex(/^\d{1,2}:\d{2}$/, 'Uhrzeit muss HH:MM sein').optional(),
+  // Umbenennen bestehender Einträge im Bearbeiten-Modus. Bewusst OHNE
+  // Rückwirkung auf autoMatch/linkedDocumentManual: eine bestehende
+  // Kommuniqué-Verknüpfung bleibt unangetastet stehen, bis der Veranstalter
+  // von Hand "Kommuniqués abgleichen" drückt oder neu verknüpft.
+  ak: z.string().min(1).optional(),
+  disciplineLabel: z.string().min(1).optional(),
+  phase: z.string().nullable().optional(),
 });
 
 router.patch('/schedule-entries/:id', requireAdmin, async (req, res, next) => {
   try {
     const parsed = PatchEntrySchema.safeParse(req.body);
     if (!parsed.success) { res.status(400).json(parsed.error.flatten()); return; }
-    const { linkedDocumentId, linkedResultDocumentId, manualUnitCount, time } = parsed.data;
+    const { linkedDocumentId, linkedResultDocumentId, manualUnitCount, time, ak, disciplineLabel, phase } = parsed.data;
     if (linkedDocumentId === undefined && linkedResultDocumentId === undefined
-        && manualUnitCount === undefined && time === undefined) {
+        && manualUnitCount === undefined && time === undefined
+        && ak === undefined && disciplineLabel === undefined && phase === undefined) {
       res.json(await prisma.scheduleEntry.findUnique({ where: { id: req.params.id } }));
       return;
     }
     const data: Record<string, string | number | boolean | null> = {};
+    if (ak !== undefined) data.ak = ak.trim();
+    if (disciplineLabel !== undefined) data.disciplineLabel = disciplineLabel.trim();
+    if (phase !== undefined) data.phase = phase?.trim() ? phase.trim() : null;
     // Wird ein Kommuniqué von Hand verknüpft, das Ergebnis als „manuell" markieren,
     // damit autoMatch die Zuordnung beim nächsten Poll/Abgleich nicht wieder auflöst
     // (Disziplin-Selbstheilung, Nicht-Anker-Serie). Beim Lösen von Hand (id = null)
@@ -321,6 +332,113 @@ router.post('/schedule-entries/:id/move', requireAdmin, async (req, res, next) =
     }
 
     res.json(await withEstimates(await loadScheduleWithLinks(entry.eventId)));
+  } catch (e) { next(e); }
+});
+
+// PATCH /api/events/:id/schedule/days/:day/reorder — komplette Reihenfolge
+// eines Tages auf einen Schlag setzen (Drag & Drop im Frontend, ersetzt die
+// bisherigen Einzelschritte per .../move). Verteilt genau die order-Werte
+// neu, die der Tag schon belegt — andere Tage bleiben unberührt, wie beim
+// bestehenden .../move. orderedIds muss exakt die Menge der aktuellen
+// Tages-Einträge sein (gleiche Länge, gleiche IDs), sonst 400 — sicherer als
+// ein Teil-Update, das eine Zeile verlieren oder verdoppeln könnte.
+router.patch('/events/:id/schedule/days/:day/reorder', requireAdmin, async (req, res, next) => {
+  try {
+    const day = Number(req.params.day);
+    if (!Number.isInteger(day)) { res.status(400).json({ error: 'Ungültige Tagesnummer' }); return; }
+    const parsed = z.object({ orderedIds: z.array(z.string()).min(1) }).safeParse(req.body);
+    if (!parsed.success) { res.status(400).json(parsed.error.flatten()); return; }
+
+    const siblings = await prisma.scheduleEntry.findMany({
+      where: { eventId: req.params.id, day },
+      orderBy: { order: 'asc' },
+      select: { id: true, order: true },
+    });
+    const currentIds = new Set(siblings.map(s => s.id));
+    const newIds = parsed.data.orderedIds;
+    const sameSet = newIds.length === siblings.length && newIds.every(id => currentIds.has(id));
+    if (!sameSet) {
+      res.status(400).json({ error: 'orderedIds muss genau die aktuellen Einträge dieses Tages enthalten' });
+      return;
+    }
+
+    const slots = siblings.map(s => s.order); // bestehende order-Werte dieses Tages, aufsteigend
+    await prisma.$transaction(
+      newIds.map((id, i) => prisma.scheduleEntry.update({ where: { id }, data: { order: slots[i] } })),
+    );
+
+    res.json(await withEstimates(await loadScheduleWithLinks(req.params.id)));
+  } catch (e) { next(e); }
+});
+
+// POST /api/schedule-entries/:id/split — einen Eintrag in mehrere Läufe
+// aufteilen (z.B. "Ausscheidungsfahren" -> "1. Lauf".."N. Lauf"). Der
+// bestehende Eintrag bleibt (gleiche id — daran kann ein EventStatus hängen,
+// siehe EventStatus.scheduleEntryId), bekommt nur die Phase "1. Lauf"; die
+// weiteren Läufe sind neue Zeilen direkt dahinter, eingefügt und
+// durchnummeriert nach demselben Muster wie POST .../schedule/entries. Eine
+// bestehende Kommuniqué-Verknüpfung wird auf ALLE Läufe kopiert (nicht nur
+// den ersten) — welcher Abschnitt eines mehrteiligen Dokuments zu welchem
+// Lauf gehört, klärt die Phase beim Anzeigen/Abgleichen (siehe
+// resolveSectionIndex/applySectionView in scheduleImport.ts), nicht dieser
+// Endpunkt. linkedSectionIndex wird bewusst NICHT kopiert (bleibt null), der
+// Abschnitt wird dynamisch aus der neuen Phase abgeleitet.
+const SplitEntrySchema = z.object({ count: z.number().int().min(2).max(8) });
+
+router.post('/schedule-entries/:id/split', requireAdmin, async (req, res, next) => {
+  try {
+    const parsed = SplitEntrySchema.safeParse(req.body);
+    if (!parsed.success) { res.status(400).json(parsed.error.flatten()); return; }
+
+    const entry = await prisma.scheduleEntry.findUnique({ where: { id: req.params.id } });
+    if (!entry) { res.status(404).json({ error: 'Eintrag nicht gefunden' }); return; }
+    if (entry.type !== 'RACE') { res.status(400).json({ error: 'Nur Rennen lassen sich in Läufe aufteilen' }); return; }
+
+    const { count } = parsed.data;
+
+    await prisma.$transaction(async (tx) => {
+      await tx.scheduleEntry.update({ where: { id: entry.id }, data: { phase: '1. Lauf' } });
+
+      const createdIds: string[] = [];
+      for (let i = 2; i <= count; i++) {
+        const c = await tx.scheduleEntry.create({
+          data: {
+            eventId: entry.eventId,
+            day: entry.day,
+            dayLabel: entry.dayLabel,
+            time: entry.time,
+            ak: entry.ak,
+            disciplineLabel: entry.disciplineLabel,
+            phase: `${i}. Lauf`,
+            type: entry.type,
+            massStart: entry.massStart,
+            order: 0, // wird unten neu vergeben
+            linkedDocumentId: entry.linkedDocumentId,
+            linkedDocumentManual: entry.linkedDocumentManual,
+            linkedResultDocumentId: entry.linkedResultDocumentId,
+            linkedResultManual: entry.linkedResultManual,
+            sourceDocumentId: entry.sourceDocumentId,
+          } as any,
+        });
+        createdIds.push(c.id);
+      }
+
+      // Neue Läufe direkt hinter dem Original-Eintrag einsortieren, dann die
+      // gesamte Veranstaltung neu durchnummerieren (gleiches Muster wie beim
+      // Nachtragen eines Eintrags in POST .../schedule/entries).
+      const all = await tx.scheduleEntry.findMany({
+        where: { eventId: entry.eventId }, orderBy: { order: 'asc' }, select: { id: true },
+      });
+      const withoutNew = all.map(e => e.id).filter(id => !createdIds.includes(id));
+      const originalIdx = withoutNew.indexOf(entry.id);
+      withoutNew.splice(originalIdx + 1, 0, ...createdIds);
+
+      for (let i = 0; i < withoutNew.length; i++) {
+        await tx.scheduleEntry.update({ where: { id: withoutNew[i] }, data: { order: i } });
+      }
+    });
+
+    res.status(201).json(await withEstimates(await loadScheduleWithLinks(entry.eventId)));
   } catch (e) { next(e); }
 });
 
