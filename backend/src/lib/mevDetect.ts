@@ -280,6 +280,11 @@ Regeln:
     });
 
     const text = (message.content.find((c: any) => c.type === 'text') as any)?.text ?? '{}';
+    // TEMPORÄR (5.1.2) — Diagnose des ZG/GG- und Roster-Problems nach 5.1.1.
+    // Rohe Modellantwort im Render-Log sichtbar machen, damit sich Prompt-
+    // Verhalten nicht mehr nur vermuten lässt. Wieder entfernen, sobald die
+    // Ursache gefunden ist (siehe CHANGELOG/5.1.2.md).
+    console.log(`[mevDetect DEBUG] doc=${doc.id} ak=${doc.ak} file=${doc.fileName}\n${text.slice(0, 4000)}`);
     const clean = text.replace(/```json\n?|```/g, '').trim();
     const parsed = JSON.parse(clean);
     const mevRiders: MevRider[] = Array.isArray(parsed?.mevRiders)
