@@ -399,6 +399,78 @@ router.post('/:eventId/documents/:documentId/reanalyze-mev', requireAdmin, async
   } catch (e) { next(e); }
 });
 
+// ─── MEV-Fahrer von Hand eintragen (Fallback/Überschreiben) ────────────────
+// Ergänzt die automatische Erkennung: für Dokumente, bei denen sie wiederholt
+// falsch liegt, lässt sich die Fahrerliste hier direkt festlegen. Danach fasst
+// weder der automatische Poll noch der "Neu analysieren"-Knopf dieses
+// Dokument mehr an (siehe mevManual-Guard in mevDetect.ts), bis .../reset
+// wieder auf automatisch zurückstellt.
+const ManualRiderSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  lauf: z.number().int().positive().nullable().optional(),
+  startPos: z.enum(['ZG', 'GG', 'B', 'M']).nullable().optional(),
+});
+const ManualRidersSchema = z.object({
+  riders: z.array(ManualRiderSchema).max(50),
+});
+
+router.patch('/:eventId/documents/:documentId/mev-manual', requireAdmin, async (req, res, next) => {
+  try {
+    const doc = await prisma.communiqueDocument.findUnique({
+      where: { id: req.params.documentId },
+      include: { source: true },
+    });
+    if (!doc || doc.source.eventId !== req.params.eventId) {
+      res.status(404).json({ error: 'Dokument nicht gefunden' });
+      return;
+    }
+    const parsed = ManualRidersSchema.safeParse(req.body);
+    if (!parsed.success) { res.status(400).json(parsed.error.flatten()); return; }
+    // Volle MevRider-Form aufbauen (siehe MevRider in mevDetect.ts) — Felder,
+    // die das Formular nicht erhebt (team, startSlot, startOrder, laufLabel),
+    // bleiben null, genau wie bei automatisch erkannten Fahrern ohne diese Spalten.
+    const mevRiders = parsed.data.riders.map(r => ({
+      name: r.name,
+      section: 0,
+      lauf: r.lauf ?? null,
+      laufLabel: null,
+      team: null,
+      startNo: null,
+      startPos: r.startPos ?? null,
+      startSlot: null,
+      startOrder: null,
+    }));
+    const updated = await prisma.communiqueDocument.update({
+      where: { id: doc.id },
+      data: { mevManual: true, mevRiders },
+    });
+    res.json(updated);
+  } catch (e) { next(e); }
+});
+
+router.post('/:eventId/documents/:documentId/mev-manual/reset', requireAdmin, async (req, res, next) => {
+  try {
+    const doc = await prisma.communiqueDocument.findUnique({
+      where: { id: req.params.documentId },
+      include: { source: true },
+    });
+    if (!doc || doc.source.eventId !== req.params.eventId) {
+      res.status(404).json({ error: 'Dokument nicht gefunden' });
+      return;
+    }
+    // mevVersion auf 0: der nächste Poll (oder ein manueller "Neu
+    // analysieren"-Klick) wertet das Dokument dadurch garantiert neu aus,
+    // unabhängig vom aktuellen MEV_ANALYSIS_VERSION-Stand. mevRiders schon
+    // jetzt leeren, statt bis zum nächsten Poll (bis zu 90s) die alte,
+    // unbeschriftete Handeingabe stehen zu lassen.
+    const updated = await prisma.communiqueDocument.update({
+      where: { id: doc.id },
+      data: { mevManual: false, mevRiders: [], mevAnalyzedAt: null, mevVersion: 0 },
+    });
+    res.json(updated);
+  } catch (e) { next(e); }
+});
+
 // POST /api/communiques/:eventId/documents/:documentId/import-schedule — Zeitplan
 // manuell (erneut) aus einem bereits bekannten Dokument importieren. Für neu
 // entdeckte Zeitplan-Kommuniqués passiert das automatisch (siehe pollSource
@@ -752,7 +824,10 @@ export async function pollSource(source: CommuniqueSource) {
     // einen Fehler. Weil der Trigger starterCount === null lautet, würde das
     // OHNE diesen Filter bei JEDEM Poll erneut versucht — die Datei würde
     // jedes Mal neu geladen. Auswertung von Fotos ist ein eigener Schritt.
-    d => isPdfFileName(d.fileName)
+    // Von Hand gepflegte Dokumente (mev-manual) nie automatisch anfassen —
+    // Muster wie bei classificationManual/linkedDocumentManual.
+    d => !d.mevManual
+      && isPdfFileName(d.fileName)
       && ((d.starterCount === null && d.mevAnalyzedAt === null)
         || d.mevVersion < MEV_ANALYSIS_VERSION
         || needsRosterRecheck(d, startlists)),
@@ -769,7 +844,7 @@ export async function pollSource(source: CommuniqueSource) {
     const refreshed = await prisma.communiqueDocument.findMany({
       where: { sourceId, docType: 'STARTLISTE' },
     });
-    for (const doc of refreshed.filter(d => isPdfFileName(d.fileName) && needsRosterRecheck(d, refreshed))) {
+    for (const doc of refreshed.filter(d => !d.mevManual && isPdfFileName(d.fileName) && needsRosterRecheck(d, refreshed))) {
       await analyzeMevForDocument(doc, source);
     }
   }

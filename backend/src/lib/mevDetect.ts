@@ -74,6 +74,7 @@ interface AnalyzableDoc {
   ak: string;
   disciplineCode?: string | null;
   remoteUrl?: string | null; // HTML: PDF-Adresse · GDRIVE: Datei-ID · WebDAV: null
+  mevManual?: boolean; // true = von Hand gepflegt, siehe Feldkommentar in schema.prisma
 }
 
 /**
@@ -168,6 +169,10 @@ export async function analyzeMevForDocument(
   // Knopf, Verknüpfung im Zeitplan) abgedeckt sind. Das Dokument bleibt
   // sichtbar und nutzbar, es wird nur nicht automatisch ausgewertet.
   if (!/\.pdf$/i.test(doc.fileName)) return;
+  // Von Hand gepflegte Dokumente (mev-manual) nie automatisch überschreiben —
+  // auch nicht über den "Neu analysieren"-Knopf, der ebenfalls hierher führt.
+  // Zurück auf automatisch geht nur ausdrücklich über .../mev-manual/reset.
+  if (doc.mevManual) return;
   try {
     const settings = await getSettings();
     const lv = settings.mevLv;

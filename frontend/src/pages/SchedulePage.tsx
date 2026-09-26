@@ -23,7 +23,7 @@ import { useAdmin, useKiosk } from '../components/Layout';
 import {
   api, communiquesApi, scheduleApi,
   type Event as EventT, type ScheduleEntry, type EventStatus, type LiveStatusKey, type MevRider,
-  type CommuniqueDocument,
+  type CommuniqueDocument, type ManualRiderInput,
 } from '../api/client';
 
 const TYPE_ICON: Record<string, string> = { RACE: '🏁', CEREMONY: '🏅', INFO: 'ℹ️' };
@@ -407,6 +407,14 @@ export default function SchedulePage() {
   const [assignSearch, setAssignSearch] = useState('');
   const [assignBusy, setAssignBusy]     = useState(false);
 
+  // ── MEV-Fahrer von Hand eintragen (Fallback/Überschreiben) ───────────────
+  // riderDraft-Zeilen halten lauf als string (Texteingabe), nicht number —
+  // sonst lässt sich ein leeres Feld beim Tippen nicht darstellen.
+  const [ridersEntry, setRidersEntry] = useState<ScheduleEntry | null>(null);
+  const [riderDraft, setRiderDraft]   = useState<{ name: string; lauf: string; startPos: string }[]>([]);
+  const [ridersBusy, setRidersBusy]   = useState(false);
+  const [ridersError, setRidersError] = useState('');
+
   useEffect(() => { if (eventId) load(); }, [eventId]);
 
   // Offline-Vorabspeicherung: sobald ein Tag angezeigt wird (Erst-Laden ODER
@@ -595,6 +603,7 @@ export default function SchedulePage() {
                   mevNames: linkedDoc.mevNames ?? [], mevRiders: linkedDoc.mevRiders ?? [],
                   heatCount: linkedDoc.heatCount ?? null, roundCount: linkedDoc.roundCount ?? null,
                   starterCount: linkedDoc.starterCount ?? null, mevAnalyzedAt: linkedDoc.mevAnalyzedAt ?? null,
+                  mevManual: linkedDoc.mevManual ?? false,
                 }
               : null,
           }
@@ -612,6 +621,72 @@ export default function SchedulePage() {
       setError(e.message ?? 'Zuordnung fehlgeschlagen');
     } finally {
       setAssignBusy(false);
+    }
+  }
+
+  // ── MEV-Fahrer von Hand eintragen ────────────────────────────────────────
+  function openEditRiders(entry: ScheduleEntry) {
+    setRidersEntry(entry);
+    setRidersError('');
+    const existing = entry.linkedDocument?.mevRiders ?? [];
+    setRiderDraft(existing.length > 0
+      ? existing.map(r => ({ name: r.name, lauf: r.lauf != null ? String(r.lauf) : '', startPos: r.startPos ?? '' }))
+      : []);
+  }
+  function closeEditRiders() {
+    setRidersEntry(null);
+    setRidersError('');
+  }
+  function addRiderRow() {
+    setRiderDraft(prev => [...prev, { name: '', lauf: '', startPos: '' }]);
+  }
+  function updateRiderRow(i: number, field: 'name' | 'lauf' | 'startPos', value: string) {
+    setRiderDraft(prev => prev.map((r, idx) => idx === i ? { ...r, [field]: value } : r));
+  }
+  function removeRiderRow(i: number) {
+    setRiderDraft(prev => prev.filter((_, idx) => idx !== i));
+  }
+  // Aktualisiert die eingebettete linkedDocument-Kopie im entries-Zustand,
+  // damit die Zeile sofort umspringt — Muster wie in linkDoc oben.
+  function patchLinkedDoc(entryId: string, patch: Partial<NonNullable<ScheduleEntry['linkedDocument']>>) {
+    setEntries(prev => prev.map(e => e.id === entryId && e.linkedDocument
+      ? { ...e, linkedDocument: { ...e.linkedDocument, ...patch } }
+      : e));
+  }
+  async function saveRiders() {
+    if (!ridersEntry?.linkedDocument || !eventId) return;
+    const riders = riderDraft
+      .map(r => ({ name: r.name.trim(), lauf: r.lauf.trim(), startPos: r.startPos }))
+      .filter(r => r.name);
+    if (riders.length === 0) { setRidersError('Mindestens ein Fahrer mit Name.'); return; }
+    setRidersBusy(true); setRidersError('');
+    try {
+      const payload: ManualRiderInput[] = riders.map(r => ({
+        name: r.name,
+        lauf: r.lauf ? parseInt(r.lauf, 10) : null,
+        startPos: (r.startPos || null) as ManualRiderInput['startPos'],
+      }));
+      const updated = await communiquesApi.setMevManual(eventId, ridersEntry.linkedDocument.id, payload);
+      patchLinkedDoc(ridersEntry.id, { mevRiders: updated.mevRiders ?? [], mevManual: true });
+      closeEditRiders();
+    } catch (e: any) {
+      setRidersError(e.message ?? 'Speichern fehlgeschlagen');
+    } finally {
+      setRidersBusy(false);
+    }
+  }
+  async function resetRiders() {
+    if (!ridersEntry?.linkedDocument || !eventId) return;
+    if (!window.confirm('Zurück auf automatische Erkennung? Die von Hand eingetragenen Fahrer gelten dann nicht mehr, sobald das Dokument neu ausgewertet wurde.')) return;
+    setRidersBusy(true); setRidersError('');
+    try {
+      await communiquesApi.resetMevManual(eventId, ridersEntry.linkedDocument.id);
+      patchLinkedDoc(ridersEntry.id, { mevRiders: [], mevManual: false });
+      closeEditRiders();
+    } catch (e: any) {
+      setRidersError(e.message ?? 'Zurücksetzen fehlgeschlagen');
+    } finally {
+      setRidersBusy(false);
     }
   }
 
@@ -1099,6 +1174,7 @@ export default function SchedulePage() {
                   return fromMinutes(raceStartMin + ((r.lauf - 1) / heatCount) * estMin);
                 };
                 const mev = entry.linkedDocument ? mevSummary(entry.linkedDocument.mevRiders, heatTimeFor) : null;
+                const mevIsManual = entry.linkedDocument?.mevManual ?? false;
 
                 const prevEntry = idx > 0 ? visibleDayEntries[idx - 1] : null;
                 const nextEntry = idx < visibleDayEntries.length - 1 ? visibleDayEntries[idx + 1] : null;
@@ -1361,6 +1437,14 @@ export default function SchedulePage() {
                             {entry.linkedDocument ? 'ändern' : '＋ zuordnen'}
                           </span>
                         )}
+                        {canEdit && entry.linkedDocument && (
+                          <span
+                            style={{ color: 'var(--c-text-muted)', cursor: 'pointer', whiteSpace: 'nowrap', textDecoration: 'underline' }}
+                            onClick={() => openEditRiders(entry)}
+                          >
+                            ✏️ Fahrer bearbeiten
+                          </span>
+                        )}
                         {canEdit && sprintLeadByEntryId.has(entry.id) && (
                           <span style={{ color: 'var(--c-text-muted)', whiteSpace: 'nowrap', fontStyle: 'italic' }}>
                             erbt von 1. Serie
@@ -1376,15 +1460,25 @@ export default function SchedulePage() {
                         )}
                         {mev && (
                           <span
-                            title={`MEV: ${mev}`}
+                            title={`MEV: ${mev}${mevIsManual ? ' (von Hand eingetragen)' : ''}`}
                             style={{
                               flexBasis: '100%', maxWidth: '100%',
-                              fontSize: 11.5, fontWeight: 600, color: '#b45309',
-                              background: '#fef3c7', padding: '2px 8px', borderRadius: 8,
+                              fontSize: 11.5, fontWeight: 600,
+                              color: mevIsManual ? '#5b21b6' : '#b45309',
+                              background: mevIsManual ? '#ede9fe' : '#fef3c7',
+                              padding: '2px 8px', borderRadius: 8,
                               lineHeight: 1.45, marginTop: 1,
                             }}
                           >
                             MEV: {mev}
+                            {mevIsManual && (
+                              <span style={{
+                                fontSize: 9.5, fontWeight: 700, letterSpacing: '.02em',
+                                background: 'rgba(0,0,0,.08)', borderRadius: 5, padding: '1px 5px', marginLeft: 6,
+                              }}>
+                                MANUELL
+                              </span>
+                            )}
                           </span>
                         )}
                       </div>
@@ -1637,6 +1731,106 @@ export default function SchedulePage() {
               Verknüpfung entfernen
             </button>
           )}
+        </div>
+      </div>
+    )}
+
+    {/* MEV-Fahrer von Hand eintragen (Fallback/Überschreiben) */}
+    {ridersEntry && ridersEntry.linkedDocument && (
+      <div className="modal-overlay" onClick={closeEditRiders}>
+        <div
+          className="modal"
+          style={{ maxWidth: 420, width: '100%', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}
+          onClick={e => e.stopPropagation()}
+        >
+          <div className="flex-between" style={{ marginBottom: 2 }}>
+            <p className="modal-title" style={{ margin: 0 }}>Fahrer bearbeiten</p>
+            <button onClick={closeEditRiders} className="btn btn-ghost btn-sm" style={{ fontSize: 18, padding: '2px 8px' }}>✕</button>
+          </div>
+          <p className="text-xs text-muted" style={{ marginTop: 0, marginBottom: 10 }}>
+            {ridersEntry.ak} · {ridersEntry.disciplineLabel}{ridersEntry.phase ? ` · ${ridersEntry.phase}` : ''}
+          </p>
+          {ridersEntry.linkedDocument.mevManual ? (
+            <p className="text-xs" style={{ margin: '0 0 10px', padding: '7px 10px', borderRadius: 7, background: '#ede9fe', color: '#5b21b6' }}>
+              Von Hand gepflegt — die automatische Erkennung überschreibt diese Liste nicht, bis du unten zurücksetzt.
+            </p>
+          ) : (
+            <p className="text-xs text-muted" style={{ margin: '0 0 10px' }}>
+              Von Hand eingetragene Fahrer ersetzen die automatische Erkennung für dieses Kommuniqué, bis du sie hier wieder zurücksetzt.
+            </p>
+          )}
+          <div style={{ display: 'flex', gap: 6, marginBottom: 2, fontSize: 10.5, color: 'var(--c-text-muted)' }}>
+            <span style={{ flex: 1 }}>Name</span>
+            <span style={{ width: 58, textAlign: 'center' }}>Lauf</span>
+            <span style={{ width: 68, textAlign: 'center' }}>Pos.</span>
+            <span style={{ width: 26 }} />
+          </div>
+          <div style={{ overflowY: 'auto', flex: 1, minHeight: 0 }}>
+            {riderDraft.length === 0 && (
+              <p className="text-sm text-muted" style={{ margin: '4px 0 8px', fontStyle: 'italic' }}>Noch keine Fahrer eingetragen.</p>
+            )}
+            {riderDraft.map((r, i) => (
+              <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 7, alignItems: 'center' }}>
+                <input
+                  className="form-input" type="text" placeholder="Name"
+                  style={{ flex: 1, minWidth: 0 }}
+                  value={r.name}
+                  onChange={e => updateRiderRow(i, 'name', e.target.value)}
+                />
+                <input
+                  className="form-input" type="number" inputMode="numeric" placeholder="—"
+                  style={{ width: 58, textAlign: 'center', padding: '7px 4px' }}
+                  value={r.lauf}
+                  onChange={e => updateRiderRow(i, 'lauf', e.target.value)}
+                />
+                <select
+                  className="form-select"
+                  style={{ width: 68, padding: '7px 4px' }}
+                  value={r.startPos}
+                  onChange={e => updateRiderRow(i, 'startPos', e.target.value)}
+                >
+                  <option value="">—</option>
+                  <option value="ZG">ZG</option>
+                  <option value="GG">GG</option>
+                  <option value="B">B</option>
+                  <option value="M">M</option>
+                </select>
+                <button
+                  onClick={() => removeRiderRow(i)}
+                  aria-label="Entfernen"
+                  style={{ border: 'none', background: 'none', color: 'var(--c-text-muted)', fontSize: 16, cursor: 'pointer', width: 26, flexShrink: 0 }}
+                >✕</button>
+              </div>
+            ))}
+            <button
+              onClick={addRiderRow}
+              style={{
+                width: '100%', padding: 7, marginTop: 2, cursor: 'pointer', fontSize: 13.5,
+                background: 'none', border: '1px dashed var(--c-border)', borderRadius: 8, color: 'var(--c-text-muted)',
+              }}
+            >
+              + Fahrer hinzufügen
+            </button>
+          </div>
+          {ridersError && <div className="alert alert-error" style={{ marginTop: 10, marginBottom: 0 }}>{ridersError}</div>}
+          <div className="flex-between" style={{ marginTop: 14, alignItems: 'center' }}>
+            {ridersEntry.linkedDocument.mevManual ? (
+              <button
+                className="btn btn-ghost btn-sm"
+                style={{ color: 'var(--c-danger, #dc2626)' }}
+                disabled={ridersBusy}
+                onClick={resetRiders}
+              >
+                ↺ Zurück auf automatisch
+              </button>
+            ) : <span />}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-ghost btn-sm" onClick={closeEditRiders} disabled={ridersBusy}>Abbrechen</button>
+              <button className="btn btn-primary btn-sm" onClick={saveRiders} disabled={ridersBusy}>
+                {ridersBusy ? 'Speichert…' : 'Speichern'}
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     )}

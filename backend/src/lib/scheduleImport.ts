@@ -675,7 +675,7 @@ export async function loadScheduleWithLinks(eventId: string) {
         select: {
           id: true, fileName: true, remoteModifiedAt: true, mevNames: true, mevRiders: true,
           heatCount: true, roundCount: true, starterCount: true, mevAnalyzedAt: true,
-          sections: true,
+          sections: true, mevManual: true,
         },
       },
       linkedResultDocument: { select: { id: true, fileName: true, remoteModifiedAt: true } },

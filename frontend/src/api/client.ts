@@ -256,6 +256,16 @@ export interface MevRider {
   startOrder?: number | null;
 }
 
+// Eingabeform für PATCH .../mev-manual — bewusst schlanker als MevRider: nur
+// die drei Felder, die das Formular erhebt (siehe MevStartNumbersSettings-
+// Schwesterkomponente für den Startnummern-Fall). Das Backend füllt team,
+// startSlot, startOrder, laufLabel mit null auf.
+export interface ManualRiderInput {
+  name: string;
+  lauf?: number | null;
+  startPos?: 'ZG' | 'GG' | 'B' | 'M' | null;
+}
+
 export interface CommuniqueDocument {
   id: string;
   sourceId: string;
@@ -295,6 +305,9 @@ export interface CommuniqueDocument {
   // false = ausgewertet, aber unsicher — wird in der Liste gelb markiert.
   // null/undefined = kein Bild oder noch nicht ausgewertet.
   imageConfident?: boolean | null;
+  // true = mevRiders wurde von Hand gesetzt (.../mev-manual), siehe
+  // ScheduleEntryLinkedDoc.mevManual für den vollen Kommentar.
+  mevManual?: boolean;
 }
 
 // Was der Betrachter und die Liste anzeigen sollen: erkannter Name, sonst
@@ -406,6 +419,9 @@ export interface ScheduleEntryLinkedDoc {
   // null trotz sectionCount = Abschnitt nicht eindeutig zuzuordnen, angezeigt
   // wird dann das ganze Dokument.
   sectionLabel?: string | null;
+  // true = mevRiders wurde von Hand gesetzt (.../mev-manual) und bleibt so,
+  // bis .../mev-manual/reset wieder auf automatisch zurückstellt.
+  mevManual?: boolean;
 }
 
 export interface ScheduleEntryResultDoc {
@@ -559,6 +575,14 @@ export const communiquesApi = {
 
   reanalyzeMev: (eventId: string, documentId: string) =>
     api.post<CommuniqueDocument>(`/api/communiques/${eventId}/documents/${documentId}/reanalyze-mev`, {}),
+
+  // MEV-Fahrer von Hand setzen — ersetzt die automatische Erkennung für dieses
+  // Dokument, bis resetMevManual wieder auf automatisch zurückstellt.
+  setMevManual: (eventId: string, documentId: string, riders: ManualRiderInput[]) =>
+    api.patch<CommuniqueDocument>(`/api/communiques/${eventId}/documents/${documentId}/mev-manual`, { riders }),
+
+  resetMevManual: (eventId: string, documentId: string) =>
+    api.post<CommuniqueDocument>(`/api/communiques/${eventId}/documents/${documentId}/mev-manual/reset`, {}),
 
   importSchedule: (eventId: string, documentId: string) =>
     api.post<void>(`/api/communiques/${eventId}/documents/${documentId}/import-schedule`, {}),

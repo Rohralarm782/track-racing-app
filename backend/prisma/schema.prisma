@@ -482,6 +482,11 @@ model CommuniqueDocument {
   starterCount  Int?      // Gesamtzahl Starter/Teams laut Tabelle
   roundCount    Int?      // Rundenzahl des Rennens (Massenstart-Formate); bei Ausscheidungsfahren = starterCount*2 statt Textfund (siehe mevDetect.ts)
   mevAnalyzedAt DateTime? // wann die MEV-Analyse zuletzt gelaufen ist (null = noch nicht analysiert)
+  // true = mevRiders wurde von Hand gesetzt (PATCH .../mev-manual) und bleibt
+  // unangetastet, bis .../mev-manual/reset wieder auf automatisch zurückstellt.
+  // Automatischer Poll UND der "Neu analysieren"-Knopf überspringen dieses
+  // Dokument komplett, solange das Flag steht — Muster wie classificationManual.
+  mevManual     Boolean   @default(false)
   // Abschnitte EINES Dokuments, das mehrere Startaufstellungen enthält:
   // [{ index, title, runNo, phaseLabel, heatCount, starterCount, roundCount }].
   // Die Fahrer stehen weiterhin gesammelt in mevRiders und tragen dort ihren

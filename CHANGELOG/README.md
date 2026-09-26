@@ -19,6 +19,7 @@ Beim Erhöhen der Version immer beides ändern:
 
 | Version | Datum | Inhalt |
 |---|---|---|
+| [5.2.0](5.2.0.md) | 26.09.2026 | MEV-Fahrer im Zeitplan von Hand eintragen („✏️ Fahrer bearbeiten"): ersetzt die automatische Erkennung für dieses Kommuniqué, lila „MANUELL" markiert, Poll und „Neu analysieren" fassen es nicht mehr an, bis „Zurück auf automatisch". **Schema: `prisma db push`** (additiv), keine Neuauswertung |
 | [5.1.3](5.1.3.md) | 26.09.2026 | MEV-Fahrer im Zeitplan werden jetzt aufsteigend nach Lauf-Nummer angezeigt statt in der (nicht verlässlich geordneten) Reihenfolge der Modellantwort — betraf sichtbar U17m (28, 30, 26, 25 → 25, 26, 28, 30). Reine Frontend-Änderung, kein Schema, keine Neuauswertung |
 | [5.1.2](5.1.2.md) | 26.09.2026 | **Temporär, kein Fix:** `console.log` der rohen Modellantwort in `analyzeMevForDocument`, um das ZG/GG- und Roster-Problem aus 5.1.1 anhand echter Modellausgabe statt Vermutung zu diagnostizieren. Kein Schema, kein Versionsbump der Analyse |
 | [5.1.1](5.1.1.md) | 26.09.2026 | ZG/GG-Fix aus 5.1.0 zusammengeführt: `lauf`- und `startPos`-Erkennung standen an zwei getrennten Prompt-Stellen und wurden vom Modell offenbar nicht als ein Schritt behandelt — U17w/U19m/U19w blieben deshalb weiter ohne Startposition. **`MEV_ANALYSIS_VERSION` bewusst bei 9 belassen** — erst Testschritt an einem Dokument über „Neu analysieren", dann Bump auf 10 |
