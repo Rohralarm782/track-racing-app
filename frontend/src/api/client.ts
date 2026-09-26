@@ -743,3 +743,26 @@ export const settingsApi = {
   getCalibration: () => api.get<DurationEstimateRow[]>('/api/settings/calibration'),
   resetCalibration: (id: string) => api.delete<void>(`/api/settings/calibration/${id}`),
 };
+
+// ─── Manuelle MEV-Startnummern je Veranstaltung ────────────────────────────
+// Ergänzt die automatische MEV-Erkennung aus mevDetect.ts (siehe dortige
+// Kommentare) für Kommuniqués ohne LV-Spalte. Feste AK-Liste, muss mit
+// MEV_STARTNUMBER_AKS in backend/src/lib/mevDetect.ts übereinstimmen.
+export const MEV_STARTNUMBER_AKS = ['U15m', 'U15w', 'U17m', 'U17w', 'U19m', 'U19w'] as const;
+export type MevStartNumberAk = (typeof MEV_STARTNUMBER_AKS)[number];
+
+export interface MevStartNumber {
+  id: string;
+  eventId: string;
+  ak: MevStartNumberAk;
+  startNo: number;
+  label?: string | null;
+  createdAt: string;
+}
+
+export const mevStartNumbersApi = {
+  list: (eventId: string) => api.get<MevStartNumber[]>(`/api/events/${eventId}/mev-startnumbers`),
+  add: (eventId: string, data: { ak: MevStartNumberAk; startNo: number; label?: string }) =>
+    api.post<MevStartNumber>(`/api/events/${eventId}/mev-startnumbers`, data),
+  remove: (id: string) => api.delete<void>(`/api/mev-startnumbers/${id}`),
+};

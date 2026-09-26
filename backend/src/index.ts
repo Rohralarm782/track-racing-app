@@ -16,6 +16,7 @@ import communiquesRouter, { pollSource } from './routes/communiques';
 import scheduleRouter from './routes/schedule';
 import settingsRouter from './routes/settings';
 import athletesRouter from './routes/athletes'; // ← neu: Sportlerkartei
+import mevStartNumbersRouter from './routes/mev-startnumbers'; // ← neu: manuelle MEV-Startnummern je Veranstaltung
 import prisma from './prisma';
 
 dotenv.config();
@@ -45,6 +46,7 @@ app.use('/api/communiques',    communiquesRouter);
 app.use('/api',                scheduleRouter); // Zeitplan + Aktueller-Stand-Endpunkte (eigene Pfade unter /api/events/:id/schedule, /api/schedule-entries/:id)
 app.use('/api/settings',       settingsRouter);
 app.use('/api/athletes',       athletesRouter); // ← neu: Sportlerkartei
+app.use('/api',                mevStartNumbersRouter); // ← neu: manuelle MEV-Startnummern (eigene Pfade unter /api/events/:eventId/mev-startnumbers, /api/mev-startnumbers/:id)
 
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);

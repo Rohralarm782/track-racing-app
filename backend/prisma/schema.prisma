@@ -83,6 +83,7 @@ model Event {
   scheduleEntries  ScheduleEntry[]
   status           EventStatus?
   statusLog        StatusUpdateLog[]
+  mevStartNumbers  MevStartNumber[]
 }
 
 model Category {
@@ -519,6 +520,28 @@ model CommuniqueDocument {
   sourceForEntries ScheduleEntry[] @relation("ScheduleEntrySource")
 
   @@unique([sourceId, fileName])
+}
+
+// ─── Manuelle MEV-Startnummern je Veranstaltung ────────────────────────────
+// Ergänzt die automatische MEV-Erkennung (siehe mevDetect.ts): bei
+// Kommuniqués OHNE LV-Spalte greift dort sonst nur der Roster aus anderen
+// Dokumenten DERSELBEN Altersklasse mit LV-Spalte — taucht ein Fahrer bislang
+// in keinem solchen Dokument auf, wird er nicht erkannt, obwohl sein Verein
+// eindeutig zum Landesverband gehört. Diese Liste schließt genau diese Lücke,
+// ersetzt den automatischen Roster aber nicht (rein ergänzend).
+// ak ist auf sechs feste Werte begrenzt (siehe MEV_STARTNUMBER_AKS in
+// mevDetect.ts) — Startnummern werden pro Veranstaltung neu vergeben, die
+// AK-Grenzen ändern sich dagegen kaum, deshalb keine Freitext-Pflege.
+model MevStartNumber {
+  id        String   @id @default(cuid())
+  eventId   String
+  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  ak        String   // eine von MEV_STARTNUMBER_AKS (mevDetect.ts): U15m/U15w/U17m/U17w/U19m/U19w
+  startNo   Int
+  label     String?  // freiwillige Notiz (z.B. Name) nur zur eigenen Orientierung — fließt NICHT in den Abgleich ein
+  createdAt DateTime @default(now())
+
+  @@unique([eventId, ak, startNo])
 }
 
 model PushSubscription {

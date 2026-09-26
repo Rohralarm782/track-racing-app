@@ -17,7 +17,14 @@ const START_POSITIONS = ['ZG', 'GG', 'B', 'M'];
  * automatisch neu. Bei JEDER inhaltlichen Änderung an Prompt oder Auswertung
  * hochzählen — sonst behalten bereits analysierte Dokumente ihr altes Ergebnis.
  */
-export const MEV_ANALYSIS_VERSION = 8;
+export const MEV_ANALYSIS_VERSION = 9;
+
+// Feste Altersklassen für die manuelle MEV-Startnummern-Liste je Veranstaltung
+// (siehe Prisma-Modell MevStartNumber). Startnummern werden pro Veranstaltung
+// neu vergeben, die AK-Grenzen ändern sich dagegen kaum — deshalb eine feste
+// Liste statt Freitext, sowohl für die Routen-Validierung als auch fürs UI.
+export const MEV_STARTNUMBER_AKS = ['U15m', 'U15w', 'U17m', 'U17w', 'U19m', 'U19w'] as const;
+export type MevStartNumberAk = (typeof MEV_STARTNUMBER_AKS)[number];
 
 export interface MevRider {
   name: string;
@@ -116,6 +123,29 @@ async function loadMevRoster(doc: AnalyzableDoc): Promise<Array<{ startNo: numbe
       if (!byKey.has(key)) byKey.set(key, { startNo, name: r.name });
     }
   }
+
+  // Manuell hinterlegte Startnummern (Modell MevStartNumber) ERGÄNZEN den
+  // automatisch aus LV-Spalten-Dokumenten abgeleiteten Roster — nur für
+  // Startnummern, die dort noch nicht bekannt sind (byKey.has-Check unten),
+  // damit ein bereits automatisch bekannter Name nie von einer bloßen
+  // Orientierungs-Notiz überschrieben wird. Event-weit statt nur je Quelle
+  // gescoped, weil eine Veranstaltung mehrere Kommuniqué-Quellen haben kann
+  // (siehe CommuniqueSource) und die Startnummer-Liste quellenunabhängig ist.
+  const source = await prisma.communiqueSource.findUnique({
+    where: { id: doc.sourceId },
+    select: { eventId: true },
+  });
+  if (source) {
+    const manual = await prisma.mevStartNumber.findMany({
+      where: { eventId: source.eventId, ak: doc.ak },
+      select: { startNo: true, label: true },
+    });
+    for (const m of manual) {
+      const key = `n${m.startNo}`;
+      if (!byKey.has(key)) byKey.set(key, { startNo: m.startNo, name: m.label ?? `Startnummer ${m.startNo}` });
+    }
+  }
+
   return [...byKey.values()];
 }
 
@@ -226,7 +256,10 @@ Regeln:
     solange es keine echte Lauf-Spalte gibt.
 - Bei Team-Paaren/Mannschaften (z.B. Madison, Teamsprint, Mannschaftsverfolgung) ALLE Fahrer des Teams einzeln auflisten, falls einer oder mehrere "${lv}" sind; alle bekommen denselben lauf- und team-Wert
 - startPos: die Startposition dieses Fahrers/Teams. Genau einer dieser vier Werte oder null:
-  * Einzelstart-Formate (Zeitfahren, Einzel-/Mannschaftsverfolgung — je nach Format EIN oder ZWEI Starter pro Lauf; beim 1000m-Zeitfahren startet oft nur eine Fahrerin pro Lauf, das ist normal und macht die Lauf-Spalte nicht ungültig): "ZG" (Zielgerade) oder "GG" (Gegengerade). Die Zuordnung steht NICHT in der Tabelle, sondern in einem Hinweissatz unter der Tabelle, z.B. "Die erstgenannte Fahrerin startet von der Zielgeraden". Diesen Satz wörtlich auswerten und auf die Zeilen-Reihenfolge INNERHALB des Laufs anwenden: bei dieser Formulierung startet der im Lauf zuerst genannte Fahrer von "ZG", der zweite (falls vorhanden) von "GG". Steht dort stattdessen "Gegengeraden", gilt es genau umgekehrt. Fehlt der Hinweissatz, ist die Position unbekannt -> null.
+  * Einzelstart-Formate (Zeitfahren, Einzel-/Mannschaftsverfolgung — je nach Format EIN oder ZWEI Starter pro Lauf; beim 1000m-Zeitfahren startet oft nur eine Fahrerin pro Lauf, das ist normal und macht die Lauf-Spalte nicht ungültig): "ZG" (Zielgerade) oder "GG" (Gegengerade). Zwei mögliche Quellen dafür, unabhängig voneinander zu prüfen:
+    (a) SPALTENWERT SELBST: Steht in der Lauf-Spalte nicht nur eine Zahl, sondern ein Buchstaben-Code direkt vor oder bei der Lauf-Nummer — "ZG 5"/"GG 5" ODER die verkürzte Einzelbuchstaben-Form "Z 5"/"G 5" (z.B. zwei Zeilen "Z 5" und "G 5" für denselben Lauf 5, je eine pro Fahrer) — dann ist DIESER Buchstaben-Code die Startposition: "Z" bzw. "ZG" -> "ZG", "G" bzw. "GG" -> "GG". lauf/laufLabel bleiben davon unberührt (siehe oben: reine Zahl -> lauf, sonst laufLabel) — der Buchstaben-Code liefert zusätzlich startPos, ersetzt aber nicht die Lauf-Nummer-Regel.
+    (b) HINWEISSATZ, falls (a) nicht zutrifft (die Lauf-Spalte enthält nur Zahlen, keine Buchstaben-Codes): die Zuordnung steht dann in einem Satz unter der Tabelle, z.B. "Die erstgenannte Fahrerin startet von der Zielgeraden". Diesen Satz wörtlich auswerten und auf die Zeilen-Reihenfolge INNERHALB des Laufs anwenden: bei dieser Formulierung startet der im Lauf zuerst genannte Fahrer von "ZG", der zweite (falls vorhanden) von "GG". Steht dort stattdessen "Gegengeraden", gilt es genau umgekehrt.
+    Trifft weder (a) noch (b) zu, ist die Position unbekannt -> null.
   * Massenstart-Formate (Punktefahren, Madison, Scratch, Ausscheidungsfahren): "B" (Ballustrade/Balustrade) oder "M" (Messlinie/Mess-linie). Die Startaufstellung besteht dort aus ZWEI nebeneinander oder untereinander stehenden Tabellen bzw. einer Spalte mit genau diesen Überschriften — maßgeblich ist, in welcher der beiden der Fahrer steht. Die zweite Tabelle kann auch "Cote d'Azur" überschrieben sein — das ist die Messlinien-Gruppe -> "M".
     HARTE VORBEDINGUNG: "B"/"M" nur, wenn diese Überschriften bzw. die zwei getrennten Startreihen im Dokument WÖRTLICH vorkommen. Eine einzige durchlaufende Startaufstellung ohne solche Überschriften (real: "U17m – Startaufstellung Madison Quali 2" mit den Spalten Mad.Nr./Name/Vorname/UCI-ID/Verein/LV) enthält KEINE Startposition -> startPos null UND startSlot null. Nicht raten, nur weil es ein Massenstart-Rennen ist.
   * In allen anderen Fällen: null

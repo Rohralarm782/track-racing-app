@@ -12,6 +12,7 @@ import StartlistImport from '../components/StartlistImport';
 import EventTabBar from '../components/EventTabBar';
 import SettingsGearButton from '../components/SettingsGearButton';
 import CommuniqueSourceSettings from '../components/CommuniqueSourceSettings';
+import MevStartNumbersSettings from '../components/MevStartNumbersSettings';
 
 const FORMAT_LABEL: Record<string, string> = {
   INDIVIDUAL: 'Einzelrennen',
@@ -390,6 +391,7 @@ export default function EventDetail() {
               )}
 
               {id && <CommuniqueSourceSettings eventId={id} />}
+              {id && <MevStartNumbersSettings eventId={id} />}
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 20 }}>
                 <button className="btn btn-secondary" style={{ justifyContent: 'flex-start' }} onClick={() => setShowImport(true)}>
